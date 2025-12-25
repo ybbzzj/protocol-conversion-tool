@@ -1,0 +1,26 @@
+{
+    "datatype_name_mapping": {
+        "UINT8|UCHAR|unsigned char|8位无符号整型": "UINT8",
+        "INT8|CHAR|signed char8位有符号整型":"INT8",
+        "UINT16|USHROT|16位无符号整型":"UINT16",
+        "INT16|SHORT|16位有符号整型":"INT16",
+        "UINT32|UINTEGER-32|32位无符号整型":"UINT32",
+        "INT32|INTEGER-32|32位有符号整型":"INT32",
+        "FLOAT|浮点型":"FLOAT",
+        "DOUBLE|双精度浮点型":"DOUBLE",
+        "UINT64|uint64_t|uint64":"UINT64",
+        "INT64|int64_t|uint64":"INT64"
+      },
+    "datatype_bit_mapping":{
+        "UINT8":8,
+        "INT8":8,
+        "UINT16":16,
+        "INT16":16,
+        "UINT32":32,
+        "INT32":32,
+        "FLOAT":32,
+        "DOUBLE":64,
+        "UINT64":64,
+        "INT64":64
+    }
+}

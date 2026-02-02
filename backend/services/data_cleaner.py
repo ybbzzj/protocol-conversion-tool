@@ -5,11 +5,12 @@ from typing import Dict, Tuple, Any, Optional
 class DataTypeConverter:
     # 完整的 8/16/32 位数据类型映射字典
     TYPE_MAPPING = {
-        'CHAR': ('INT8', 8), 'UCHAR': ('UINT8', 8), 'BYTE': ('UINT8', 8),
-        'SHORT': ('INT16', 16), 'USHORT': ('UINT16', 16), 'UINT16': ('UINT16', 16),
-        'INT': ('INT32', 32), 'UINT': ('UINT32', 32), 'INTEGER-32': ('INT32', 32),
+        'CHAR': ('UINT8', 8), 'UCHAR': ('UINT8', 8), 'BYTE': ('UINT8', 8),
+        'SHORT': ('UINT16', 16), 'USHORT': ('UINT16', 16), 'UINT16': ('UINT16', 16),
+        'INT': ('UINT32', 32), 'UINT': ('UINT32', 32), 'INTEGER-32': ('UINT32', 32),
         'UINTEGER-32': ('UINT32', 32), 'FLOAT': ('FLOAT32', 32), 'DOUBLE': ('FLOAT64', 64),
-        '32位无符号整型': ('UINT32', 32), '16位无符号整型': ('UINT16', 16)
+        '32位无符号整型': ('UINT32', 32), '16位无符号整型': ('UINT16', 16),
+        '32BIT无符号整型': ('UINT32', 32), '16BIT无符号整型': ('UINT16', 16)
     }
 
     def convert_type(self, type_str: str) -> Tuple[str, int, str]:
@@ -27,8 +28,15 @@ class DataProcessor:
     def __init__(self, config=None):
         self.type_converter = DataTypeConverter()
 
-    def process_row(self, row: Dict[str, str]) -> Dict[str, Any]:
-        result = {'cleaned': {k.strip(): v.strip() for k, v in row.items()}, 'converted': {}}
+    def process_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        # 增加安全性检查：只有字符串才执行 strip()
+        result = {
+            'cleaned': {
+                str(k).strip(): (v.strip() if isinstance(v, str) else v) 
+                for k, v in row.items()
+            }, 
+            'converted': {}
+        }
         
         # 自动识别类型字段
         type_val = ""

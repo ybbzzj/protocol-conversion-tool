@@ -44,6 +44,23 @@ class ExcelExporter:
                     fill_data['名称'] = msg_name
                     # 注入元数据
                     fill_data.update(table.get('meta', {}))
+                    # 如果元数据中有消息ID，也添加到填充数据中
+                    if '消息ID' in table.get('meta', {}):
+                        fill_data['ID'] = table['meta']['消息ID']
+                    # 映射其他元数据字段到适当的列
+                    meta = table.get('meta', {})
+                    if '接收组播地址' in meta:
+                        fill_data['接收组播地址'] = meta['接收组播地址']
+                    if '接收端口号' in meta:
+                        fill_data['接收端口号'] = meta['接收端口号']
+                    if '信源系统码' in meta:
+                        fill_data['信源系统码'] = meta['信源系统码']
+                    if '信源机器码' in meta:
+                        fill_data['信源机器码'] = meta['信源机器码']
+                    if '信宿系统码' in meta:
+                        fill_data['信宿系统码'] = meta['信宿系统码']
+                    if '信宿机器码' in meta:
+                        fill_data['信宿机器码'] = meta['信宿机器码']
                 else:
                     fill_data['名称'] = ""
                 
@@ -51,9 +68,9 @@ class ExcelExporter:
                 if '标准类型' in conv_info: fill_data['转换类型'] = conv_info['标准类型']
                 if '位数' in conv_info: fill_data['类型（bit）'] = conv_info['位数']
                 
-                # 注入公式
+                # 将值域映射到单位列（修正错误）
                 range_val = cleaned_data.get('值域', cleaned_data.get('取值范围', ''))
-                if range_val: fill_data['判读公式（暂不设计）'] = range_val
+                if range_val: fill_data['单位'] = range_val
 
                 # --- 精准填充 17 列 ---
                 for col_idx, col_name in enumerate(template_headers, 1):

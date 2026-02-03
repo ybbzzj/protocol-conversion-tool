@@ -43,8 +43,59 @@ def run_detailed_test():
         log_to_file(f"  ├─ 具体内容: 读取文档中的所有表格及上下文", log_file)
         log_to_file(f"  ├─ 处理逻辑: 虚拟网格对齐 -> 表头评分定位 -> 元数据行过滤", log_file)
         
-        result = parser.parse(docx_path)
-        log_to_file(f"  └─ 处理结果: 成功识别 {result['tables_count']} 个核心协议表", log_file)
+        # 获取原始识别的表格（包括辅助表格）
+        from backend.services.table_detector import TableDetector
+        detector = TableDetector()
+        raw_tables = detector.extract_tables_from_docx(docx_path)
+        
+        # 显示经过表格链接器处理后的表格（即与最终结果强相关的表格）
+        from backend.services.table_linker import TableLinker
+        linker = TableLinker()
+        linked_tables = linker.link_tables(raw_tables)  # 使用原始表格进行链接
+        
+        core_tables_count = len([t for t in linked_tables if any(h in str(t.get('headers', [])) for h in ['参数', '内容', '信号名称'])])
+        log_to_file(f"  └─ 处理结果: 共 {core_tables_count} 个核心协议表可用于最终输出", log_file)
+        
+        # 分类原始表格：辅助表（不会输出到结果）和核心表（会输出到结果）
+        auxiliary_tables = []
+        core_tables = []
+        
+        for table in raw_tables:
+            headers_str = str(table.get('headers', []))
+            has_main_content = any(h in headers_str for h in ['参数', '信号名称'])
+            has_secondary_content = '内容' in headers_str
+            is_auxiliary = any(keyword in headers_str for keyword in ['消息ID', '消息标识', '接收组播地址', '接收端口号', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码'])
+            
+            if has_main_content or (has_secondary_content and not is_auxiliary):
+                core_tables.append(table)
+            else:
+                auxiliary_tables.append(table)
+        
+        # 先展示不会输出到结果的表格（辅助表）
+        # log_to_file(f"\n>>> 不会输出到结果的表格 <<<", log_file)
+        for idx, table in enumerate(auxiliary_tables):
+            msg_id = table.get('msg_name', '未知消息')
+            log_to_file(f"\n>>> [辅助表] 展示原始表格内容 [消息: {msg_id}] <<<", log_file)
+            
+            # 打印表头
+            headers = table.get('headers', [])
+            if headers:
+                headers_str = ' | '.join(headers)
+                log_to_file(f"  [表头] {headers_str}", log_file)
+            
+            # 打印原始数据行
+            log_to_file("  [原始数据行]", log_file)
+            data_rows = table.get('data_rows', [])
+            for i, row in enumerate(data_rows):
+                row_display = ' | '.join([f"{k}:{v}" for k, v in row.items()])
+                log_to_file(f"    [{i+1:2d}] {row_display} => ✓ 保留", log_file)
+            
+            log_to_file("", log_file)  # 空行分隔
+        
+
+        
+        # 更新result变量为包含原始表格和处理后表格的信息
+        result = {'tables': linked_tables, 'tables_count': len(linked_tables)}
 
         # 2. 表格展示与筛选过程
         processor = DataProcessor()
@@ -52,7 +103,7 @@ def run_detailed_test():
         
         for table in result['tables']:
             msg_id = table['msg_name'] or "未知消息"
-            log_to_file(f"\n>>> 展示原始表格内容 [消息: {msg_id}] <<<", log_file)
+            log_to_file(f"\n>>> [核心表] 展示原始表格内容 [消息: {msg_id}] <<<", log_file)
             
             # 打印表头
             headers = table['headers']
@@ -65,12 +116,20 @@ def run_detailed_test():
                 row_display = ' | '.join([f"{k}:{v}" for k, v in row.items()])
                 content_val = row.get('参数', row.get('内容', row.get('信号名称', '')))
                 
-                # 判定是否保留
+                # 判定是否保留 - 改进策略
                 noise_reasons = []
-                row_text_all = "".join(row.values())
-                if not content_val: noise_reasons.append("内容字段为空")
+                row_text_all = "".join(str(v) for v in row.values() if v)
+                
+                # 检查是否包含重要元数据字段（即使内容字段为空）
+                has_important_metadata = any(key in ['消息ID', '接收组播地址', '接收端口号', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码'] for key in row.keys())
+                has_non_empty_metadata = any(key in ['消息ID', '接收组播地址', '接收端口号', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码'] and row[key] for key in row.keys())
+                
+                # 如果是包含重要元数据的行，即使是内容字段为空也要保留
+                if not content_val and not has_non_empty_metadata:
+                    noise_reasons.append("内容字段为空且无重要元数据")
                 if '参见' in row_text_all: noise_reasons.append("含噪声词'参见'")
-                if '机器码' in row_text_all: noise_reasons.append("含元数据'机器码'")
+                # 移除对'机器码'的过滤，因为这是重要信息
+                # if '机器码' in row_text_all: noise_reasons.append("含元数据'机器码'")
                 
                 if noise_reasons:
                     decision = f"✗ 过滤 (原因: {'; '.join(noise_reasons)})"
@@ -94,7 +153,10 @@ def run_detailed_test():
                 table_rows.append(row_data)
             
             processed_tables.append({'msg_name': table['msg_name'], 'data_rows': table_rows, 'meta': table.get('meta', {})})
-            log_to_file(f"  └─ 处理结果: 字段 '{table_rows[0].get('参数','内容')}' 等已完成标准化转换", log_file)
+            if table_rows:
+                log_to_file(f"  └─ 处理结果: 字段 '{table_rows[0].get('参数','内容')}' 等已完成标准化转换", log_file)
+            else:
+                log_to_file(f"  └─ 处理结果: 该表格无有效数据行，已跳过处理", log_file)
 
         # 3. 导出阶段
         exporter = ExcelExporter(output_dir)

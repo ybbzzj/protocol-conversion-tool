@@ -44,6 +44,7 @@ def start_extraction():
         matcher = FieldMatcher()
         
         processed_tables = []
+        print(f"识别到 {len(result['tables'])} 个表格")
         for table in result['tables']:
             table_rows = []
             for row in table['data_rows']:

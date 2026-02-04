@@ -94,35 +94,57 @@ class TableDetector:
                         meta = {}
                         
                         # 2. 提取元数据（表头之上的行）
-                        # 利用 docx2python 自动填充特性提取 Key-Value 对
+                        # 初始化unique_cells
+                        unique_cells = []
+                        
+                        # 特殊处理：对于多行元数据结构（如Table 21），检查是否有更丰富的元数据
+                        # 检查前几行是否有键值对结构
+                        for r_idx in range(min(3, header_row_idx)):  # 检查表头前最多3行
+                            row = grid[r_idx]
+                            if row and len(row) >= 2:
+                                # 检查是否为键值对结构
+                                for i in range(len(row) - 1):
+                                    key_cell = row[i]
+                                    value_cell = row[i+1]
+                                    if any(kw in key_cell for kw in ['信息名称', '名称', '协议名称', '信息标识', '标识', '消息ID', '上级']):
+                                        if not msg_name and value_cell and value_cell not in ['—', '-'] and value_cell != key_cell:
+                                            msg_name = value_cell
+                                        elif value_cell and value_cell not in ['—', '-'] and value_cell != key_cell:
+                                            # 尝试将值存储到meta中
+                                            if any(kw in key_cell for kw in ['信息标识', '标识', '消息ID']):
+                                                meta['信息标识'] = value_cell
+                                            elif any(kw in key_cell for kw in ['上级']):
+                                                meta['上级'] = value_cell
+                        
+                        # 继续原来的逻辑，处理表头之上的行
                         for r_idx in range(header_row_idx):
                             row = grid[r_idx]
-                            unique_cells = []
                             if row and len(row) > 0:
+                                unique_cells = []  # 重置unique_cells
                                 unique_cells.append(row[0] if len(row) > 0 else "")
                                 for i in range(1, len(row)):
                                     if i < len(row) and i-1 < len(row) and row[i] != row[i-1]:
                                         unique_cells.append(row[i])
-                            
-                            # A. 尝试在单元格之间寻找 Key-Value (例如: [名称][PD指令])
-                            for i in range(len(unique_cells) - 1):
-                                k = unique_cells[i] if i < len(unique_cells) else ""
-                                v = unique_cells[i+1] if i+1 < len(unique_cells) else ""
-                                if any(kw in k for kw in ['信息名称', '名称', '协议名称']):
-                                    if not msg_name and v and v not in ['—', '-']: msg_name = v
-                                elif any(kw in k for kw in ['信息标识', '标识', '消息ID']):
-                                    if v and v not in ['—', '-']: meta['信息标识'] = v
-                                elif any(kw in k for kw in ['上级']):
-                                    if v and v not in ['—', '-']: meta['上级'] = v
-                            
-                            # B. 尝试在单个单元格内寻找 (例如: [名称：PD指令])
-                            if not msg_name:
-                                for cell in unique_cells:
-                                    if any(kw in cell for kw in ['信息名称', '名称', '协议名称']):
-                                        parts = re.split(r'[：:\s]+', cell)
-                                        if len(parts) > 1 and parts[-1] not in ['—', '-']:
-                                            msg_name = parts[-1].strip()
-                                            break
+                        
+                        # A. 尝试在单元格之间寻找 Key-Value (例如: [名称][PD指令])
+                        for i in range(len(unique_cells) - 1):
+                            k = unique_cells[i] if i < len(unique_cells) else ""
+                            v = unique_cells[i+1] if i+1 < len(unique_cells) else ""
+                            if any(kw in k for kw in ['信息名称', '名称', '协议名称']):
+                                if not msg_name and v and v not in ['—', '-']: msg_name = v
+                            elif any(kw in k for kw in ['信息标识', '标识', '消息ID']):
+                                if v and v not in ['—', '-']: meta['信息标识'] = v
+                            elif any(kw in k for kw in ['上级']):
+                                if v and v not in ['—', '-']: meta['上级'] = v
+                        
+                        # B. 尝试在单个单元格内寻找 (例如: [名称：PD指令])
+                        if not msg_name:
+                            for cell in unique_cells:
+                                if any(kw in cell for kw in ['信息名称', '名称', '协议名称']):
+                                    parts = re.split(r'[：:\s]+', cell)
+                                    if len(parts) > 1 and parts[-1] not in ['—', '-']:
+                                        msg_name = parts[-1].strip()
+                                        break
                         
                         # 3. 备选方案：如果表格内没找到标题，向文档段落回溯
                         if not msg_name:
@@ -156,12 +178,17 @@ class TableDetector:
                         
                         # 5. 如果还是没有找到名称，尝试从表头中推断
                         if not msg_name:
-                            # 如果表头包含特定关键词，可以根据表头内容推断表格类型
+                            # 注意：此时 content_found 和 type_found 还未定义，需要基于 headers 本身判断
                             if any('消息ID' in h or '消息标识' in h for h in headers):
                                 msg_name = '消息ID编码表'
                             elif any(keyword in str(headers) for keyword in ['接收组播地址', '接收端口号', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码']):
                                 msg_name = '端口分配表'
-                            elif content_found and type_found:
+                            # 检查表头是否包含数据内容所需的核心类别
+                            # 使用原始 headers 而不是 unique_headers，因为 unique_headers 还未定义
+                            temp_seq_found = any(any(kw in h for kw in self.header_categories['sequence']) for h in headers) if headers else False
+                            temp_content_found = any(any(kw in h for kw in self.header_categories['content']) for h in headers) if headers else False
+                            temp_type_found = any(any(kw in h for kw in self.header_categories['type']) for h in headers) if headers else False
+                            if temp_content_found and temp_type_found:
                                 msg_name = '协议参数表'
                         
                         # 清洗标题标签

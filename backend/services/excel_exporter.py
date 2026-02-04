@@ -18,7 +18,8 @@ class ExcelExporter:
     def export_with_template(self, tables_data: List[Dict], task_id: str) -> str:
         # 1. 物理复制模板
         template_path = os.path.join(os.getcwd(), 'word', 'csvfile', '协议模板.xlsx')
-        output_path = os.path.join(self.output_dir, f"protocol_{task_id}.xlsx")
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        output_path = os.path.join(self.output_dir, f"协议_{timestamp}.xlsx")
         shutil.copy(template_path, output_path)
         
         wb = load_workbook(output_path)

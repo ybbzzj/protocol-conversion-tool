@@ -33,7 +33,7 @@ def run_detailed_test():
         header = f"\n{'='*30} 后端全链路测试（带表格展示与筛选留痕） {'='*30}"
         log_to_file(header, log_file)
         
-        docx_path = os.path.join(ROOT_DIR, '协议模板（公开）.docx')
+        docx_path = os.path.join(ROOT_DIR, 'word/测试协议20251216.docx')
         output_dir = os.path.join(ROOT_DIR, 'backend', 'outputs')
         os.makedirs(output_dir, exist_ok=True)
         

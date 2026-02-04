@@ -186,29 +186,28 @@ class TableDetector:
                             
                             unique_headers.append(clean_h)
                         
-                        # --- 修改：保存所有表格，包括消息ID编码表等辅助表格 ---
+                        # --- 添加：标记表格类型用于日志输出 ---
                         # 检查表头是否包含数据内容所需的核心类别
                         seq_found = any(any(kw in h for kw in self.header_categories['sequence']) for h in unique_headers)
                         content_found = any(any(kw in h for kw in self.header_categories['content']) for h in unique_headers)
                         type_found = any(any(kw in h for kw in self.header_categories['type']) for h in unique_headers)
                         
-                        # 检查是否包含消息ID等相关信息
+                        # 检查是否包含消息ID等相关信息（这些通常属于元数据表）
                         meta_found = any(any(kw in h for kw in self.header_categories['meta']) for h in unique_headers)
                         
-                        # 对于消息ID编码表等辅助表格，我们也要保存
-                        is_core_protocol_table = content_found and type_found
-                        is_meta_table = any('消息ID' in h or '消息标识' in h for h in unique_headers)
-                        
-                        # 检查是否为端口分配表
+                        # 检查是否为端口分配表等辅助表
                         is_port_table = any(keyword in str(unique_headers) for keyword in ['接收组播地址', '接收端口号', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码'])
                         
-                        # 如果是核心协议表或消息ID编码表或端口分配表等辅助表格，则保留
-                        is_valid_data_table = is_core_protocol_table or is_meta_table or is_port_table
+                        # 检查是否为消息ID编码表等辅助表
+                        is_meta_table = any('消息ID' in h or '消息标识' in h for h in unique_headers)
                         
-                        # 如果不是有效的数据表，则跳过
-                        if not is_valid_data_table:
-                            continue
+                        # 只有同时包含内容类和类型类字段的才是核心协议数据表
+                        is_core_protocol_table = content_found and type_found
                         
+                        # 标记是否为辅助性元数据表
+                        is_auxiliary_table = is_port_table or is_meta_table
+                        
+                        # 提取数据行
                         for r_idx in range(header_row_idx + 1, len(grid)):
                             if r_idx >= len(grid):
                                 continue
@@ -243,18 +242,30 @@ class TableDetector:
                             if content or non_special_count >= 3:
                                 data_rows.append(row_data)
                         
+                        # 临时保存所有表格，后续统一过滤
                         if data_rows:
-                            extracted_tables.append({
+                            # 创建表格数据副本，添加辅助表标记用于过滤
+                            table_data = {
                                 'index': table_idx,
                                 'msg_name': msg_name,
                                 'meta': meta,
                                 'data_rows': data_rows,
-                                'headers': unique_headers  # 使用处理后的表头
-                            })
+                                'headers': unique_headers,  # 使用处理后的表头
+                                'is_auxiliary': is_auxiliary_table  # 添加辅助表标记
+                            }
+                            extracted_tables.append(table_data)
         except Exception as e:
             logger.error(f"Error extracting tables from {file_path}: {str(e)}")
             
-        return extracted_tables
+        # 过滤掉辅助性元数据表，只返回核心协议数据表，并移除内部标记字段
+        filtered_tables = []
+        for table in extracted_tables:
+            if not table.get('is_auxiliary', False):
+                # 移除内部使用的辅助表标记字段
+                clean_table = {k: v for k, v in table.items() if k != 'is_auxiliary'}
+                filtered_tables.append(clean_table)
+        
+        return filtered_tables
 
 class DocumentParser:
     def __init__(self, config=None):

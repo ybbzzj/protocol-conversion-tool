@@ -80,17 +80,38 @@ class TableDetector:
                         continue
                     
                     # 扩大搜索范围，检查更多行以适应复杂结构
+                    # 首先尝试找到真正的数据表头行（包含序号、内容、类型等标准字段）
                     for r_idx, row in enumerate(grid[:min(20, len(grid))]):
-                        # 确保行不为空
                         if not row:
                             continue
-                        matches = sum(1 for cell in row if any(k in cell for k in self.keywords))
-                        # 评分机制：至少匹配2个关键字
-                        score = matches / 4.0 if matches <= 4 else 1.0
-                        if matches >= 2 and score > max_score:
-                            max_score, header_row_idx = score, r_idx
+                        
+                        # 检查是否包含标准的数据表头关键词
+                        has_seq = any('序号' in cell for cell in row)
+                        has_content = any('参数' in cell or '内容' in cell or '信号名称' in cell for cell in row)
+                        has_type = any('类型' in cell or '数据类型' in cell for cell in row)
+                        has_value = any('值域' in cell or '取值范围' in cell for cell in row)
+                        has_unit = any('单位' in cell for cell in row)
+                        
+                        # 检查是否包含这些标准字段的组合
+                        standard_field_count = sum([has_seq, has_content, has_type, has_value, has_unit])
+                        
+                        if standard_field_count >= 3:  # 至少包含3个标准字段
+                            header_row_idx = r_idx
+                            break
                     
-                    # 如果找不到标准表头，尝试识别混合结构中的数据表头
+                    # 如果没找到标准字段表头，使用关键词匹配方法
+                    if header_row_idx == -1:
+                        for r_idx, row in enumerate(grid[:min(20, len(grid))]):
+                            # 确保行不为空
+                            if not row:
+                                continue
+                            matches = sum(1 for cell in row if any(k in cell for k in self.keywords))
+                            # 评分机制：至少匹配2个关键字
+                            score = matches / 4.0 if matches <= 4 else 1.0
+                            if matches >= 2 and score > max_score:
+                                max_score, header_row_idx = score, r_idx
+                    
+                    # 如果还是找不到，尝试基于结构特征
                     if header_row_idx == -1:
                         for r_idx, row in enumerate(grid[:min(15, len(grid))]):
                             if not row:
@@ -102,7 +123,34 @@ class TableDetector:
                             if (has_seq and has_content and has_type) or (has_content and has_type and len(row) >= 4):
                                 header_row_idx = r_idx
                                 break
-                    
+
+                    # 特殊处理：识别混合结构表格
+                    is_mixed_structure = False
+                    metadata_end_row = -1
+                    if header_row_idx >= 0:
+                        # 检查表头前是否存在元数据区域
+                        for r_idx in range(min(5, header_row_idx)):
+                            row = grid[r_idx] if r_idx < len(grid) else []
+                            if row:
+                                # 检查是否为键值对结构（相邻单元格成对出现）
+                                kv_pairs = 0
+                                for i in range(0, len(row)-1, 2):
+                                    if i+1 < len(row):
+                                        key_cell = row[i]
+                                        value_cell = row[i+1]
+                                        # 检查是否为有效的键值对
+                                        if (key_cell and value_cell and 
+                                            key_cell != value_cell and
+                                            value_cell not in ['-', '—', 'xx', ''] and
+                                            any(keyword in key_cell for keyword in ['信息名称', '名称', '信息标识', '信源', '信宿', '传输周期', '发起时机'])):
+                                            kv_pairs += 1
+                                
+                                # 如果找到足够的键值对，标记为混合结构
+                                if kv_pairs >= 2:
+                                    is_mixed_structure = True
+                                    metadata_end_row = r_idx
+                                    break
+
                     if header_row_idx != -1 and 0 <= header_row_idx < len(grid):
                         headers = grid[header_row_idx] if 0 <= header_row_idx < len(grid) else []
                         msg_name = ""
@@ -112,9 +160,37 @@ class TableDetector:
                         # 初始化unique_cells
                         unique_cells = []
                         
+                        # 特殊处理混合结构表格的横向元数据
+                        if is_mixed_structure and metadata_end_row >= 0:
+                            # 提取横向键值对元数据
+                            # 遍历表头之前的所有行，提取所有的键值对
+                            for meta_row_idx in range(header_row_idx):  # 遍历表头之前的所有行
+                                meta_row = grid[meta_row_idx] if meta_row_idx < len(grid) else []
+                                if len(meta_row) >= 2:  # 确保有足够的单元格形成键值对
+                                    for i in range(0, len(meta_row)-1, 2):
+                                        if i+1 < len(meta_row):
+                                            key_cell = meta_row[i]
+                                            value_cell = meta_row[i+1]
+                                            # 验证键值对的有效性
+                                            if (key_cell and value_cell and 
+                                                key_cell != value_cell and
+                                                value_cell not in ['-', '—', 'xx', ''] and
+                                                len(value_cell.strip()) > 0):
+                                                # 标准化键名
+                                                normalized_key = key_cell.replace('信息名称', '名称').replace('信息标识', '标识')
+                                                if '名称' in normalized_key and not msg_name:
+                                                    msg_name = value_cell
+                                                elif '标识' in normalized_key:
+                                                    meta['信息标识'] = value_cell
+                                                elif any(kw in normalized_key for kw in ['信源', '信宿', '传输周期', '发起时机', '错误处理', '其他']):
+                                                    meta[normalized_key] = value_cell
+                                                else:
+                                                    # 将其他键值对也存储到meta中，供后续使用
+                                                    meta[key_cell] = value_cell
+
                         # 特殊处理：对于多行元数据结构（如Table 21），检查是否有更丰富的元数据
                         # 检查前几行是否有键值对结构
-                        for r_idx in range(min(3, header_row_idx)):  # 检查表头前最多3行
+                        for r_idx in range(min(5, header_row_idx)):  # 扩大检查范围
                             row = grid[r_idx]
                             if row and len(row) >= 2:
                                 # 检查是否为键值对结构
@@ -130,6 +206,23 @@ class TableDetector:
                                                 meta['信息标识'] = value_cell
                                             elif any(kw in key_cell for kw in ['上级']):
                                                 meta['上级'] = value_cell
+                                
+                                # 特别处理：检查整行是否都是键值对（横向排列）
+                                if len(row) >= 4:  # 至少需要4个单元格才能形成有意义的键值对
+                                    for i in range(0, len(row)-1, 2):  # 步长为2，成对处理
+                                        if i+1 < len(row):
+                                            key_cell = row[i]
+                                            value_cell = row[i+1]
+                                            # 检查是否为有效的键值对
+                                            if (any(kw in key_cell for kw in ['信息名称', '名称', '协议名称']) and 
+                                                value_cell and value_cell not in ['—', '-', 'xx'] and 
+                                                value_cell != key_cell):
+                                                if not msg_name:
+                                                    msg_name = value_cell
+                                            elif (any(kw in key_cell for kw in ['信息标识', '标识']) and 
+                                                  value_cell and value_cell not in ['—', '-', 'xx'] and 
+                                                  value_cell != key_cell):
+                                                meta['信息标识'] = value_cell
                         
                         # 继续原来的逻辑，处理表头之上的行，提取所有唯一的单元格内容用于 K-V 匹配
                         all_unique_cells = []
@@ -295,6 +388,18 @@ class TableDetector:
                             # 过滤空行和噪声
                             row_all_text = "".join(row_data.values())
                             if not row_all_text.strip(): continue
+                            
+                            # 过滤注释行（如'注：时间按小端处理'）
+                            if any(comment_prefix in row_all_text for comment_prefix in ['注：', '注:', '说明：', '说明:', '备注：', '备注:']):
+                                continue
+                            
+                            # 检查行的列数是否与表头匹配（至少要有一定比例的列）
+                            non_empty_cols = sum(1 for cell in row if cell and cell.strip())
+                            expected_cols = len(unique_headers)
+                            min_required_cols = max(2, expected_cols // 3)  # 至少需要2列或1/3的列
+                            
+                            if non_empty_cols < min_required_cols:
+                                continue
                             
                             is_noise = any(m in row_all_text for m in self.noise_markers)
                             if is_noise: continue

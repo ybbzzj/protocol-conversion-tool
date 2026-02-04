@@ -46,6 +46,23 @@ def run_detailed_test():
         detector = TableDetector()
         raw_tables = detector.extract_tables_from_docx(docx_path)
         
+        # 展示所有原始表格（包括辅助表）
+        log_to_file(f"\n>>> [辅助表] 展示原始表格内容 <<<", log_file)
+        for i, table in enumerate(raw_tables):
+            msg_name = table.get('msg_name', '未知表')
+            log_to_file(f"  [表格 {i+1}] 消息名称: {msg_name}", log_file)
+            
+            # 展示表头
+            headers = table.get('headers', [])
+            log_to_file(f"  [表头] {' | '.join(headers)}", log_file)
+            
+            # 展示原始数据行
+            log_to_file("  [原始数据行]", log_file)
+            for j, row in enumerate(table.get('data_rows', [])):
+                row_display = ' | '.join([f"{k}:{v}" for k, v in row.items()])
+                log_to_file(f"    [{j+1:2d}] {row_display}", log_file)
+            log_to_file("", log_file)
+        
         linker = TableLinker()
         linked_tables = linker.link_tables(raw_tables)
         

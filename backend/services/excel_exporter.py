@@ -43,13 +43,11 @@ class ExcelExporter:
                 # --- 强制保护名称列 ---
                 if i == 0:
                     fill_data['名称'] = msg_name
-                    # 注入元数据
-                    fill_data.update(table.get('meta', {}))
-                    # 如果元数据中有消息ID，也添加到填充数据中
-                    if '消息ID' in table.get('meta', {}):
-                        fill_data['ID'] = table['meta']['消息ID']
-                    # 映射其他元数据字段到适当的列
+                    # 注入元数据 - 包括所有从混合结构提取的元数据
                     meta = table.get('meta', {})
+                    fill_data.update(meta)
+                    
+                    # 特别处理常见的元数据字段，确保它们被映射到正确的Excel列
                     if '接收组播地址' in meta:
                         fill_data['接收组播地址'] = meta['接收组播地址']
                     if '接收端口号' in meta:
@@ -62,6 +60,17 @@ class ExcelExporter:
                         fill_data['信宿系统码'] = meta['信宿系统码']
                     if '信宿机器码' in meta:
                         fill_data['信宿机器码'] = meta['信宿机器码']
+                    # 处理从横向部分提取的元数据
+                    if '信源、信宿' in meta:
+                        fill_data['信源、信宿'] = meta['信源、信宿']
+                    if '传输周期' in meta:
+                        fill_data['传输周期'] = meta['传输周期']
+                    if '发起时机' in meta:
+                        fill_data['发起时机'] = meta['发起时机']
+                    if '错误处理' in meta:
+                        fill_data['错误处理'] = meta['错误处理']
+                    if '其他' in meta:
+                        fill_data['其他'] = meta['其他']
                 else:
                     fill_data['名称'] = ""
                 

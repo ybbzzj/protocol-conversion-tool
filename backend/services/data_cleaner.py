@@ -14,17 +14,15 @@ class DataTypeConverter:
     }
 
     def convert_type(self, type_str: str) -> Tuple[str, int, str]:
-        # 确保输入是字符串
-        if not type_str and type_str != 0: return ("", 0, "warning")
-        # 将输入转换为字符串，然后进行处理
-        clean = str(type_str).strip().upper()
+        if not type_str: return ("", 0, "warning")
+        clean = type_str.strip().upper()
         # 1. 查表
         if clean in self.TYPE_MAPPING:
             return self.TYPE_MAPPING[clean][0], self.TYPE_MAPPING[clean][1], "normal"
         # 2. 正则提取数字
-        match = re.search(r'(\d+)', str(type_str))
+        match = re.search(r'(\d+)', type_str)
         bits = int(match.group(1)) if match else 0
-        return str(type_str), bits, "normal"
+        return type_str, bits, "normal"
 
 class DataProcessor:
     def __init__(self, config=None):

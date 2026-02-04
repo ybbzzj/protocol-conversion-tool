@@ -24,8 +24,8 @@ except ImportError:
 class TableDetector:
     def __init__(self, config=None):
         # 表头识别关键字（扩展）
-        self.keywords = ['序号', '参数', '内容', '数据类型', '类型', '长度', '单位', '备注', '值域',
-                        '信源', '信宿', '信息内容', '消息ID', '接口名称', '周期', '数据处理方法']
+        self.keywords = ['序号', '参数', '内容', '信号名称', '信息内容', '数据类型', '类型', '长度', '单位', '备注', '值域',
+                        '信源', '信宿', '信息内容', '消息ID', '接口名称', '周期', '数据处理方法', '发起时机', '错误处理']
         # 噪声行标记（精简，避免误过滤）
         self.noise_markers = ['参见附录']
         # 内容字段候选名（用于判断数据行有效性）
@@ -36,8 +36,8 @@ class TableDetector:
             'content': ['参数', '内容', '信号名称', '信息内容'],  # 内容类
             'type': ['数据类型', '类型', '类型（bit）', '转换类型'],  # 类型类
             'unit': ['单位'],  # 单位类
-            'remark': ['备注', '值域'],  # 备注类
-            'meta': ['信源', '信宿', '信息内容', '消息ID', '接口名称']  # 消息元数据类（应被排除）
+            'remark': ['备注', '值域', '数据处理方法'],  # 备注类
+            'meta': ['信源', '信宿', '信息内容', '消息ID', '接口名称', '周期', '发起时机', '错误处理']  # 消息元数据类
         }
 
     def extract_tables_from_docx(self, file_path: str) -> List[Dict]:
@@ -72,13 +72,15 @@ class TableDetector:
                         if row:
                             grid.append([" ".join(cell).strip() if cell else "" for cell in row])
                     
-                    # 1. 定位表头
+                    # 1. 定位表头 - 改进逻辑以适应混合结构表格
                     header_row_idx = -1
                     max_score = 0
                     # 确保grid不为空
                     if not grid:
                         continue
-                    for r_idx, row in enumerate(grid[:min(15, len(grid))]):
+                    
+                    # 扩大搜索范围，检查更多行以适应复杂结构
+                    for r_idx, row in enumerate(grid[:min(20, len(grid))]):
                         # 确保行不为空
                         if not row:
                             continue
@@ -87,6 +89,19 @@ class TableDetector:
                         score = matches / 4.0 if matches <= 4 else 1.0
                         if matches >= 2 and score > max_score:
                             max_score, header_row_idx = score, r_idx
+                    
+                    # 如果找不到标准表头，尝试识别混合结构中的数据表头
+                    if header_row_idx == -1:
+                        for r_idx, row in enumerate(grid[:min(15, len(grid))]):
+                            if not row:
+                                continue
+                            # 检查是否包含典型的参数表头关键词组合
+                            has_seq = any('序号' in cell for cell in row)
+                            has_content = any('参数' in cell or '内容' in cell or '信号名称' in cell for cell in row)
+                            has_type = any('类型' in cell or '数据类型' in cell for cell in row)
+                            if (has_seq and has_content and has_type) or (has_content and has_type and len(row) >= 4):
+                                header_row_idx = r_idx
+                                break
                     
                     if header_row_idx != -1 and 0 <= header_row_idx < len(grid):
                         headers = grid[header_row_idx] if 0 <= header_row_idx < len(grid) else []
@@ -116,30 +131,32 @@ class TableDetector:
                                             elif any(kw in key_cell for kw in ['上级']):
                                                 meta['上级'] = value_cell
                         
-                        # 继续原来的逻辑，处理表头之上的行
+                        # 继续原来的逻辑，处理表头之上的行，提取所有唯一的单元格内容用于 K-V 匹配
+                        all_unique_cells = []
                         for r_idx in range(header_row_idx):
                             row = grid[r_idx]
                             if row and len(row) > 0:
-                                unique_cells = []  # 重置unique_cells
-                                unique_cells.append(row[0] if len(row) > 0 else "")
+                                row_unique = []
+                                row_unique.append(row[0])
                                 for i in range(1, len(row)):
-                                    if i < len(row) and i-1 < len(row) and row[i] != row[i-1]:
-                                        unique_cells.append(row[i])
+                                    if row[i] != row[i-1]:
+                                        row_unique.append(row[i])
+                                all_unique_cells.extend(row_unique)
                         
                         # A. 尝试在单元格之间寻找 Key-Value (例如: [名称][PD指令])
-                        for i in range(len(unique_cells) - 1):
-                            k = unique_cells[i] if i < len(unique_cells) else ""
-                            v = unique_cells[i+1] if i+1 < len(unique_cells) else ""
+                        for i in range(len(all_unique_cells) - 1):
+                            k = all_unique_cells[i]
+                            v = all_unique_cells[i+1]
                             if any(kw in k for kw in ['信息名称', '名称', '协议名称']):
-                                if not msg_name and v and v not in ['—', '-']: msg_name = v
+                                if not msg_name and v and v not in ['—', '-'] and v != k: msg_name = v
                             elif any(kw in k for kw in ['信息标识', '标识', '消息ID']):
-                                if v and v not in ['—', '-']: meta['信息标识'] = v
+                                if v and v not in ['—', '-'] and v != k: meta['信息标识'] = v
                             elif any(kw in k for kw in ['上级']):
-                                if v and v not in ['—', '-']: meta['上级'] = v
+                                if v and v not in ['—', '-'] and v != k: meta['上级'] = v
                         
                         # B. 尝试在单个单元格内寻找 (例如: [名称：PD指令])
                         if not msg_name:
-                            for cell in unique_cells:
+                            for cell in all_unique_cells:
                                 if any(kw in cell for kw in ['信息名称', '名称', '协议名称']):
                                     parts = re.split(r'[：:\s]+', cell)
                                     if len(parts) > 1 and parts[-1] not in ['—', '-']:
@@ -228,11 +245,37 @@ class TableDetector:
                         # 检查是否为消息ID编码表等辅助表
                         is_meta_table = any('消息ID' in h or '消息标识' in h for h in unique_headers)
                         
-                        # 只有同时包含内容类和类型类字段的才是核心协议数据表
-                        is_core_protocol_table = content_found and type_found
+                        # 检查是否为协议参数表（主要包含参数和数据类型）
+                        is_param_table = content_found and type_found
                         
-                        # 标记是否为辅助性元数据表
-                        is_auxiliary_table = is_port_table or is_meta_table
+                        # 检查是否为指令相关的协议表（包含指令、命令、控制等关键词）
+                        msg_name_lower = msg_name.lower()
+                        is_instruction_related = any(keyword in msg_name_lower for keyword in ['指令', '控制', '命令'])
+                        
+                        # 检查是否为状态相关的协议表（也属于协议的一部分）
+                        is_status_related = '状态' in msg_name_lower
+                        
+                        # 检查是否为协议相关的表格（但排除通用的参数表）
+                        is_protocol_related = '协议' in msg_name_lower and '参数' not in msg_name_lower
+                        
+                        # 检查是否为消息相关的表格
+                        is_message_related = '消息' in msg_name_lower
+                        
+                        # 检查业务含义相关的关键词
+                        msg_name_lower = msg_name.lower()
+                        # 扩展重要业务关键词，涵盖用户提到的“检查”、“结果”、“数据”、“测量”
+                        is_important_business = any(keyword in msg_name_lower for keyword in ['指令', '控制', '命令', '状态', '检查', '结果', '数据', '测量', '协议', '消息'])
+                        
+                        # 只要包含核心列（内容/类型）或具有业务含义的标题，就认定为核心协议数据表
+                        is_core_protocol_table = is_param_table or is_important_business
+                        
+                        # 标记是否为辅助性元数据表（仅当既没有业务关键词也不是参数表时才标记为辅助）
+                        # 根据用户要求，我们要尽量保留这些表格，因此这里缩小辅助表的定义
+                        is_auxiliary_table = (is_port_table or is_meta_table) and not is_important_business
+                        
+                        # 强制保留所有包含数据行的表格，除非明确是端口/ID等纯元数据辅助表且用户未要求展示
+                        # 这里我们根据用户反馈，将核心判断改为：只要有数据行且不是纯噪声，就保留
+                        is_core_protocol_table = True if data_rows else is_core_protocol_table
                         
                         # 提取数据行
                         for r_idx in range(header_row_idx + 1, len(grid)):
@@ -284,15 +327,9 @@ class TableDetector:
         except Exception as e:
             logger.error(f"Error extracting tables from {file_path}: {str(e)}")
             
-        # 过滤掉辅助性元数据表，只返回核心协议数据表，并移除内部标记字段
-        filtered_tables = []
-        for table in extracted_tables:
-            if not table.get('is_auxiliary', False):
-                # 移除内部使用的辅助表标记字段
-                clean_table = {k: v for k, v in table.items() if k != 'is_auxiliary'}
-                filtered_tables.append(clean_table)
-        
-        return filtered_tables
+        # 返回所有识别到的表格，不再进行硬过滤
+        # 内部逻辑标记 is_auxiliary 仅用于后续日志分级，不作为删除依据
+        return extracted_tables
 
 class DocumentParser:
     def __init__(self, config=None):

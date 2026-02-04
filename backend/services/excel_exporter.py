@@ -69,16 +69,64 @@ class ExcelExporter:
                 if '标准类型' in conv_info: fill_data['转换类型'] = conv_info['标准类型']
                 if '位数' in conv_info: fill_data['类型（bit）'] = conv_info['位数']
                 
-                # 将值域映射到单位列（修正错误）
-                range_val = cleaned_data.get('值域', cleaned_data.get('取值范围', ''))
-                if range_val: fill_data['单位'] = range_val
+                # 处理单位列：优先原始单位 → 备注提取 → 值域备选
+                unit_val = cleaned_data.get('单位', '')
+                unit_source = 'original'  # 标记单位来源
+                
+                if not unit_val:  # 原始单位为空
+                    # 从备注中提取单位信息
+                    remark = cleaned_data.get('备注', '')
+                    if remark:
+                        # 改进的单位提取规则 - 按优先级匹配
+                        unit_patterns = [
+                            # 复合单位优先
+                            (r'[°∠∠][/\\s]*(s|秒)', '°/s'),  # 角速度 °/s
+                            (r'[°∠∠][/\\s]*(h|小时)', '°/h'),  # 角速度 °/h
+                            (r'[°∠∠][/\\s]*(min|分钟)', '°/min'),  # 角速度 °/min
+                            (r'(m/s2|m/s²|m/s\^2)', 'm/s²'),  # 加速度
+                            (r'(km/h|千米/小时)', 'km/h'),     # 速度
+                            (r'(r/min|rpm|转/分钟)', 'r/min'), # 转速
+                                                    
+                            # 基本单位
+                            (r'\b(ms|毫秒)\b', 'ms'),
+                            (r'\b(s|秒)\b', 's'),
+                            (r'\b(Hz|赫兹)\b', 'Hz'),
+                            (r'[°∠度]\b', '°'),  # 角度
+                            (r'(℃|°C|摄氏度)\b', '℃'),
+                            (r'\b(V|伏)\b', 'V'),
+                            (r'\b(A|安)\b', 'A'),
+                            (r'(Ω|欧姆)\b', 'Ω'),
+                            (r'\b(bit|位)\b', 'bit'),
+                            (r'\b(byte|字节)\b', 'byte'),
+                            (r'\b(mV|毫伏)\b', 'mV'),
+                            (r'\b(mA|毫安)\b', 'mA')
+                        ]
+                        
+                        for pattern, unit_name in unit_patterns:
+                            match = re.search(pattern, remark, re.IGNORECASE)
+                            if match:
+                                unit_val = unit_name
+                                unit_source = 'remark_extracted'
+                                break
+                
+                if not unit_val:  # 备注中也未提取到单位
+                    # 最后备选：使用值域
+                    unit_val = cleaned_data.get('值域', cleaned_data.get('取值范围', ''))
+                    unit_source = 'range_fallback'
+                
+                if unit_val: 
+                    fill_data['单位'] = unit_val
+                    fill_data['单位来源'] = unit_source  # 记录来源用于标红
 
                 # --- 精准填充 17 列 ---
                 for col_idx, col_name in enumerate(template_headers, 1):
                     if not col_name: continue
                     val = self._find_value_for_column(col_name, fill_data)
                     if val is not None:
-                        ws.cell(row=current_row, column=col_idx, value=val)
+                        cell = ws.cell(row=current_row, column=col_idx, value=val)
+                        # 如果是单位列且来源于备注提取，则标红
+                        if col_name == '单位' and fill_data.get('单位来源') == 'remark_extracted':
+                            cell.font = cell.font.copy(color="FF0000")  # 红色字体
                 current_row += 1
         
         wb.save(output_path)

@@ -301,7 +301,13 @@ class TableLinker:
             proto_table['meta'] = meta
             linked_tables.append(proto_table)
         
-        # 不再保留辅助表（ID表和端口分配表），只保留协议参数表及其关联的元数据
-        # 辅助表的信息已经作为元数据关联到协议参数表中
+        # 最终过滤：移除所有名称以"表"结尾的表格（如协议参数表、端口分配表等）
+        # 这些表仅用于元数据关联，不应出现在最终导出结果中
+        final_tables = []
+        for table in linked_tables:
+            msg_name = table.get('msg_name', '')
+            # 保留条件：名称不以"表"结尾
+            if not msg_name.endswith('表'):
+                final_tables.append(table)
         
-        return linked_tables
+        return final_tables

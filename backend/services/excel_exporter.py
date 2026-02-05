@@ -9,11 +9,82 @@ from backend.services.field_matcher import FieldMatcher
 from backend.services.data_cleaner import DataProcessor
 
 class ExcelExporter:
+    # 元数据映射配置：定义元数据键别名和对应的Excel列名
+    METADATA_MAPPING = {
+        # 直接映射到Excel列的字段（别名 -> Excel列名）
+        '信息标识映射': {
+            '信息标识', '信息ID', '消息ID', '信息名称标识', '标识'
+        },
+        '信源系统码映射': {
+            '信源系统码', '信源码'
+        },
+        '信源机器码映射': {
+            '信源机器码'
+        },
+        '信宿系统码映射': {
+            '信宿系统码'
+        },
+        '信宿机器码映射': {
+            '信宿机器码'
+        },
+        '子地址映射': {
+            '子地址', '消息地址', '子地址或消息地址'
+        },
+        'ID映射': {
+            'ID', '消息ID', '信息标识'  # ID列的备用名
+        },
+        # 无法直接映射，需追加到备注的字段
+        '备注追加字段': {
+            '传输周期', '发起时机', '错误处理', '其他', '信源、信宿'
+        }
+    }
+    
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         self.matcher = FieldMatcher()
         self.processor = DataProcessor()
+    
+    def _find_excel_column_for_metadata(self, meta_key: str, available_columns: List[str]) -> str:
+        """
+        根据元数据键查找对应的Excel列名（智能匹配）
+        
+        Args:
+            meta_key: 元数据键名
+            available_columns: Excel中所有可用的列名列表
+            
+        Returns:
+            匹配的Excel列名，如果没有匹配则返回None
+        """
+        # 精确匹配
+        if meta_key in available_columns:
+            return meta_key
+        
+        # 逐个检查映射配置
+        for mapping_type, aliases in self.METADATA_MAPPING.items():
+            if mapping_type == '备注追加字段':
+                continue
+            
+            if meta_key in aliases:
+                # 根据mapping_type确定Excel列名
+                if '信息标识' in mapping_type:
+                    return 'ID' if 'ID' in available_columns else None
+                elif '信源系统码' in mapping_type:
+                    return '信源系统码' if '信源系统码' in available_columns else None
+                elif '信源机器码' in mapping_type:
+                    return '信源机器码' if '信源机器码' in available_columns else None
+                elif '信宿系统码' in mapping_type:
+                    return '信宿系统码' if '信宿系统码' in available_columns else None
+                elif '信宿机器码' in mapping_type:
+                    return '信宿机器码' if '信宿机器码' in available_columns else None
+                elif '子地址' in mapping_type:
+                    return '子地址或消息地址' if '子地址或消息地址' in available_columns else None
+        
+        return None
+    
+    def _should_append_to_remarks(self, meta_key: str) -> bool:
+        """判断是否应该将元数据追加到备注列"""
+        return meta_key in self.METADATA_MAPPING.get('备注追加字段', set())
 
     def export_with_template(self, tables_data: List[Dict], task_id: str) -> str:
         # 1. 物理复制模板
@@ -43,34 +114,36 @@ class ExcelExporter:
                 # --- 强制保护名称列 ---
                 if i == 0:
                     fill_data['名称'] = msg_name
+                    # 获取Excel中所有可用的列名
+                    available_columns = template_headers
+                    
                     # 注入元数据 - 包括所有从混合结构提取的元数据
                     meta = table.get('meta', {})
-                    fill_data.update(meta)
                     
-                    # 特别处理常见的元数据字段，确保它们被映射到正确的Excel列
-                    if '接收组播地址' in meta:
-                        fill_data['接收组播地址'] = meta['接收组播地址']
-                    if '接收端口号' in meta:
-                        fill_data['接收端口号'] = meta['接收端口号']
-                    if '信源系统码' in meta:
-                        fill_data['信源系统码'] = meta['信源系统码']
-                    if '信源机器码' in meta:
-                        fill_data['信源机器码'] = meta['信源机器码']
-                    if '信宿系统码' in meta:
-                        fill_data['信宿系统码'] = meta['信宿系统码']
-                    if '信宿机器码' in meta:
-                        fill_data['信宿机器码'] = meta['信宿机器码']
-                    # 处理从横向部分提取的元数据
-                    if '信源、信宿' in meta:
-                        fill_data['信源、信宿'] = meta['信源、信宿']
-                    if '传输周期' in meta:
-                        fill_data['传输周期'] = meta['传输周期']
-                    if '发起时机' in meta:
-                        fill_data['发起时机'] = meta['发起时机']
-                    if '错误处理' in meta:
-                        fill_data['错误处理'] = meta['错误处理']
-                    if '其他' in meta:
-                        fill_data['其他'] = meta['其他']
+                    # 智能映射元数据到对应的Excel列
+                    remarks_parts = []  # 用于收集无法直接映射的元数据
+                    
+                    for meta_key, meta_value in meta.items():
+                        if not meta_value:
+                            continue
+                        
+                        # 尝试找到对应的Excel列
+                        excel_column = self._find_excel_column_for_metadata(meta_key, available_columns)
+                        
+                        if excel_column:
+                            # 直接映射到Excel列
+                            fill_data[excel_column] = meta_value
+                        elif self._should_append_to_remarks(meta_key):
+                            # 无法直接映射，追加到备注
+                            remarks_parts.append(f"{meta_key}:{meta_value}")
+                    
+                    # 如果有无法直接映射的元数据，追加到备注列
+                    if remarks_parts:
+                        existing_remarks = fill_data.get('备注', '')
+                        if existing_remarks:
+                            fill_data['备注'] = existing_remarks + ' | ' + ' | '.join(remarks_parts)
+                        else:
+                            fill_data['备注'] = ' | '.join(remarks_parts)
                 else:
                     fill_data['名称'] = ""
                 

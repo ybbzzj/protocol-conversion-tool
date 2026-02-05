@@ -42,13 +42,26 @@ class TableDetector:
         }
     
     def _clean_html_entities(self, text):
-        """清理HTML实体编码（如&#x00E8;等）"""
+        """清理HTML实体编码（如&#x00E8;等），但保留分隔符"""
         if not text:
             return text
         # 解码HTML实体
         text = html.unescape(text)
         # 移除剩余的HTML标签
         text = re.sub(r'<[^>]+>', '', text)
+        # 只删除【无用的特殊字符】，但【保留分隔符】
+        # 保留的字符：ASCII(32-126)、中文(\u4e00-\u9fff)、箭头(→等)、中文符号(、。等)
+        # 删除的字符：除上述外的其他特殊字符（如è等无用编码字符）
+        kept_chars = set()
+        for c in text:
+            ord_val = ord(c)
+            # 保留：ASCII字符、中文、箭头、常见标点
+            if (32 <= ord_val <= 126 or  # ASCII
+                '\u4e00' <= c <= '\u9fff' or  # 中文
+                c in '→→→·—–-_()（）【】《》「」『』、，。；：！？=+-*/'):  # 分隔符和标点
+                kept_chars.add(c)
+        
+        text = ''.join(c for c in text if c in kept_chars or ord(c) >= 128)
         return text.strip()
 
     def extract_tables_from_docx(self, file_path: str) -> List[Dict]:

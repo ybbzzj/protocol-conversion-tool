@@ -87,13 +87,27 @@ class ExcelExporter:
         """判断是否应该将元数据追加到备注列"""
         return meta_key in self.METADATA_MAPPING.get('备注追加字段', set())
     
+    def _clean_html_entities_in_string(self, text: str) -> str:
+        """清理字符串中的HTML实体编码，但保留编码分隔符和IP地址符号"""
+        if not text or not isinstance(text, str):
+            return text
+        import html
+        # 解码HTML实体
+        text = html.unescape(text)
+        # 移除HTML标签
+        text = re.sub(r'<[^>]+>', '', text)
+        # 只删除无用特殊字符，保留可能的分隔符和IP地址符号
+        # 保留：ASCII字符、中文、分隔符符号、IP地址符号
+        text = ''.join(c for c in text if (32 <= ord(c) <= 126) or ('\u4e00' <= c <= '\u9fff') or c in '→→→è-_.:：（）【】、，。')
+        return text.strip()
+    
     def _parse_source_destination(self, combined_value: str, available_columns: List[str]) -> dict:
         """
         解析"信源、信宿"的复合字段，尝试分解为独立的信源和信宿信息
         
         示例：
-        - 输入: "BCRT1-SA0-模式码0x04"
-        - 输出: {'信源机器码': 'BC', '信宿机器码': 'RT1-SA0-模式码0x04'}
+        - 输入: "BC→RT1-SA0-模式码0x03" 或 "BCèRT1-SA0-模式码0x03"
+        - 输出: {'信源机器码': 'BC', '信宿机器码': 'RT1-SA0-模式码0x03'}
         
         Args:
             combined_value: 组合的信源、信宿字符串
@@ -107,29 +121,129 @@ class ExcelExporter:
         if not combined_value or not isinstance(combined_value, str):
             return result
         
-        # 尝试用"-"分隔符分解
-        if '-' in combined_value:
-            parts = combined_value.split('-', 1)  # 最多分解为2部分
-            source = parts[0].strip()
-            destination = '-'.join(parts[1:]).strip() if len(parts) > 1 else ""
-            
-            # 如果第一部分看起来像代码（如BC、SA0等），则作为信源
-            if source and len(source) <= 5 and source.isalnum():
-                if '信源机器码' in available_columns and source:
-                    result['信源机器码'] = source
-                if '信宿机器码' in available_columns and destination:
-                    result['信宿机器码'] = destination
-                return result
+        # 第一步：先用原始值尝试分解（因为可能包含有用的分隔符）
+        # 尝试识别分隔符：优先检查特殊字符（è、→等）作为分隔符
+        separators_raw = [('è', 0), ('→', 1), ('-', 2)]  # (分隔符, 优先级)
         
-        # 如果没有"-"分隔符，尝试按固定位数分解（前2-3个字符作为信源）
-        if len(combined_value) > 3:
-            # 尝试识别信源部分（通常是2-3个字符的代码）
-            for src_len in [3, 2]:  # 先尝试3字符，再尝试2字符
-                source = combined_value[:src_len]
-                destination = combined_value[src_len:].strip()
+        for sep, priority in separators_raw:
+            if sep in combined_value:
+                parts = combined_value.split(sep, 1)
+                if len(parts) == 2:
+                    source_raw = parts[0].strip()
+                    dest_raw = parts[1].strip()
+                    
+                    # 清理两部分的特殊字符
+                    source = self._clean_html_entities_in_string(source_raw)
+                    destination = self._clean_html_entities_in_string(dest_raw)
+                    
+                    # 验证分解的合理性
+                    if source and destination:
+                        # 检查是否为IP地址格式（如192.167.2.22：10000）
+                        # IP地址通常包含数字、点、冒号等
+                        if '.' in source or ':' in source or '：' in source:
+                            # IP地址格式，直接使用
+                            if '信源机器码' in available_columns:
+                                result['信源机器码'] = source
+                            if '信宿机器码' in available_columns:
+                                result['信宿机器码'] = destination
+                            return result
+                        
+                        # 检查是否为编码格式（如BCaèRT1-SA0-模式码0x03）
+                        if source.isalnum():
+                            # 对于较长的source（如BCRT1），检查是否需要二次分解
+                            if len(source) > 3:
+                                # 尝试二次分解
+                                for candidate_len in [2, 3]:
+                                    candidate = source[:candidate_len]
+                                    if (candidate.isalnum() and 
+                                        any(c.isalpha() for c in candidate) and
+                                        len(source) > candidate_len):
+                                        # 二次分解成功
+                                        remainder = source[candidate_len:]
+                                        if '信源机器码' in available_columns:
+                                            result['信源机器码'] = candidate
+                                        if '信宿机器码' in available_columns:
+                                            result['信宿机器码'] = remainder + (sep if sep else '-') + destination
+                                        return result
+                            
+                            # source长度≤3，或二次分解失败，使用原始分解
+                            if len(source) <= 5:
+                                if '信源机器码' in available_columns:
+                                    result['信源机器码'] = source
+                                if '信宿机器码' in available_columns:
+                                    result['信宿机器码'] = destination
+                                return result
+        
+        # 第二步：如果上面失败，清理后重新尝试
+        cleaned_value = self._clean_html_entities_in_string(combined_value)
+        
+        # 尝试用"-"分隔符分解
+        if '-' in cleaned_value:
+            parts = cleaned_value.split('-', 1)
+            if len(parts) == 2:
+                source = parts[0].strip()
+                destination = '-'.join(parts[1:]).strip()
                 
-                # 检查分解是否合理（信源部分是字母/数字，信宿部分不为空）
-                if source and destination and source.replace('-', '').replace('_', '').isalnum():
+                # 对于"BCRT1-SA0-模式码0x03"这样的复杂格式
+                # source="BCRT1" 看起来不是真正的信源码（太长）
+                # 需要二次分解：BC是信源，RT1-SA0...是信宿
+                # 启发式：如果source长度>3且包含下一个代码，应该进行二次分解
+                if source and destination and source.isalnum():
+                    final_source = source
+                    final_dest = destination
+                    
+                    if len(source) > 3:
+                        # 检查source中是否能按2-3字符分解
+                        for candidate_len in [2, 3]:
+                            candidate = source[:candidate_len]
+                            if (candidate.isalnum() and 
+                                any(c.isalpha() for c in candidate) and
+                                len(source) > candidate_len):
+                                # 有迹象表明可以进一步分解
+                                remainder = source[candidate_len:]
+                                final_source = candidate  # 信源为前2-3个字符
+                                # 信宿应该是剩余部分 + 原始目的地
+                                final_dest = remainder + '-' + destination
+                                break
+                    
+                    if final_source and final_dest and len(final_source) <= 5 and final_source.isalnum():
+                        if '信源机器码' in available_columns:
+                            result['信源机器码'] = final_source
+                        if '信宿机器码' in available_columns:
+                            result['信宿机器码'] = final_dest
+                        return result
+        
+        # 第三步：对于"BCRT1-SA0-模式码0x03"这样的模式
+        # 需要特殊处理：BC|RT1-SA0-模式码0x03
+        # 特征：前2-3个字符后紧跟数字（如BC后跟RT1）
+        if len(cleaned_value) > 5 and '-' in cleaned_value:
+            # 尝试识别XXNN-的模式（如BC接RT、SA接0）
+            for src_len in [2, 3]:
+                if src_len < len(cleaned_value):
+                    source_candidate = cleaned_value[:src_len]
+                    # 检查接下来的字符是否为字母或数字
+                    if (source_candidate.isalnum() and 
+                        any(c.isalpha() for c in source_candidate) and
+                        src_len < len(cleaned_value)):
+                        # 找到第一个"-"的位置
+                        dash_pos = cleaned_value.find('-', src_len)
+                        if dash_pos > src_len:
+                            # 有内容在src_len和第一个"-"之间
+                            potential_dest = cleaned_value[dash_pos+1:].strip()
+                            if potential_dest:
+                                if '信源机器码' in available_columns:
+                                    result['信源机器码'] = source_candidate
+                                if '信宿机器码' in available_columns:
+                                    result['信宿机器码'] = potential_dest
+                                return result
+        
+        # 第四步：如果没有明显分隔符，尝试按固定位数分解（前2-3个字符作为信源）
+        if len(cleaned_value) > 3:
+            for src_len in [3, 2]:  # 先尝试3字符，再尝试2字符
+                source = cleaned_value[:src_len]
+                destination = cleaned_value[src_len:].strip()
+                
+                if source and destination and source.isalnum():
                     if '信源机器码' in available_columns:
                         result['信源机器码'] = source
                     if '信宿机器码' in available_columns:
@@ -180,8 +294,8 @@ class ExcelExporter:
                         if not meta_value:
                             continue
                         
-                        # 特殊处理："信源、信宿"复合字段
-                        if meta_key == '信源、信宿':
+                        # 特殊处理："信源、信宿"或"信源、信目"复合字段（两者是同一个字段）
+                        if meta_key in ('信源、信宿', '信源、信目'):
                             # 尝试分解为信源和信宿
                             parsed = self._parse_source_destination(meta_value, available_columns)
                             if parsed:

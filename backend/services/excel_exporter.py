@@ -35,7 +35,8 @@ class ExcelExporter:
         },
         # 无法直接映射，需追加到备注的字段
         '备注追加字段': {
-            '传输周期', '发起时机', '错误处理', '其他', '信源、信宿'
+            '传输周期', '发起时机', '错误处理', '其他'
+            # 注意：'信源、信宿' 已单独处理（会尝试分解），不在此列表中
         }
     }
     
@@ -85,6 +86,58 @@ class ExcelExporter:
     def _should_append_to_remarks(self, meta_key: str) -> bool:
         """判断是否应该将元数据追加到备注列"""
         return meta_key in self.METADATA_MAPPING.get('备注追加字段', set())
+    
+    def _parse_source_destination(self, combined_value: str, available_columns: List[str]) -> dict:
+        """
+        解析"信源、信宿"的复合字段，尝试分解为独立的信源和信宿信息
+        
+        示例：
+        - 输入: "BCRT1-SA0-模式码0x04"
+        - 输出: {'信源机器码': 'BC', '信宿机器码': 'RT1-SA0-模式码0x04'}
+        
+        Args:
+            combined_value: 组合的信源、信宿字符串
+            available_columns: Excel中所有可用列名
+            
+        Returns:
+            字典，包含解析后的信源/信宿字段映射
+        """
+        result = {}
+        
+        if not combined_value or not isinstance(combined_value, str):
+            return result
+        
+        # 尝试用"-"分隔符分解
+        if '-' in combined_value:
+            parts = combined_value.split('-', 1)  # 最多分解为2部分
+            source = parts[0].strip()
+            destination = '-'.join(parts[1:]).strip() if len(parts) > 1 else ""
+            
+            # 如果第一部分看起来像代码（如BC、SA0等），则作为信源
+            if source and len(source) <= 5 and source.isalnum():
+                if '信源机器码' in available_columns and source:
+                    result['信源机器码'] = source
+                if '信宿机器码' in available_columns and destination:
+                    result['信宿机器码'] = destination
+                return result
+        
+        # 如果没有"-"分隔符，尝试按固定位数分解（前2-3个字符作为信源）
+        if len(combined_value) > 3:
+            # 尝试识别信源部分（通常是2-3个字符的代码）
+            for src_len in [3, 2]:  # 先尝试3字符，再尝试2字符
+                source = combined_value[:src_len]
+                destination = combined_value[src_len:].strip()
+                
+                # 检查分解是否合理（信源部分是字母/数字，信宿部分不为空）
+                if source and destination and source.replace('-', '').replace('_', '').isalnum():
+                    if '信源机器码' in available_columns:
+                        result['信源机器码'] = source
+                    if '信宿机器码' in available_columns:
+                        result['信宿机器码'] = destination
+                    return result
+        
+        # 如果无法分解，则不添加到结果
+        return result
 
     def export_with_template(self, tables_data: List[Dict], task_id: str) -> str:
         # 1. 物理复制模板
@@ -125,6 +178,17 @@ class ExcelExporter:
                     
                     for meta_key, meta_value in meta.items():
                         if not meta_value:
+                            continue
+                        
+                        # 特殊处理："信源、信宿"复合字段
+                        if meta_key == '信源、信宿':
+                            # 尝试分解为信源和信宿
+                            parsed = self._parse_source_destination(meta_value, available_columns)
+                            if parsed:
+                                fill_data.update(parsed)
+                            else:
+                                # 分解失败，追加到备注
+                                remarks_parts.append(f"{meta_key}:{meta_value}")
                             continue
                         
                         # 尝试找到对应的Excel列

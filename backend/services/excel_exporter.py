@@ -330,24 +330,19 @@ class ExcelExporter:
                 if '位数' in conv_info: fill_data['类型（bit）'] = conv_info['位数']
                 
                 # 处理判读公式：映射值域到判读公式列
-                range_val = cleaned_data.get('值域', cleaned_data.get('取值范围', ''))
-                # 如果没有值域，尝试从"值"字段获取
-                if not range_val:
-                    range_val = cleaned_data.get('值', '')
-                range_source = 'original' if range_val else None
+                # 优先级：备注 > 表格值域 > 其他来源
+                range_val = None
+                range_source = None
                 
-                # 如果值域为空，尝试从备注/数据处理方法中提取范围
-                if not range_val:
-                    search_fields = [
-                        cleaned_data.get('备注', ''),
-                        cleaned_data.get('数据处理方法', ''),
-                        cleaned_data.get('说明', '')
-                    ]
-                    search_text = ' '.join(f for f in search_fields if f)
-                    
-                    # 提取范围表达式：0~400、[0,255]、0~0xFFFF等
+                # 第一步：优先从备注中提取（备注优先）
+                remarks_text = cleaned_data.get('备注', '')
+                if remarks_text:
                     range_patterns = [
-                        (r'取值范围[：:]*\s*([^\s，。、;；]+)', r'\1'),  # 取值范围: 0~400
+                        # 优先级最高：取值范围后的值（避免贪心匹配，跳过非数字）
+                        (r'取值范围[：:]*\s*(?:\[[^\]]*\]\s*)?([0-9](?:[0-9~\-x,，A-Fa-f]*[0-9xXfF]|[0-9]))', r'\1'),  # 取值范围[A1] 0~400
+                        # 其次：值域后的值
+                        (r'值域[：:]*\s*\[?([0-9a-fxA-FX~\-,，]+)\]?', r'\1'),  # 值域: [0,255] 或 值域[0,255]
+                        # 然后是其他格式
                         (r'(\d+[~\-]0x[0-9A-Fa-f]+)', r'\1'),  # 0~0xFFFF
                         (r'(0x[0-9A-Fa-f]+[~\-]\d+)', r'\1'),  # 0xFFFF~0
                         (r'(0x[0-9A-Fa-f]+[~\-]0x[0-9A-Fa-f]+)', r'\1'),  # 0x00~0xFF
@@ -355,18 +350,59 @@ class ExcelExporter:
                         (r'(\[\d+[,，]\d+\])', r'\1'),  # [0,255]
                         (r'(\{\d+[,，\d]+\})', r'\1'),  # {0,1,2}
                     ]
+                    for pattern, replacement in range_patterns:
+                        match = re.search(pattern, remarks_text)
+                        if match:
+                            range_val = match.group(1) if replacement == r'\1' else re.sub(pattern, replacement, match.group(0))
+                            if range_val:  # 确保提取到了值
+                                range_source = 'remarks'  # 来自备注
+                                break
+                
+                # 第二步：如果备注没有，使用表格中的值域
+                if not range_val:
+                    range_val = cleaned_data.get('值域', cleaned_data.get('取值范围', ''))
+                    if range_val:
+                        range_source = 'original'  # 来自原始表格
+                
+                # 第三步：如果还是没有，尝试从"值"字段获取
+                if not range_val:
+                    range_val = cleaned_data.get('值', '')
+                    if range_val:
+                        range_source = 'original'
+                
+                # 第四步：如果还是为空，尝试从其他字段提取
+                if not range_val:
+                    search_fields = [
+                        cleaned_data.get('数据处理方法', ''),
+                        cleaned_data.get('说明', '')
+                    ]
+                    search_text = ' '.join(f for f in search_fields if f)
+                    
+                    range_patterns = [
+                        (r'取值范围[：:]*\s*([^\s，。、;；]+)', r'\1'),
+                        (r'(\d+[~\-]0x[0-9A-Fa-f]+)', r'\1'),
+                        (r'(0x[0-9A-Fa-f]+[~\-]\d+)', r'\1'),
+                        (r'(0x[0-9A-Fa-f]+[~\-]0x[0-9A-Fa-f]+)', r'\1'),
+                        (r'(\d+[~\-]\d+)', r'\1'),
+                        (r'(\[\d+[,，]\d+\])', r'\1'),
+                        (r'(\{\d+[,，\d]+\})', r'\1'),
+                    ]
                     
                     for pattern, replacement in range_patterns:
                         match = re.search(pattern, search_text)
                         if match:
                             range_val = match.group(1) if replacement == r'\1' else re.sub(pattern, replacement, match.group(0))
-                            # 标准化为闭区间格式（如果是简单范围）
-                            if '~' in range_val or '-' in range_val:
-                                range_val = range_val.replace('-', '~')  # 统一用~
                             range_source = 'extracted'  # 标记为提取来源（需要标红）
                             break
                 
+                # 第五步：统一格式为 0~4294967295 格式（去掉开闭区间）
                 if range_val:
+                    # 移除开闭区间符号 [ ] ( ) { }
+                    range_val = re.sub(r'[\[\(\{]', '', range_val)
+                    range_val = re.sub(r'[\]\)\}]', '', range_val)
+                    # 统一分隔符为 ~ ：将 , ， 、 - 都替换为 ~
+                    range_val = range_val.replace('-', '~').replace('，', '~').replace('、', '~').replace(',', '~')
+                    range_val = range_val.strip()
                     fill_data['判读公式'] = range_val
                     fill_data['判读公式来源'] = range_source
                 

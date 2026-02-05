@@ -1,4 +1,4 @@
-[日志开始] 2026-02-05T19:15:10.383597
+[日志开始] 2026-02-05T19:48:59.637263
 
 ============================== 后端全链路测试（高精度识别与全留痕日志） ==============================
 
@@ -388,7 +388,7 @@
 [3/3 正在处理对象]: 生成标准化 Excel 报表
   ├─ 具体内容: 使用协议模板对 7 个表格进行数据填充
   ├─ 处理逻辑: 模板克隆 -> Header精准定位 -> 消息列合并 -> 单元格格式化
-  └─ 处理结果: 文件生成成功 -> /Users/yuanyuqing/Documents/code/schoolProject/backend/outputs/协议_20260205191510.xlsx
+  └─ 处理结果: 文件生成成功 -> /Users/yuanyuqing/Documents/code/schoolProject/backend/outputs/协议_20260205194900.xlsx
 
 ============================== 测试完成（详细全过程已存档至 /Users/yuanyuqing/Documents/code/schoolProject/backend/logs/extraction_trace.log） ==============================
 

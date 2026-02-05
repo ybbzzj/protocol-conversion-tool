@@ -46,8 +46,16 @@ def run_detailed_test():
         detector = TableDetector()
         raw_tables = detector.extract_tables_from_docx(docx_path)
         
+        # 1. 解析阶段
+        log_to_file(f"\n[1/3 正在解析对象]: Word文档 {os.path.basename(docx_path)}", log_file)
+        log_to_file(f"  ├─ 具体内容: 扫描文档中的所有表格结构及上下文标题", log_file)
+        log_to_file(f"  ├─ 处理逻辑: 虚拟网格对齐 -> 标题层级回溯 -> 业务含义权重评分", log_file)
+        
+        detector = TableDetector()
+        raw_tables = detector.extract_tables_from_docx(docx_path)
+        
         # 展示所有原始表格（包括辅助表）
-        log_to_file(f"\n>>> [辅助表] 展示原始表格内容 <<<", log_file)
+        log_to_file(f"\n>>> [原始表格] 展示原始表格内容（共 {len(raw_tables)} 个） <<<", log_file)
         for i, table in enumerate(raw_tables):
             msg_name = table.get('msg_name', '未知表')
             log_to_file(f"  [表格 {i+1}] 消息名称: {msg_name}", log_file)
@@ -66,17 +74,22 @@ def run_detailed_test():
         linker = TableLinker()
         linked_tables = linker.link_tables(raw_tables)
         
-        log_to_file(f"  └─ 处理结果: 成功识别并提取 {len(linked_tables)} 个有效协议表格", log_file)
+        # 统计信息
+        log_to_file(f"  └─ 处理结果: 识别 {len(raw_tables)} 个原始表格，其中 {len(linked_tables)} 个核心表", log_file)
 
-        # 2. 数据处理与筛选阶段（逐表显式留痕）
+        # 2. 数据处理与筛选阶段 - 仅处理核心表（逐表显式留痕）
+        log_to_file(f"\n[2/3 正在处理对象]: 处理核心表格（共 {len(linked_tables)} 个）", log_file)
+        log_to_file(f"  ├─ 具体内容: 对协议数据表进行数据清洗、类型转换和字段映射", log_file)
+        log_to_file(f"  ├─ 处理逻辑: 数据规范化 -> 单位提取 -> 值域映射 -> Excel填充", log_file)
+        
         processor = DataProcessor()
         processed_tables = []
         
-        for table in linked_tables:
+        for idx, table in enumerate(linked_tables, 1):
             msg_name = table.get('msg_name') or "未知消息"
             
             # 第一层：正在处理的对象
-            log_to_file(f"\n[2/3 正在处理对象]: 协议表格 [{msg_name}]", log_file)
+            log_to_file(f"\n  [核心表 {idx}/{len(linked_tables)}]: 协议表格 [{msg_name}]", log_file)
             
             # 展示表头
             headers = table.get('headers', [])

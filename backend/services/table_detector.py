@@ -306,22 +306,24 @@ class TableDetector:
                         
                         # 4. 提取数据行
                         data_rows = []
-                        # 处理表头重复（合并单元格）：保留每个原始位置的表头，但为重复项添加索引
+                        # 处理表头重复（合并单元格）：去除完全重复的列，只保留第一个
                         unique_headers = []
-                        header_counts = {}  # 记录每个表头出现次数
-                        for h in headers:
+                        seen_headers = set()  # 用于跟踪已见过的表头
+                        header_indices_to_keep = []  # 记录要保留的原始列索引
+                        
+                        for col_idx, h in enumerate(headers):
                             clean_h = re.sub(r'<[^>]+>', '', h).strip()  # 移除HTML标签
                             if not clean_h:
-                                clean_h = f"column_{len(unique_headers)}"
+                                clean_h = f"column_{col_idx}"
                             
-                            # 如果表头已存在且不是空列，添加索引后缀
-                            if clean_h in header_counts and clean_h != f"column_{len(unique_headers)}":
-                                header_counts[clean_h] += 1
-                                clean_h = f"{clean_h}_{header_counts[clean_h]}"
-                            else:
-                                header_counts[clean_h] = 1
-                            
-                            unique_headers.append(clean_h)
+                            # 如果这个表头之前没见过，就保留它
+                            if clean_h not in seen_headers:
+                                seen_headers.add(clean_h)
+                                unique_headers.append(clean_h)
+                                header_indices_to_keep.append(col_idx)
+                        
+                        # 更新headers为去重后的版本
+                        headers = unique_headers
                         
                         # --- 添加：标记表格类型用于日志输出 ---
                         # 检查表头是否包含数据内容所需的核心类别
@@ -370,7 +372,7 @@ class TableDetector:
                         # 这里我们根据用户反馈，将核心判断改为：只要有数据行且不是纯噪声，就保留
                         is_core_protocol_table = True if data_rows else is_core_protocol_table
                         
-                        # 提取数据行
+                        # 提取数据行（只保留去重后的列）
                         for r_idx in range(header_row_idx + 1, len(grid)):
                             if r_idx >= len(grid):
                                 continue
@@ -378,12 +380,14 @@ class TableDetector:
                             if not row or len(row) == 0 or len(row) < len(headers) // 2: continue
                             
                             row_data = {}
-                            # 使用处理过的表头来创建行数据
-                            for c_idx, clean_h in enumerate(unique_headers):
-                                cell_val = row[c_idx] if c_idx < len(row) else ""
-                                # 清理HTML标签
-                                cell_val = re.sub(r'<[^>]+>', '', cell_val).strip()
-                                row_data[clean_h] = cell_val
+                            # 使用处理过的表头来创建行数据，只提取要保留的列
+                            for kept_idx, col_idx in enumerate(header_indices_to_keep):
+                                if kept_idx < len(headers):
+                                    clean_h = headers[kept_idx]
+                                    cell_val = row[col_idx] if col_idx < len(row) else ""
+                                    # 清理HTML标签
+                                    cell_val = re.sub(r'<[^>]+>', '', cell_val).strip()
+                                    row_data[clean_h] = cell_val
                             
                             # 过滤空行和噪声
                             row_all_text = "".join(row_data.values())

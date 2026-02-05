@@ -60,6 +60,13 @@ def run_detailed_test():
             msg_name = table.get('msg_name', '未知表')
             log_to_file(f"  [表格 {i+1}] 消息名称: {msg_name}", log_file)
             
+            # 展示元数据
+            meta = table.get('meta', {})
+            if meta:
+                log_to_file(f"  [元数据] ({len(meta)} 项):", log_file)
+                for key, value in meta.items():
+                    log_to_file(f"    • {key}: {value}", log_file)
+            
             # 展示表头
             headers = table.get('headers', [])
             log_to_file(f"  [表头] {' | '.join(headers)}", log_file)
@@ -90,6 +97,13 @@ def run_detailed_test():
             
             # 第一层：正在处理的对象
             log_to_file(f"\n  [核心表 {idx}/{len(linked_tables)}]: 协议表格 [{msg_name}]", log_file)
+            
+            # 展示元数据
+            meta = table.get('meta', {})
+            if meta:
+                log_to_file(f"  [元数据] ({len(meta)} 项):", log_file)
+                for key, value in meta.items():
+                    log_to_file(f"    • {key}: {value}", log_file)
             
             # 展示表头
             headers = table.get('headers', [])
@@ -128,12 +142,20 @@ def run_detailed_test():
             log_to_file(f"  ├─ 处理逻辑: 标题标签剥离 -> 17列标准映射 -> 数据类型动态提取", log_file)
             
             table_rows = []
-            for row in retained_rows:
+            for row_idx, row in enumerate(retained_rows):
                 proc_res = processor.process_row(row)
                 row_data = proc_res['cleaned']
                 # 补全转换后的技术列
                 if '位数' in proc_res['converted']: row_data['类型（bit）'] = proc_res['converted']['位数']
                 if '标准类型' in proc_res['converted']: row_data['转换类型'] = proc_res['converted']['标准类型']
+                
+                # 第一行注入元数据
+                if row_idx == 0 and meta:
+                    log_to_file(f"  ├─ 第一行注入元数据：", log_file)
+                    for meta_key, meta_val in meta.items():
+                        row_data[meta_key] = meta_val
+                        log_to_file(f"    • {meta_key}: {meta_val}", log_file)
+                
                 table_rows.append(row_data)
             
             processed_tables.append({

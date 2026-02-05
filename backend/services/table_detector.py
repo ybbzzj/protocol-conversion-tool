@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import re
 import logging
+import html
 from typing import List, Dict, Any
 from docx2python import docx2python
 
@@ -39,6 +40,16 @@ class TableDetector:
             'remark': ['备注', '值域', '数据处理方法'],  # 备注类
             'meta': ['信源', '信宿', '信息内容', '消息ID', '接口名称', '周期', '发起时机', '错误处理']  # 消息元数据类
         }
+    
+    def _clean_html_entities(self, text):
+        """清理HTML实体编码（如&#x00E8;等）"""
+        if not text:
+            return text
+        # 解码HTML实体
+        text = html.unescape(text)
+        # 移除剩余的HTML标签
+        text = re.sub(r'<[^>]+>', '', text)
+        return text.strip()
 
     def extract_tables_from_docx(self, file_path: str) -> List[Dict]:
         extracted_tables = []
@@ -160,33 +171,65 @@ class TableDetector:
                         # 初始化unique_cells
                         unique_cells = []
                         
-                        # 特殊处理混合结构表格的横向元数据
-                        if is_mixed_structure and metadata_end_row >= 0:
-                            # 提取横向键值对元数据
-                            # 遍历表头之前的所有行，提取所有的键值对
-                            for meta_row_idx in range(header_row_idx):  # 遍历表头之前的所有行
-                                meta_row = grid[meta_row_idx] if meta_row_idx < len(grid) else []
-                                if len(meta_row) >= 2:  # 确保有足够的单元格形成键值对
-                                    for i in range(0, len(meta_row)-1, 2):
-                                        if i+1 < len(meta_row):
-                                            key_cell = meta_row[i]
-                                            value_cell = meta_row[i+1]
-                                            # 验证键值对的有效性
-                                            if (key_cell and value_cell and 
-                                                key_cell != value_cell and
-                                                value_cell not in ['-', '—', 'xx', ''] and
-                                                len(value_cell.strip()) > 0):
-                                                # 标准化键名
-                                                normalized_key = key_cell.replace('信息名称', '名称').replace('信息标识', '标识')
-                                                if '名称' in normalized_key and not msg_name:
-                                                    msg_name = value_cell
-                                                elif '标识' in normalized_key:
-                                                    meta['信息标识'] = value_cell
-                                                elif any(kw in normalized_key for kw in ['信源', '信宿', '传输周期', '发起时机', '错误处理', '其他']):
-                                                    meta[normalized_key] = value_cell
-                                                else:
-                                                    # 将其他键值对也存储到meta中，供后续使用
-                                                    meta[key_cell] = value_cell
+                        # 【改进】总是尝试从表头之前的所有行提取元数据（支持多种配对方式）
+                        # 遍历表头之前的所有行，提取所有的键值对
+                        for meta_row_idx in range(header_row_idx):  # 遍历表头之前的所有行
+                            meta_row = grid[meta_row_idx] if meta_row_idx < len(grid) else []
+                            if len(meta_row) >= 2:  # 确保有足够的单元格形成键值对
+                                col_count = len(meta_row)
+                                
+                                # 策略：在元数据行中寻找所有有效的键值对
+                                # 处理方式：逐列扫描，找到"键"和"值"的组合
+                                processed_keys = set()  # 记录已处理的键，避免重复
+                                
+                                for col_idx in range(0, col_count - 1):
+                                    # 尝试将当前列作为"键"
+                                    potential_key = meta_row[col_idx].strip() if col_idx < len(meta_row) else ""
+                                    
+                                    # 检查是否是有效的元数据键
+                                    is_metadata_key = any(kw in potential_key for kw in [
+                                        '信息名称', '名称', '数据项名称', '协议名称',
+                                        '信息标识', '标识', '消息ID',
+                                        '信源', '信宿', '信源、信宿',
+                                        '传输周期', '发起时机', '错误处理', '其他',
+                                        '代号', '上级'
+                                    ])
+                                    
+                                    if not is_metadata_key or not potential_key:
+                                        continue
+                                    
+                                    if potential_key in processed_keys:
+                                        continue
+                                    
+                                    # 找到一个有效的键，现在寻找对应的值
+                                    # 策略1：检查紧邻的下一列
+                                    value_col = col_idx + 1
+                                    if value_col < col_count:
+                                        potential_value = meta_row[value_col].strip() if value_col < len(meta_row) else ""
+                                        
+                                        # 如果下一列是键值相同的情况（重复列），则跳过，继续找下一个非重复值
+                                        if potential_value == potential_key:
+                                            # 尝试跳过相同值，找下一个不同的值
+                                            for next_col in range(value_col + 1, col_count):
+                                                next_value = meta_row[next_col].strip() if next_col < len(meta_row) else ""
+                                                if next_value and next_value != potential_key and next_value not in ['-', '—', 'xx', '']:
+                                                    potential_value = next_value
+                                                    break
+                                        
+                                        # 验证找到了一个有效的值
+                                        if potential_value and potential_value != potential_key and potential_value not in ['']:
+                                            # 检查 potential_value 是否看起来是一个表名（作为 msg_name 候选）
+                                            if any(kw in potential_key for kw in ['信息名称', '名称', '协议名称']) and not msg_name:
+                                                msg_name = potential_value
+                                            
+                                            # 将键值对存储到meta中
+                                            meta[potential_key] = potential_value
+                                            processed_keys.add(potential_key)
+                        
+                        # 清理meta中的HTML实体编码
+                        for key in meta:
+                            if isinstance(meta[key], str):
+                                meta[key] = self._clean_html_entities(meta[key])
 
                         # 特殊处理：对于多行元数据结构（如Table 21），检查是否有更丰富的元数据
                         # 检查前几行是否有键值对结构
@@ -265,41 +308,58 @@ class TableDetector:
                                         msg_name = res[-1].strip()
                                         break
                         
-                        # 4. 新增：处理类似"表1 端口分配表"格式的表格标题
+                        # 4. 新增：处理类似"表1 端口分配表"或"表2. ID的定义"格式的表格标题
                         if not msg_name and grid:
-                            # 检查表头上方的几行，看是否有"表X 表名"格式的标题
+                            # 检查表头上方的几行，看是否有表格标题格式
                             for r_idx in range(min(5, header_row_idx)):  # 检查表头上方最多5行
                                 row = grid[r_idx]
                                 if row:
                                     # 检查每行的第一个单元格，通常包含表格标题
                                     first_cell = row[0] if row and len(row) > 0 else ""
-                                    if first_cell and '表' in first_cell and ' ' in first_cell:
-                                        # 尝试匹配"表X 表名"或"表X 表名 表"格式
-                                        # 更智能的分割：查找第一个空格后的所有内容，而不是只取第二部分
-                                        space_pos = first_cell.find(' ')
-                                        if space_pos != -1:
-                                            table_name_part = first_cell[space_pos + 1:].strip()
-                                            # 移除可能的"表"字
-                                            if table_name_part.endswith('表'):
-                                                table_name_part = table_name_part[:-1]
-                                            if table_name_part:
-                                                msg_name = table_name_part
+                                    if first_cell and '表' in first_cell:
+                                        # 优先处理"表X. 表名"格式（带句号或圆点）
+                                        match = re.match(r'^表\d+[.。]\s*(.+?)(?:\s|$)', first_cell)
+                                        if match:
+                                            msg_name = match.group(1).strip()
+                                            if msg_name:
                                                 break
+                                        
+                                        # 退而求其次处理"表X 表名"格式（带空格）
+                                        if ' ' in first_cell:
+                                            space_pos = first_cell.find(' ')
+                                            if space_pos != -1:
+                                                table_name_part = first_cell[space_pos + 1:].strip()
+                                                # 移除可能的"表"字
+                                                if table_name_part.endswith('表'):
+                                                    table_name_part = table_name_part[:-1]
+                                                if table_name_part:
+                                                    msg_name = table_name_part
+                                                    break
                         
                         # 5. 如果还是没有找到名称，尝试从表头中推断
                         if not msg_name:
-                            # 注意：此时 content_found 和 type_found 还未定义，需要基于 headers 本身判断
+                            headers_str = ' '.join(headers) if headers else ''
+                            
+                            # 第一优先级：检查是否为特殊表格类型
                             if any('消息ID' in h or '消息标识' in h for h in headers):
                                 msg_name = '消息ID编码表'
-                            elif any(keyword in str(headers) for keyword in ['接收组播地址', '接收端口号', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码']):
+                            elif any(keyword in headers_str for keyword in ['接收组播地址', '接收端口号', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码']):
                                 msg_name = '端口分配表'
-                            # 检查表头是否包含数据内容所需的核心类别
-                            # 使用原始 headers 而不是 unique_headers，因为 unique_headers 还未定义
-                            temp_seq_found = any(any(kw in h for kw in self.header_categories['sequence']) for h in headers) if headers else False
-                            temp_content_found = any(any(kw in h for kw in self.header_categories['content']) for h in headers) if headers else False
-                            temp_type_found = any(any(kw in h for kw in self.header_categories['type']) for h in headers) if headers else False
-                            if temp_content_found and temp_type_found:
-                                msg_name = '协议参数表'
+                            else:
+                                # 第二优先级：基于表头内容推断
+                                temp_seq_found = any(any(kw in h for kw in self.header_categories['sequence']) for h in headers) if headers else False
+                                temp_content_found = any(any(kw in h for kw in self.header_categories['content']) for h in headers) if headers else False
+                                temp_type_found = any(any(kw in h for kw in self.header_categories['type']) for h in headers) if headers else False
+                                
+                                # 检查特殊业务关键词
+                                if '接口' in headers_str and temp_content_found:
+                                    msg_name = '接口参数表'
+                                elif '指令' in headers_str or '命令' in headers_str:
+                                    msg_name = '指令定义表'
+                                elif '状态' in headers_str:
+                                    msg_name = '状态表'
+                                elif temp_content_found and temp_type_found:
+                                    msg_name = '协议参数表'
                         
                         # 清洗标题标签
                         msg_name = re.sub(r'^(信息|名称|标识|信号|消息|—)+', '', msg_name).strip()
@@ -423,6 +483,23 @@ class TableDetector:
                         
                         # 临时保存所有表格，后续统一过滤
                         if data_rows:
+                            # 【元数据注入】将所有meta字段注入到data_rows[0]
+                            # 按照需求：如果目标字段已存在且非空，则不覆盖；否则注入meta中的值
+                            if data_rows and meta:
+                                for meta_key, meta_value in meta.items():
+                                    # 检查是否已存在对应的表头（允许模糊匹配，如"名称"可能对应"消息名称"）
+                                    existing_key = None
+                                    for header in unique_headers:
+                                        if meta_key in header or header in meta_key:
+                                            existing_key = header
+                                            break
+                                    
+                                    # 如果没有对应的表头，直接注入到第一行
+                                    if not existing_key:
+                                        # 检查第一行是否已有该键值且非空
+                                        if meta_key not in data_rows[0] or not data_rows[0][meta_key]:
+                                            data_rows[0][meta_key] = meta_value
+                            
                             # 创建表格数据副本，添加辅助表标记用于过滤
                             table_data = {
                                 'index': table_idx,

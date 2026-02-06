@@ -305,6 +305,24 @@ class ExcelExporter:
                                 remarks_parts.append(f"{meta_key}:{meta_value}")
                             continue
                         
+                        # 特殊处理：单独的"信源"字段（来自ID编码表）
+                        if meta_key == '信源':
+                            # 直接映射到"信源机器码"列
+                            if '信源机器码' in available_columns:
+                                fill_data['信源机器码'] = meta_value
+                            else:
+                                remarks_parts.append(f"信源:{meta_value}")
+                            continue
+                        
+                        # 特殊处理：单独的"信宿"或"信目"字段（来自ID编码表）
+                        if meta_key in ('信宿', '信目'):
+                            # 直接映射到"信宿机器码"列
+                            if '信宿机器码' in available_columns:
+                                fill_data['信宿机器码'] = meta_value
+                            else:
+                                remarks_parts.append(f"{meta_key}:{meta_value}")
+                            continue
+                        
                         # 尝试找到对应的Excel列
                         excel_column = self._find_excel_column_for_metadata(meta_key, available_columns)
                         

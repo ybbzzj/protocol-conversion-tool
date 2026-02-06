@@ -60,7 +60,13 @@ def start_extraction():
                     matched_row['类型（bit）'] = proc_res['converted']['位数']
                 
                 table_rows.append(matched_row)
-            processed_tables.append({'msg_name': table['msg_name'], 'data_rows': table_rows})
+            # 构建表格数据，包含元数据（meta）
+            table_data = {
+                'msg_name': table['msg_name'],
+                'data_rows': table_rows,
+                'meta': table.get('meta', {})  # 传递元数据，包括信源、信宿、消息ID等
+            }
+            processed_tables.append(table_data)
             
         # 导出
         output_dir = os.path.join('backend', 'outputs')

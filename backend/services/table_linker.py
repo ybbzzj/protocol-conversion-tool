@@ -58,6 +58,79 @@ class TableLinker:
                     return table
         return None
 
+    def match_message_name_and_get_metadata(self, param_msg_name: str, id_table: Dict) -> Optional[Dict]:
+        """
+        在消息ID编码表中查找匹配的消息名称，并返回相关元数据（信源、信宿、消息ID等）
+        
+        Args:
+            param_msg_name: 参数表中的消息名称
+            id_table: 消息ID编码表
+        
+        Returns:
+            包含消息ID及其他元数据的字典，或None
+        """
+        data_rows = id_table.get('data_rows', [])
+        headers = id_table.get('headers', [])
+        
+        # 查找相关字段的列索引
+        msg_content_col = None
+        msg_id_col = None
+        src_col = None  # 信源
+        dst_col = None  # 信宿
+        
+        for idx, header in enumerate(headers):
+            if '信息内容' in header or '消息内容' in header:
+                msg_content_col = idx
+            elif '消息ID' in header or '消息标识' in header:
+                msg_id_col = idx
+            elif '信源' in header and '信宿' not in header:
+                src_col = idx
+            elif '信宿' in header or '信目' in header:
+                dst_col = idx
+        
+        if msg_content_col is None:
+            return None
+        
+        # 在消息ID编码表中查找匹配的消息名称
+        for row in data_rows:
+            row_values = list(row.values())
+            
+            if len(row_values) > msg_content_col:
+                content_val = row_values[msg_content_col] if msg_content_col < len(row_values) else ""
+                
+                # 简单的文本匹配
+                if param_msg_name.strip() in str(content_val) or str(content_val).strip() in param_msg_name:
+                    # 构建元数据字典
+                    metadata = {}
+                    if msg_id_col is not None and msg_id_col < len(row_values):
+                        metadata['消息ID'] = str(row_values[msg_id_col])
+                    if src_col is not None and src_col < len(row_values):
+                        metadata['信源'] = str(row_values[src_col])
+                    if dst_col is not None and dst_col < len(row_values):
+                        metadata['信宿'] = str(row_values[dst_col])
+                    
+                    return metadata
+        
+        # 尝试模糊匹配
+        for row in data_rows:
+            row_values = list(row.values())
+            if len(row_values) > msg_content_col:
+                content_val = row_values[msg_content_col] if msg_content_col < len(row_values) else ""
+                
+                # 检查是否在预定义的名称映射中
+                for canonical_name, aliases in self.name_mappings.items():
+                    if param_msg_name in aliases and str(content_val) in aliases:
+                        metadata = {}
+                        if msg_id_col is not None and msg_id_col < len(row_values):
+                            metadata['消息ID'] = str(row_values[msg_id_col])
+                        if src_col is not None and src_col < len(row_values):
+                            metadata['信源'] = str(row_values[src_col])
+                        if dst_col is not None and dst_col < len(row_values):
+                            metadata['信宿'] = str(row_values[dst_col])
+                        return metadata
+        
+        return None
+
     def match_message_name(self, param_msg_name: str, id_table: Dict) -> Optional[str]:
         """
         在消息ID编码表中查找匹配的消息名称
@@ -280,21 +353,24 @@ class TableLinker:
             # 初始化元数据
             meta = proto_table.get('meta', {})
             
-            # 尝试从ID表中查找对应的消息ID
+            # 优先级1：尝试从ID表中查找对应的消息名称及其相关信息（包括信源、信宿、消息ID）
             for id_table in id_tables:
-                msg_id = self.match_message_name(msg_name, id_table)
+                id_metadata = self.match_message_name_and_get_metadata(msg_name, id_table)
                 
-                if msg_id:
-                    meta['消息ID'] = msg_id
+                if id_metadata:
+                    # 合并ID表的元数据（包括消息ID、信源、信宿等）
+                    meta.update(id_metadata)
                     break  # 找到匹配项后跳出循环
             
-            # 尝试从端口分配表中查找相关信息
+            # 优先级2：尝试从端口分配表中查找相关信息
             for port_table in port_tables:
                 port_metadata = self.match_message_name_in_port_table(msg_name, port_table)
                 
                 if port_metadata:
-                    # 合并端口分配表的元数据
-                    meta.update(port_metadata)
+                    # 合并端口分配表的元数据（如果元数据中没有这些字段才添加）
+                    for key, value in port_metadata.items():
+                        if key not in meta:  # 避免覆盖已有的信息
+                            meta[key] = value
                     break  # 找到匹配项后跳出循环
             
             # 更新协议表的元数据

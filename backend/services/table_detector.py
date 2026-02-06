@@ -2,8 +2,9 @@
 import re
 import logging
 import html
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from docx2python import docx2python
+from docx import Document
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,68 @@ class TableDetector:
             'remark': ['备注', '值域', '数据处理方法'],  # 备注类
             'meta': ['信源', '信宿', '信息内容', '消息ID', '接口名称', '周期', '发起时机', '错误处理']  # 消息元数据类
         }
+        # 用于存储从python-docx获取的表格标题映射 (table_index -> title)
+        self.table_titles_from_docx = {}
     
+    def _extract_table_titles_from_docx(self, file_path: str) -> Dict[int, str]:
+        """
+        从Word文档中提取表格前面的标题文本
+        返回一个映射：{table_index -> title}
+        
+        策略：
+        1. 优先查找"表X 标题"或"表X. 标题"格式的明确标题
+        2. 只提取真实存在的标题，不生成默认名称
+        3. 没有标题的表格将被忽略（留作空值，由表检测器的后续逻辑处理）
+        """
+        titles = {}
+        try:
+            doc = Document(file_path)
+            table_count = 0
+            
+            # 获取所有body元素（段落和表格）
+            for block_idx, block in enumerate(list(doc.element.body)):
+                if block.tag.endswith('tbl'):  # 表格
+                    # 回溯查找前面的标题
+                    parent = block.getparent()
+                    block_position = parent.index(block)
+                    
+                    # 从这个表格往前查找最近的标题性文本
+                    title = ""
+                    # 限制回溯范围，避免查找到太远的不相关文本（最多往前2个段落）
+                    for i in range(max(0, block_position - 2), -1, -1):
+                        elem = parent[i]
+                        if elem.tag.endswith('p'):
+                            text = elem.text if hasattr(elem, 'text') else ''
+                            if text.strip() and len(text) < 100:
+                                # 只接受"表X"格式的标题
+                                if '表' in text:
+                                    # 匹配"表X 标题"、"表X. 标题"或"表 标题"等格式
+                                    match = re.search(r'表[0-9A-Za-z.。]*\s*(.+?)(?:\s*$|[\s。，；])', text)
+                                    if match:
+                                        title = match.group(1).strip()
+                                        # 移除末尾可能的标点
+                                        title = re.sub(r'[\s。，；]+$', '', title).strip()
+                                        # 移除末尾可能的"表"字
+                                        if title.endswith('表'):
+                                            title = title[:-1].strip()
+                                        
+                                        if title and len(title) > 0 and len(title) < 80:
+                                            break
+                        
+                        # 如果找到有效标题，立即跳出
+                        if title:
+                            break
+                    
+                    # 只有找到真实的标题才记录
+                    if title:
+                        titles[table_count] = title
+                    
+                    table_count += 1
+        except Exception as e:
+            logger.warning(f"Failed to extract table titles from docx: {str(e)}")
+        
+        return titles
+
     def _clean_html_entities(self, text):
         """清理HTML实体编码（如&#x00E8;等），但保留分隔符"""
         if not text:
@@ -67,6 +129,9 @@ class TableDetector:
     def extract_tables_from_docx(self, file_path: str) -> List[Dict]:
         extracted_tables = []
         try:
+            # 首先从python-docx获取表格标题映射
+            self.table_titles_from_docx = self._extract_table_titles_from_docx(file_path)
+            
             # 捕获 docx2python 库的索引错误
             try:
                 doc_temp = docx2python(file_path)
@@ -177,7 +242,8 @@ class TableDetector:
 
                     if header_row_idx != -1 and 0 <= header_row_idx < len(grid):
                         headers = grid[header_row_idx] if 0 <= header_row_idx < len(grid) else []
-                        msg_name = ""
+                        # 【优先使用】从表格外部（python-docx）获取的标题
+                        msg_name = self.table_titles_from_docx.get(table_idx, "")
                         meta = {}
                         
                         # 2. 提取元数据（表头之上的行）
@@ -312,6 +378,7 @@ class TableDetector:
                                         msg_name = parts[-1].strip()
                                         break
                         
+                        # 【备选方案】如果表格外部没有标题，再尝试从表格内部提取
                         # 3. 备选方案：如果表格内没找到标题，向文档段落回溯
                         if not msg_name:
                             for p_text in reversed(full_text_paragraphs[:200]):

@@ -358,21 +358,30 @@ class TableLinker:
 
     def link_tables(self, tables: List[Dict]) -> List[Dict]:
         """
-        关联表格，将所有辅助表的信息添加到核心协议表中
+        关联表格，将邻近的辅助表的信息添加到核心协议表中
+        
+        新逻辑：
+        1. 识别"核心表"（数据行最多的）
+        2. 在前后寻找相似名称的辅助表（如"某设备装置测量数据1"、"某设备装置测量数据11"）
+        3. 将辅助表的元数据关联到核心表
         
         Args:
             tables: 所有识别到的表格
             
         Returns:
-            关联后的表格列表
+            关联后的表格列表（仅包含核心表）
         """
+        if not tables:
+            return []
+        
         # 分离核心协议表和辅助表
         protocol_tables = []
         auxiliary_tables = []
         
-        for table in tables:
+        for idx, table in enumerate(tables):
             headers = table.get('headers', [])
             msg_name = table.get('msg_name', '')
+            data_rows = table.get('data_rows', [])
             
             # 判断是否为核心协议表（包含参数、数据类型等字段）
             has_content = any('参数' in h or '内容' in h or '信号名称' in h for h in headers)
@@ -380,34 +389,90 @@ class TableLinker:
             
             if has_content and has_type:
                 # 核心协议表
-                protocol_tables.append(table)
+                table_with_index = table.copy()
+                table_with_index['_original_index'] = idx  # 记录原始索引用于邻近查询
+                protocol_tables.append(table_with_index)
             else:
                 # 所有其他表都视为辅助表
-                # 注：包括ID编码表、端口分配表等所有辅助表
-                if msg_name.endswith('表') or not has_content:
-                    auxiliary_tables.append(table)
+                table_with_index = table.copy()
+                table_with_index['_original_index'] = idx  # 记录原始索引
+                auxiliary_tables.append(table_with_index)
         
-        # 为每个核心协议表尝试从所有辅助表关联信息
+        # 为每个核心协议表尝试从邻近的辅助表关联信息
         linked_tables = []
         
         for proto_table in protocol_tables:
+            proto_idx = proto_table.get('_original_index', -1)
             msg_name = proto_table.get('msg_name', '')
             
             # 初始化元数据
             meta = proto_table.get('meta', {})
             
-            # 遍历所有辅助表，尝试关联信息
+            # 策略：在前后寻找相似名称的辅助表
+            # 优先查找名称高度相似的辅助表（如"某设备装置测量数据"、"某设备装置测量数据1"等）
             for aux_table in auxiliary_tables:
-                aux_metadata = self.extract_all_metadata_from_table(aux_table, msg_name)
+                aux_idx = aux_table.get('_original_index', -1)
+                aux_msg_name = aux_table.get('msg_name', '')
                 
-                if aux_metadata:
-                    # 合并辅助表的元数据（如果元数据中没有这些字段才添加）
-                    for key, value in aux_metadata.items():
-                        if key not in meta:  # 避免覆盖已有的信息
-                            meta[key] = value
+                # 检查辅助表是否在邻近位置（前后不超过5个表）且名称相关
+                if proto_idx >= 0 and aux_idx >= 0:
+                    distance = abs(proto_idx - aux_idx)
+                    if distance > 0 and distance <= 5:  # 邻近范围内，但不包括自己
+                        # 检查名称是否相似（基础名称相同，可能有数字后缀差异）
+                        # 例如："某设备装置测量数据" == "某设备装置测量数据1" 或 "某设备装置测量数据11"
+                        if self._is_related_table_name(msg_name, aux_msg_name):
+                            aux_metadata = self.extract_all_metadata_from_table(aux_table, msg_name)
+                            
+                            if aux_metadata:
+                                # 合并辅助表的元数据（如果元数据中没有这些字段才添加）
+                                for key, value in aux_metadata.items():
+                                    if key not in meta:  # 避免覆盖已有的信息
+                                        meta[key] = value
             
             # 更新协议表的元数据
             proto_table['meta'] = meta
+            # 移除临时的索引字段
+            if '_original_index' in proto_table:
+                del proto_table['_original_index']
             linked_tables.append(proto_table)
         
         return linked_tables
+    
+    def _is_related_table_name(self, name1: str, name2: str) -> bool:
+        """
+        判断两个表名是否相关（同一系列的表）
+        例如："某设备装置测量数据" 和 "某设备装置测量数据1" 应该被认为是相关的
+        
+        Args:
+            name1: 表名1
+            name2: 表名2
+            
+        Returns:
+            True 如果相关，False 否则
+        """
+        if not name1 or not name2:
+            return False
+        
+        # 移除末尾的数字，获取基础名称
+        def get_base_name(name):
+            # 移除末尾的所有数字和标点
+            return re.sub(r'[0-9。.]*$', '', name).strip()
+        
+        base1 = get_base_name(name1)
+        base2 = get_base_name(name2)
+        
+        # 如果基础名称相同且长度合理，则认为相关
+        if base1 and base2:
+            # 完全相同
+            if base1 == base2:
+                return True
+            
+            # 一个是另一个的子串（长度至少80%）
+            len_min = min(len(base1), len(base2))
+            len_max = max(len(base1), len(base2))
+            if len_min > 0 and len_min / len_max >= 0.8:
+                # 检查是否是包含关系
+                if base1 in base2 or base2 in base1:
+                    return True
+        
+        return False

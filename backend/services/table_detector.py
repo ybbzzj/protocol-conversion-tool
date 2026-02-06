@@ -242,8 +242,8 @@ class TableDetector:
 
                     if header_row_idx != -1 and 0 <= header_row_idx < len(grid):
                         headers = grid[header_row_idx] if 0 <= header_row_idx < len(grid) else []
-                        # 【优先使用】从表格外部（python-docx）获取的标题
-                        msg_name = self.table_titles_from_docx.get(table_idx, "")
+                        # 初始化msg_name为空，后续从表内元数据提取
+                        msg_name = ""
                         meta = {}
                         
                         # 2. 提取元数据（表头之上的行）
@@ -443,6 +443,12 @@ class TableDetector:
                         
                         # 清洗标题标签
                         msg_name = re.sub(r'^(信息|名称|标识|信号|消息|—)+', '', msg_name).strip()
+                        
+                        # 6. 最后备选：如果仍未找到标题，使用从Word文档结构提取的外部标题
+                        if not msg_name:
+                            external_title = self.table_titles_from_docx.get(table_idx, "")
+                            if external_title:
+                                msg_name = external_title
                         
                         # 4. 提取数据行
                         data_rows = []

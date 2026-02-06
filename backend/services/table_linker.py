@@ -418,7 +418,7 @@ class TableLinker:
                 table_with_index['_original_index'] = idx  # 记录原始索引
                 auxiliary_tables.append(table_with_index)
         
-        # 为每个核心协议表尝试从邻近的辅助表关联信息
+        # 为每个核心协议表尝试从所有辅助表关联信息
         linked_tables = []
         
         for proto_table in protocol_tables:
@@ -428,13 +428,14 @@ class TableLinker:
             # 初始化元数据
             meta = proto_table.get('meta', {})
             
-            # 策略1：**精确表融合**——优先在辅助表中查找"信息内容"完全相同的行
-            # 这用于处理ID编码表与协议参数表的融合
+            # **全局表融合策略**：在所有辅助表中搜索相匹配的数据
+            # 只要任何辅助表中的"信息内容"与协议表的"信息名称"一致，就融合该行的所有数据
             for aux_table in auxiliary_tables:
                 aux_idx = aux_table.get('_original_index', -1)
                 aux_msg_name = aux_table.get('msg_name', '')
                 
-                # 查询：msg_name 是否在辅助表的"信息内容"列中（精确匹配）
+                # 策略1：**精确信息内容匹配**——查找"信息内容"完全相同的行
+                # 这适用于所有类型的辅助表（ID编码表、端口分配表等）
                 aux_metadata = self.extract_all_metadata_from_table(aux_table, msg_name)
                 
                 if aux_metadata:
@@ -442,13 +443,11 @@ class TableLinker:
                     for key, value in aux_metadata.items():
                         if key not in meta:  # 避免覆盖已有的信息
                             meta[key] = value
-            
-            # 策略2：在前后寻找相似名称的辅助表（邻近关联）
-            # 例如："某设备装置测量数据" == "某设备装置测量数据1"
-            for aux_table in auxiliary_tables:
-                aux_idx = aux_table.get('_original_index', -1)
-                aux_msg_name = aux_table.get('msg_name', '')
+                    # 继续搜索其他表，可能有多个表包含该协议的数据
+                    continue
                 
+                # 策略2：在前后寻找相似名称的辅助表（邻近关联）
+                # 例如："某设备装置测量数据" == "某设备装置测量数据1"
                 # 检查辅助表是否在邻近位置（前后不超过5个表）且名称相关
                 if proto_idx >= 0 and aux_idx >= 0:
                     distance = abs(proto_idx - aux_idx)

@@ -288,7 +288,7 @@ class ExcelExporter:
                     meta = table.get('meta', {})
                     
                     # 智能映射元数据到对应的Excel列
-                    remarks_parts = []  # 用于收集无法直接映射的元数据
+                    # 注：只映射不追加——无法映射的元数据不加入备注
                     
                     for meta_key, meta_value in meta.items():
                         if not meta_value:
@@ -300,9 +300,7 @@ class ExcelExporter:
                             parsed = self._parse_source_destination(meta_value, available_columns)
                             if parsed:
                                 fill_data.update(parsed)
-                            else:
-                                # 分解失败，追加到备注
-                                remarks_parts.append(f"{meta_key}:{meta_value}")
+                            # 分解失败也不追加到备注
                             continue
                         
                         # 特殊处理：单独的"信源"字段（来自ID编码表）
@@ -310,8 +308,7 @@ class ExcelExporter:
                             # 直接映射到"信源机器码"列
                             if '信源机器码' in available_columns:
                                 fill_data['信源机器码'] = meta_value
-                            else:
-                                remarks_parts.append(f"信源:{meta_value}")
+                            # 无法映射也不追加到备注
                             continue
                         
                         # 特殊处理：单独的"信宿"或"信目"字段（来自ID编码表）
@@ -319,8 +316,7 @@ class ExcelExporter:
                             # 直接映射到"信宿机器码"列
                             if '信宿机器码' in available_columns:
                                 fill_data['信宿机器码'] = meta_value
-                            else:
-                                remarks_parts.append(f"{meta_key}:{meta_value}")
+                            # 无法映射也不追加到备注
                             continue
                         
                         # 尝试找到对应的Excel列
@@ -329,26 +325,13 @@ class ExcelExporter:
                         if excel_column:
                             # 直接映射到Excel列
                             fill_data[excel_column] = meta_value
-                        elif self._should_append_to_remarks(meta_key):
-                            # 无法直接映射，追加到备注
-                            remarks_parts.append(f"{meta_key}:{meta_value}")
                         else:
                             # 尝试用 FieldMatcher 进行智能匹配（处理来自辅助表的动态字段）
                             match_result = self.matcher.match_field(meta_key)
                             if match_result.target and match_result.target in available_columns:
                                 # 找到匹配的Excel列
                                 fill_data[match_result.target] = meta_value
-                            else:
-                                # 如果还是没找到，追加到备注
-                                remarks_parts.append(f"{meta_key}:{meta_value}")
-                    
-                    # 如果有无法直接映射的元数据，追加到备注列
-                    if remarks_parts:
-                        existing_remarks = fill_data.get('备注', '')
-                        if existing_remarks:
-                            fill_data['备注'] = existing_remarks + ' | ' + ' | '.join(remarks_parts)
-                        else:
-                            fill_data['备注'] = ' | '.join(remarks_parts)
+                            # 无法映射也不追加到备注，直接跳过
                 else:
                     fill_data['名称'] = ""
                 

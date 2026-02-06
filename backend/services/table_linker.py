@@ -304,9 +304,61 @@ class TableLinker:
         
         return None
 
+    def extract_all_metadata_from_table(self, auxiliary_table: Dict, target_msg_name: str) -> Optional[Dict]:
+        """
+        从任意辅助表中提取所有可用的元数据
+        
+        Args:
+            auxiliary_table: 辅助表
+            target_msg_name: 目标消息名称
+            
+        Returns:
+            提取的元数据字典，或None
+        """
+        data_rows = auxiliary_table.get('data_rows', [])
+        headers = auxiliary_table.get('headers', [])
+        
+        if not headers or not data_rows:
+            return None
+        
+        # 在表中查找"信息内容"或相似的消息名称列
+        msg_content_col = None
+        for idx, header in enumerate(headers):
+            if '信息内容' in header or '消息内容' in header or '消息' in header:
+                msg_content_col = idx
+                break
+        
+        if msg_content_col is None:
+            return None
+        
+        # 在表中查找匹配的消息名称
+        for row in data_rows:
+            row_values = list(row.values())
+            
+            if len(row_values) > msg_content_col:
+                content_val = str(row_values[msg_content_col]) if msg_content_col < len(row_values) else ""
+                
+                # 文本匹配或反向匹配
+                if target_msg_name.strip() in content_val or content_val.strip() in target_msg_name:
+                    # 提取这一行的所有数据作为元数据
+                    metadata = {}
+                    for col_idx, header in enumerate(headers):
+                        if col_idx < len(row_values):
+                            val = row_values[col_idx]
+                            if val and val not in ['', '-', '—', 'xx']:
+                                # 清理表头名（去掉"信息内容"等）
+                                clean_header = header.strip()
+                                if clean_header and clean_header not in ['信息内容', '消息内容', '消息']:
+                                    metadata[clean_header] = str(val)
+                    
+                    if metadata:
+                        return metadata
+        
+        return None
+
     def link_tables(self, tables: List[Dict]) -> List[Dict]:
         """
-        关联表格，将消息ID编码表和端口分配表的信息添加到协议参数表中
+        关联表格，将所有辅助表的信息添加到核心协议表中
         
         Args:
             tables: 所有识别到的表格
@@ -314,37 +366,28 @@ class TableLinker:
         Returns:
             关联后的表格列表
         """
-        # 分离核心协议表、消息ID编码表和端口分配表
+        # 分离核心协议表和辅助表
         protocol_tables = []
-        id_tables = []
-        port_tables = []
+        auxiliary_tables = []
         
         for table in tables:
             headers = table.get('headers', [])
-            data_rows = table.get('data_rows', [])
+            msg_name = table.get('msg_name', '')
             
             # 判断是否为核心协议表（包含参数、数据类型等字段）
             has_content = any('参数' in h or '内容' in h or '信号名称' in h for h in headers)
             has_type = any('数据类型' in h or '类型' in h for h in headers)
             
-            # 判断是否为消息ID编码表
-            has_msg_id = any('消息ID' in h or '消息标识' in h for h in headers)
-            has_msg_content_for_id = any('信息内容' in h for h in headers)
-            
-            # 判断是否为端口分配表
-            has_port_fields = any(keyword in str(headers) for keyword in self.table_type_keywords['port_allocation'])
-            
             if has_content and has_type:
                 # 核心协议表
                 protocol_tables.append(table)
-            elif has_msg_id and has_msg_content_for_id:
-                # 消息ID编码表
-                id_tables.append(table)
-            elif has_port_fields:
-                # 端口分配表
-                port_tables.append(table)
+            else:
+                # 所有其他表都视为辅助表
+                # 注：包括ID编码表、端口分配表等所有辅助表
+                if msg_name.endswith('表') or not has_content:
+                    auxiliary_tables.append(table)
         
-        # 为每个核心协议表尝试关联各种信息
+        # 为每个核心协议表尝试从所有辅助表关联信息
         linked_tables = []
         
         for proto_table in protocol_tables:
@@ -353,37 +396,18 @@ class TableLinker:
             # 初始化元数据
             meta = proto_table.get('meta', {})
             
-            # 优先级1：尝试从ID表中查找对应的消息名称及其相关信息（包括信源、信宿、消息ID）
-            for id_table in id_tables:
-                id_metadata = self.match_message_name_and_get_metadata(msg_name, id_table)
+            # 遍历所有辅助表，尝试关联信息
+            for aux_table in auxiliary_tables:
+                aux_metadata = self.extract_all_metadata_from_table(aux_table, msg_name)
                 
-                if id_metadata:
-                    # 合并ID表的元数据（包括消息ID、信源、信宿等）
-                    meta.update(id_metadata)
-                    break  # 找到匹配项后跳出循环
-            
-            # 优先级2：尝试从端口分配表中查找相关信息
-            for port_table in port_tables:
-                port_metadata = self.match_message_name_in_port_table(msg_name, port_table)
-                
-                if port_metadata:
-                    # 合并端口分配表的元数据（如果元数据中没有这些字段才添加）
-                    for key, value in port_metadata.items():
+                if aux_metadata:
+                    # 合并辅助表的元数据（如果元数据中没有这些字段才添加）
+                    for key, value in aux_metadata.items():
                         if key not in meta:  # 避免覆盖已有的信息
                             meta[key] = value
-                    break  # 找到匹配项后跳出循环
             
             # 更新协议表的元数据
             proto_table['meta'] = meta
             linked_tables.append(proto_table)
         
-        # 最终过滤：移除所有名称以"表"结尾的表格（如协议参数表、端口分配表等）
-        # 这些表仅用于元数据关联，不应出现在最终导出结果中
-        final_tables = []
-        for table in linked_tables:
-            msg_name = table.get('msg_name', '')
-            # 保留条件：名称不以"表"结尾
-            if not msg_name.endswith('表'):
-                final_tables.append(table)
-        
-        return final_tables
+        return linked_tables

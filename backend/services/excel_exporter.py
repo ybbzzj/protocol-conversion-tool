@@ -332,6 +332,15 @@ class ExcelExporter:
                         elif self._should_append_to_remarks(meta_key):
                             # 无法直接映射，追加到备注
                             remarks_parts.append(f"{meta_key}:{meta_value}")
+                        else:
+                            # 尝试用 FieldMatcher 进行智能匹配（处理来自辅助表的动态字段）
+                            match_result = self.matcher.match_field(meta_key)
+                            if match_result.target and match_result.target in available_columns:
+                                # 找到匹配的Excel列
+                                fill_data[match_result.target] = meta_value
+                            else:
+                                # 如果还是没找到，追加到备注
+                                remarks_parts.append(f"{meta_key}:{meta_value}")
                     
                     # 如果有无法直接映射的元数据，追加到备注列
                     if remarks_parts:

@@ -382,13 +382,32 @@ class TableLinker:
             headers = table.get('headers', [])
             msg_name = table.get('msg_name', '')
             data_rows = table.get('data_rows', [])
+            meta = table.get('meta', {})
             
             # 判断是否为核心协议表（包含参数、数据类型等字段）
             has_content = any('参数' in h or '内容' in h or '信号名称' in h for h in headers)
             has_type = any('数据类型' in h or '类型' in h for h in headers)
             
-            if has_content and has_type:
-                # 核心协议表
+            # 检查是否有有意义的协议名称
+            # 从表内元数据或msg_name获取实际的协议名称
+            has_real_protocol_name = False
+            if meta:
+                # 检查元数据中是否有实际的协议名称（不是默认的表名）
+                for key in meta:
+                    val = meta.get(key, '')
+                    if any(k in key for k in ['信息名称', '数据项名称', '通信帧名称']) and val:
+                        if val not in ['端口分配表', '协议参数表', '状态表', '指令定义表', 'ID编码表']:
+                            has_real_protocol_name = True
+                            break
+            
+            # 如果msg_name看起来是一个真实的协议名称（不是默认的表类型名）
+            if not has_real_protocol_name and msg_name:
+                default_names = ['端口分配表', '协议参数表', '状态表', '指令定义表', 'ID编码表', '消息ID编码表', '某状态信息']
+                if msg_name not in default_names:
+                    has_real_protocol_name = True
+            
+            if has_content and has_type and has_real_protocol_name:
+                # 核心协议表：必须有数据列且有实际的协议名称
                 table_with_index = table.copy()
                 table_with_index['_original_index'] = idx  # 记录原始索引用于邻近查询
                 protocol_tables.append(table_with_index)

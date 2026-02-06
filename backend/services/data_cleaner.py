@@ -15,6 +15,8 @@ class DataTypeConverter:
 
     def convert_type(self, type_str: str) -> Tuple[str, int, str]:
         if not type_str: return ("", 0, "warning")
+        # 确保type_str是字符串（可能收到整数或其他类型）
+        type_str = str(type_str) if not isinstance(type_str, str) else type_str
         clean = type_str.strip().upper()
         # 1. 查表
         if clean in self.TYPE_MAPPING:

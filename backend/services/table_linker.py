@@ -364,6 +364,7 @@ class TableLinker:
         1. 识别"核心表"（数据行最多的）
         2. 在前后寻找相似名称的辅助表（如"某设备装置测量数据1"、"某设备装置测量数据11"）
         3. 将辅助表的元数据关联到核心表
+        4. **表融合**：如果辅助表中的"信息内容"与协议表的"信息名称"完全相同，则提取该行的所有数据
         
         Args:
             tables: 所有识别到的表格
@@ -427,8 +428,23 @@ class TableLinker:
             # 初始化元数据
             meta = proto_table.get('meta', {})
             
-            # 策略：在前后寻找相似名称的辅助表
-            # 优先查找名称高度相似的辅助表（如"某设备装置测量数据"、"某设备装置测量数据1"等）
+            # 策略1：**精确表融合**——优先在辅助表中查找"信息内容"完全相同的行
+            # 这用于处理ID编码表与协议参数表的融合
+            for aux_table in auxiliary_tables:
+                aux_idx = aux_table.get('_original_index', -1)
+                aux_msg_name = aux_table.get('msg_name', '')
+                
+                # 查询：msg_name 是否在辅助表的"信息内容"列中（精确匹配）
+                aux_metadata = self.extract_all_metadata_from_table(aux_table, msg_name)
+                
+                if aux_metadata:
+                    # 合并辅助表的元数据（如果元数据中没有这些字段才添加）
+                    for key, value in aux_metadata.items():
+                        if key not in meta:  # 避免覆盖已有的信息
+                            meta[key] = value
+            
+            # 策略2：在前后寻找相似名称的辅助表（邻近关联）
+            # 例如："某设备装置测量数据" == "某设备装置测量数据1"
             for aux_table in auxiliary_tables:
                 aux_idx = aux_table.get('_original_index', -1)
                 aux_msg_name = aux_table.get('msg_name', '')

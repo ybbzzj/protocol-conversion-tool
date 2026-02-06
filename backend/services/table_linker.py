@@ -338,8 +338,8 @@ class TableLinker:
             if len(row_values) > msg_content_col:
                 content_val = str(row_values[msg_content_col]) if msg_content_col < len(row_values) else ""
                 
-                # 文本匹配或反向匹配
-                if target_msg_name.strip() in content_val or content_val.strip() in target_msg_name:
+                # **精确匹配**：目标名称必须完全相等
+                if target_msg_name.strip() == content_val.strip():
                     # 提取这一行的所有数据作为元数据
                     metadata = {}
                     for col_idx, header in enumerate(headers):

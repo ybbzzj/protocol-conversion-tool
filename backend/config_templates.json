@@ -1,0 +1,51 @@
+[
+  {
+    "id": "3bcabd7e-915d-429d-bfe2-ce8796ee134f",
+    "name": "测试模板1",
+    "field_ids": [
+      "field1",
+      "field2",
+      "field3"
+    ]
+  },
+  {
+    "id": "1abbba77-1112-4225-afc9-76cfaf7a4b67",
+    "name": "test_template",
+    "field_ids": [
+      "f1",
+      "f2"
+    ]
+  },
+  {
+    "id": "725bd8be-74b2-43bd-9a96-574420070183",
+    "name": "test_template",
+    "field_ids": [
+      "f1",
+      "f2"
+    ]
+  },
+  {
+    "id": "b9f271d4-f56a-4cd1-9598-d1e13727b9b5",
+    "name": "test_template",
+    "field_ids": [
+      "f1",
+      "f2"
+    ]
+  },
+  {
+    "id": "29cd7059-2fe3-4151-9b33-22bfb1ec0c29",
+    "name": "测试模板",
+    "field_ids": [
+      "field1",
+      "field2"
+    ]
+  },
+  {
+    "id": "23378e46-e202-4c57-bcf7-095ba294e009",
+    "name": "测试模板",
+    "field_ids": [
+      "field1",
+      "field2"
+    ]
+  }
+]

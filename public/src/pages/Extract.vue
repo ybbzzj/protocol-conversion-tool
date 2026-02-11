@@ -192,13 +192,19 @@ async function startExtract(){
     loading.start('创建提取任务...')
     const fd = new FormData()
     fd.append('file', fileObj.value)
-    fd.append('field_ids', JSON.stringify(selectedFieldIds.value))
+    // 正确方式: 为每个 field_id 添加独立的表单字段，后端用 request.form.getlist() 获取
+    for(const fieldId of selectedFieldIds.value){
+      fd.append('field_ids', fieldId)
+    }
     const { data } = await api.post(endpoints.extractStart, fd, { headers:{ 'Content-Type':'multipart/form-data' } })
     currentTaskId.value = data?.data?.task_id || ''
     if(!currentTaskId.value){ toast.show('未返回任务ID'); return }
     toast.show('任务已创建，开始查询进度')
     startPolling()
-  }catch(e:any){ toast.show('创建任务失败') }
+  }catch(e:any){ 
+    console.error('创建任务失败:', e)
+    toast.show('创建任务失败: ' + (e.response?.data?.message || e.message || '未知错误')) 
+  }
   finally{ loading.stop() }
 }
 
@@ -220,7 +226,41 @@ function startPolling(){
 
 function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null } }
 
-function downloadResult(){ if(!currentTaskId.value){ toast.show('任务ID缺失'); return } window.open(endpoints.extractDownload(currentTaskId.value), '_blank') }
+async function downloadResult(){
+  if(!currentTaskId.value){ toast.show('任务ID缺失'); return }
+  try{
+    loading.start('下载中...')
+    // ✅ 使用 fetch 下载文件（比 window.open 更可靠）
+    const response = await fetch(endpoints.extractDownload(currentTaskId.value))
+    if(!response.ok){ throw new Error(`HTTP ${response.status}`) }
+    
+    // 获取文件名（从 Content-Disposition 头）
+    const contentDisposition = response.headers.get('content-disposition')
+    let filename = `result_${currentTaskId.value.slice(0, 8)}.xlsx`
+    if(contentDisposition){
+      const matches = contentDisposition.match(/filename[^;=\n]*=((["\']*).*?\2|[^;\n]*)/)
+      if(matches && matches[1]) filename = matches[1].replace(/["\\']/g, '')
+    }
+    
+    // 创建 blob 并下载
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    toast.show('下载完成')
+  }catch(e:any){
+    console.error('下载失败:', e)
+    toast.show('下载失败: ' + (e.message || '未知错误'))
+  }finally{
+    loading.stop()
+  }
+}
 
 onMounted(()=>{ reloadProtocolFields(); reloadTemplates() })
 </script>

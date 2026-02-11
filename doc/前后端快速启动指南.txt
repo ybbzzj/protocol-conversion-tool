@@ -1,0 +1,483 @@
+================================================================================
+                    🚀 前后端快速启动指南 (实战版)
+================================================================================
+
+【前置条件检查】
+  ✓ Python 3.8+ (推荐 3.10+)
+  ✓ Node.js 16+ (推荐 18+)
+  ✓ npm 8+
+  ✓ macOS/Linux/Windows (本指南以 macOS 为例)
+
+验证命令:
+  python3 --version    # 预期: Python 3.8+
+  node --version       # 预期: v16+
+  npm --version        # 预期: 8.0+
+
+【一键启动 - 三个终端】
+
+┌─ 终端1: 安装依赖 ────────────────────────────────────────────────────────┐
+│                                                                             │
+│ cd /Users/yuanyuqing/Documents/code/schoolProject                          │
+│                                                                             │
+│ # 方式1: 使用虚拟环境（推荐，macOS M1/M2/M3 用户必须）                     │
+│ python3 -m venv venv                                                       │
+│ source venv/bin/activate                                                   │
+│ pip install -r backend/requirements.txt                                    │
+│                                                                             │
+│ # 方式2: 直接安装（需要 --break-system-packages）                         │
+│ pip3 install --break-system-packages -r backend/requirements.txt          │
+│                                                                             │
+│ # 安装前端依赖                                                             │
+│ cd public && npm install && cd ..                                          │
+│                                                                             │
+│ ✓ 显示 "added X packages" 说明成功                                        │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────┘
+
+⚠️  常见问题及解决:
+  
+  Q: 错误信息: "error: externally-managed-environment"?
+  A: 这是 macOS 新版的 Python 限制。使用虚拟环境解决:
+     python3 -m venv venv
+     source venv/bin/activate
+  
+  Q: npm install 太慢或报错?
+  A: 切换国内镜像源:
+     npm config set registry https://registry.npmmirror.com
+     npm install
+
+┌─ 终端2: 启动后端服务 ─────────────────────────────────────────────────┐
+│                                                                             │
+│ cd /Users/yuanyuqing/Documents/code/schoolProject                          │
+│ source venv/bin/activate                    # 进入虚拟环境                 │
+│                                                                             │
+│ # 方式1: 直接运行（开发环境）                                             │
+│ python3 -c "from backend.app import create_app; app = create_app(); \     │
+│   app.run(host='0.0.0.0', port=5001, debug=True)"                        │
+│                                                                             │
+│ # 方式2: 使用 Flask CLI（如果配置正确）                                  │
+│ FLASK_APP=backend/app.py python3 -m flask run --port=5001                │
+│                                                                             │
+│ # 方式3: 使用 Gunicorn（生产环境）                                       │
+│ gunicorn -w 4 -b 0.0.0.0:5001 "backend.app:create_app()"                │
+│                                                                             │
+│ ✓ 成功标志:                                                               │
+│   * Running on http://127.0.0.1:5001                                     │
+│   * Debug mode: on                                                        │
+│   * Debugger is active!                                                  │
+│                                                                             │
+│ 如果看到: "Address already in use"                                        │
+│   → 说明 5000 或 5001 端口被占用 (见常见问题)                             │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────┘
+
+⚠️  常见问题及解决:
+
+  Q: 错误: "Address already in use"?
+  A: 端口被其他程序占用。查看占用进程:
+     lsof -i :5000      # 查看 5000 端口
+     lsof -i :5001      # 查看 5001 端口
+     
+     macOS 常见占用者: ControlCenter (AirPlay Receiver)
+     解决方案: 关闭 AirPlay Receiver 或改用其他端口
+     python3 -c "from backend.app import create_app; app = create_app(); \
+       app.run(host='0.0.0.0', port=5002, debug=True)"
+
+  Q: 错误: "Could not locate a Flask application"?
+  A: 说明 Flask 无法找到 app。确保:
+     - 已进入虚拟环境
+     - 当前目录是项目根目录
+     - 使用本指南中的启动命令
+
+  Q: 模块导入错误，如 "No module named 'backend.app'"?
+  A: 虚拟环境未激活。执行:
+     source venv/bin/activate
+
+┌─ 终端3: 启动前端服务 ─────────────────────────────────────────────────┐
+│                                                                             │
+│ cd /Users/yuanyuqing/Documents/code/schoolProject/public                   │
+│                                                                             │
+│ # 修复权限（如果 npm run dev 提示权限错误）                              │
+│ chmod +x node_modules/.bin/*                                              │
+│                                                                             │
+│ # 启动前端                                                                │
+│ npm run dev                                                               │
+│                                                                             │
+│ ✓ 成功标志:                                                               │
+│   VITE v5.4.21  ready in 347 ms                                          │
+│   ➜  Local:   http://localhost:5173/                                     │
+│                                                                             │
+│ 如果前端无法加载后端 API:                                                │
+│   → 检查 vite.config.ts 中的代理配置                                     │
+│   → 确保后端在 http://localhost:5001 正常运行                           │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────┘
+
+⚠️  常见问题及解决:
+
+  Q: 错误: "Permission denied" 针对 vite?
+  A: 修复 node_modules 权限:
+     chmod +x node_modules/.bin/*
+     npm run dev
+
+  Q: 前端无法访问后端 API?
+  A: 检查:
+     1. 后端是否正常运行: curl http://localhost:5001/health
+     2. 前端代理配置: 检查 public/vite.config.ts
+     3. 浏览器 F12 → Network 查看请求 URL
+
+【验证启动成功】
+───────────────────────────────────────────────────────────────────────────
+
+✓ 后端健康检查 (在终端4中执行):
+  curl http://localhost:5001/health
+  
+  预期输出:
+  {"status": "healthy", "version": "2.0.0"}
+
+✓ 前端访问:
+  打开浏览器: http://localhost:5173/
+  
+  预期: 看到协议提取工具的主界面
+
+✓ API 连接测试:
+  打开浏览器 F12 → Network 标签
+  在前端页面任意操作
+  观察 API 请求是否成功 (绿色/200 状态码)
+
+✓ 完整接口测试:
+  python3 test_all_interfaces.py
+  
+  预期输出:
+  ================================================================================
+  后端 API 接口完整性验证
+  ================================================================================
+  [1] 仪表盘与历史 API 测试
+  ✓ GET /api/dashboard/recent - 成功
+  ...
+  测试总结: 所有接口测试通过! ✅
+
+【生产环境启动】
+───────────────────────────────────────────────────────────────────────────
+
+后端 (使用 Gunicorn):
+  pip install gunicorn
+  cd /Users/yuanyuqing/Documents/code/schoolProject
+  source venv/bin/activate
+  gunicorn -w 4 -b 0.0.0.0:5001 --timeout 120 "backend.app:create_app()"
+
+前端 (构建优化):
+  cd /Users/yuanyuqing/Documents/code/schoolProject/public
+  npm run build
+  
+  生成的文件在 dist/ 目录中
+  部署到 Nginx/Apache/CDN
+
+Nginx 配置示例:
+  server {
+      listen 80;
+      server_name your-domain.com;
+      
+      # 前端静态文件
+      location / {
+          root /path/to/public/dist;
+          try_files $uri $uri/ /index.html;
+      }
+      
+      # API 代理
+      location /api/ {
+          proxy_pass http://localhost:5001/api/;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+      }
+  }
+
+【常见问题完全指南】
+───────────────────────────────────────────────────────────────────────────
+
+1. macOS 系统 Python 限制
+   ├─ 错误: "error: externally-managed-environment"
+   ├─ 原因: macOS Ventura+ 禁止直接 pip install
+   ├─ 解决:
+   │   python3 -m venv venv
+   │   source venv/bin/activate
+   │   pip install -r backend/requirements.txt
+   └─ 验证: which python 应显示 venv 中的 Python
+
+2. 端口被占用
+   ├─ 错误: "Address already in use"
+   ├─ 诊断:
+   │   lsof -i :5000
+   │   lsof -i :5001
+   │   lsof -i :5173
+   ├─ 解决:
+   │   - 关闭占用程序
+   │   - 或改用其他端口 (5002, 5003 等)
+   └─ macOS 特例: AirPlay Receiver 占用 5000
+       → 系统设置 → 通用 → AirDrop → 关闭 AirPlay Receiver
+
+3. npm 安装缓慢/失败
+   ├─ 原因: npm 官方源在国内速度慢
+   ├─ 解决:
+   │   npm config set registry https://registry.npmmirror.com
+   │   npm cache clean --force
+   │   npm install
+   └─ 恢复默认源:
+       npm config set registry https://registry.npmjs.org/
+
+4. 权限错误 (Permission denied)
+   ├─ 错误示例: "sh: /path/node_modules/.bin/vite: Permission denied"
+   ├─ 原因: node_modules 中的可执行文件缺少执行权限
+   ├─ 解决:
+   │   cd /Users/yuanyuqing/Documents/code/schoolProject/public
+   │   chmod +x node_modules/.bin/*
+   │   npm run dev
+   └─ 一键修复: chmod -R +x node_modules/.bin/
+
+5. 模块导入错误
+   ├─ 错误: "ModuleNotFoundError: No module named 'flask'"
+   ├─ 原因1: 虚拟环境未激活
+   │   → source venv/bin/activate
+   ├─ 原因2: 依赖未安装
+   │   → pip install -r backend/requirements.txt
+   └─ 原因3: Python 路径错误
+       → which python 应显示 venv 中的路径
+
+6. Flask 应用找不到
+   ├─ 错误: "Could not locate a Flask application"
+   ├─ 原因: 未正确指定 Flask app
+   ├─ 解决: 使用本指南中的启动命令
+   │   python3 -c "from backend.app import create_app; ..."
+   └─ 不要用: python -m flask run
+
+7. 前端无法连接后端
+   ├─ 症状: 浏览器控制台显示 CORS 或连接错误
+   ├─ 检查步骤:
+   │   1. 后端是否运行: curl http://localhost:5001/health
+   │   2. 端口是否正确: 后端 5001，前端 5173
+   │   3. 代理配置: 检查 public/vite.config.ts
+   └─ 解决: 重启后端和前端
+
+8. 文件上传失败
+   ├─ 原因1: backend/uploads/ 权限不足
+   │   → chmod -R 755 backend/uploads/
+   ├─ 原因2: 磁盘空间不足
+   │   → df -h 检查
+   └─ 原因3: 文件格式不支持
+       支持格式: .doc, .docx, .xlsx, .xls, .csv
+
+9. Excel 导出失败
+   ├─ 原因: backend/outputs/ 无写入权限
+   ├─ 解决:
+   │   chmod -R 755 backend/outputs/
+   └─ 验证:
+       touch backend/outputs/test.txt && rm backend/outputs/test.txt
+
+10. 后端无法启动 (各种原因)
+    ├─ 步骤1: 检查虚拟环境
+    │   source venv/bin/activate
+    ├─ 步骤2: 验证依赖
+    │   pip list | grep flask
+    ├─ 步骤3: 测试导入
+    │   python3 -c "from backend.app import create_app; print('OK')"
+    ├─ 步骤4: 查看完整错误
+    │   python3 app.py 2>&1 | head -50
+    └─ 步骤5: 查看日志
+        tail -f backend/logs/extraction_trace.log
+
+【快速参考 - 三行命令启动】
+───────────────────────────────────────────────────────────────────────────
+
+第一次使用 (安装依赖，只需一次):
+  cd /Users/yuanyuqing/Documents/code/schoolProject
+  python3 -m venv venv && source venv/bin/activate
+  pip install -r backend/requirements.txt && cd public && npm install && cd ..
+
+之后启动 (三个终端并行运行):
+  终端1: source venv/bin/activate && \
+         python3 -c "from backend.app import create_app; app = create_app(); \
+         app.run(host='0.0.0.0', port=5001, debug=True)"
+  
+  终端2: cd public && npm run dev
+  
+  终端3: 打开浏览器访问 http://localhost:5173/
+
+【文件位置参考】
+───────────────────────────────────────────────────────────────────────────
+项目根目录:        /Users/yuanyuqing/Documents/code/schoolProject/
+├─ 后端代码:      backend/
+├─ 前端代码:      public/
+├─ 虚拟环境:      venv/          (首次启动时创建)
+├─ 依赖配置:      backend/requirements.txt (后端)
+│                 public/package.json (前端)
+├─ 后端日志:      backend/logs/extraction_trace.log
+├─ 文件上传临存:  backend/uploads/
+├─ 处理结果:      backend/outputs/
+├─ 测试文档:      word/测试协议20251216.docx
+├─ 启动脚本:      app.py (新增，入口文件)
+└─ 本指南:        doc/前后端快速启动指南.txt
+
+【项目架构】
+───────────────────────────────────────────────────────────────────────────
+
+后端 (Flask + Python 3.14):
+  主进程:
+    python3 app.py                    (开发环境，自动重载)
+    gunicorn "backend.app:create_app()"  (生产环境，4 个工作进程)
+  
+  API 接口 (共 24 个):
+    POST   /api/extract/start                  - 启动文档提取
+    GET    /api/extract/status/:id             - 查询提取进度
+    GET    /api/extract/result/:id             - 获取提取结果
+    GET    /api/dashboard/recent               - 最近处理记录
+    GET    /api/history                        - 历史记录
+    POST   /api/history/save                   - 保存历史记录
+    POST   /api/knowledge/upsert               - 更新知识库
+    GET    /api/knowledge/query                - 查询知识库
+    POST   /api/match/suggest                  - 获取字段建议
+    GET    /api/batch/status/:id               - 批量任务状态
+    POST   /api/batch/submit                   - 提交批量任务
+    POST   /api/config/save                    - 保存配置
+    GET    /api/config/load                    - 加载配置
+    GET    /api/templates/list                 - 获取模板列表
+    等等 (详见 doc/api.md)
+
+前端 (Vue 3 + Vite 5.4.21):
+  开发服务器:
+    npm run dev                       (开发环境，HMR 热更新)
+    npm run build && dist/            (生产环境，优化打包)
+  
+  主要页面:
+    /                                 - 首页 (上传文档)
+    /extract                          - 提取结果展示
+    /dashboard                        - 仪表盘
+    /history                          - 历史记录
+    等等 (详见项目代码)
+
+【数据流完整过程】
+───────────────────────────────────────────────────────────────────────────
+
+用户交互流程:
+
+1. 用户打开浏览器 → http://localhost:5173/ (前端加载)
+   ↓
+2. 前端发起 API 调用 → http://localhost:5001/api/dashboard/recent
+   (前端代理自动转发，见 vite.config.ts)
+   ↓
+3. 后端处理请求，返回 JSON 响应
+   ↓
+4. 前端渲染数据到页面
+   ↓
+5. 用户上传 Word/Excel 文档
+   ↓
+6. 前端发起 POST /api/extract/start (multipart/form-data)
+   ↓
+7. 后端:
+   a) 保存临时文件到 backend/uploads/
+   b) 解析文档，提取表格数据
+   c) 使用知识库进行模糊匹配
+   d) 返回提取结果（含匹配建议）
+   ↓
+8. 前端显示表格数据和建议匹配
+   ↓
+9. 用户手动调整字段映射 (可选)
+   ↓
+10. 用户点击 "导出"
+    ↓
+11. 前端发起 POST /api/extract/export
+    ↓
+12. 后端:
+    a) 根据映射生成 Excel 文件
+    b) 保存到 backend/outputs/
+    c) 返回下载链接
+    ↓
+13. 前端显示下载按钮，用户点击下载文件
+    ↓
+14. 完成！清理临时文件
+
+【关键启动信息总结】
+───────────────────────────────────────────────────────────────────────────
+
+后端信息:
+  地址:        http://localhost:5001
+  环境:        开发环境 (Debug=True, Auto-reload=True)
+  CORS:        已启用
+  健康检查:    curl http://localhost:5001/health
+  调试器:      F12 在浏览器中查看, 或 terminal 中看 Debugger PIN
+
+前端信息:
+  地址:        http://localhost:5173/
+  环境:        开发环境 (HMR 已启用)
+  构建:        npm run build 生成 dist/ 目录
+  代理:        /api -> http://localhost:5001/api
+
+虚拟环境:
+  位置:        /Users/yuanyuqing/Documents/code/schoolProject/venv/
+  激活:        source venv/bin/activate
+  退出:        deactivate
+  检查:        which python (应显示 venv 中的 Python)
+
+【重要文件一览】
+───────────────────────────────────────────────────────────────────────────
+
+入口文件:
+  app.py                            新增，Flask 应用入口
+
+配置文件:
+  backend/config.py                 Flask 配置（开发/测试/生产）
+  public/vite.config.ts             Vite 前端构建配置
+  public/package.json               npm 依赖配置
+
+路由文件 (后端):
+  backend/routes/extract.py         文档提取接口
+  backend/routes/match.py           字段匹配接口
+  backend/routes/knowledge.py       知识库接口
+  backend/routes/dashboard.py       仪表盘接口
+  backend/routes/history.py         历史记录接口
+  backend/routes/batch.py           批量处理接口
+  backend/routes/config.py          配置管理接口
+  backend/routes/templates.py       模板管理接口
+
+服务层 (后端):
+  backend/services/                 业务逻辑实现
+  backend/utils.py                  工具函数
+  backend/app.py                    Flask 应用工厂
+
+数据存储:
+  backend/data/knowledge_base.json  知识库数据
+  backend/config_*.json             各种配置数据
+
+日志和输出:
+  backend/logs/extraction_trace.log 详细操作日志
+  backend/outputs/                  导出的 Excel 文件
+  backend/uploads/                  上传的临时文件
+
+前端主要文件:
+  public/src/App.vue                根组件
+  public/src/main.ts                应用入口
+  public/src/pages/                 各页面组件
+  public/src/components/            可复用组件
+  public/src/stores/                Pinia 状态管理
+
+文档:
+  doc/api.md                        API 文档
+  doc/前后端接口对应关系及功能文档.md  前后端映射表
+  STARTUP_GUIDE.md                  完整启动指南
+  QUICK_START.txt                   快速参考
+
+测试:
+  test_all_interfaces.py            自动化测试脚本
+
+【一句话总结】
+───────────────────────────────────────────────────────────────────────────
+
+创建虚拟环境 → 安装依赖 → 三个终端并行运行 → 打开 http://localhost:5173/ → 开始使用！
+
+问题？查看【常见问题完全指南】部分的对应解决方案！
+
+================================================================================
+
+本指南最后更新: 2026-02-12
+后端版本: Flask 3.1.2 (Python 3.14.2)
+前端版本: Vue 3 + Vite 5.4.21
+已测试: ✅ 成功启动并通过健康检查

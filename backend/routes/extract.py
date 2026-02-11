@@ -11,41 +11,66 @@ from backend.services.field_matcher import FieldMatcher
 
 extract_bp = Blueprint('extract', __name__)
 
-# 模拟任务存储
+# 全局任务存储 - 所有任务共享此存储
 tasks_status = {}
 
-@extract_bp.route('/extract/start', methods=['POST'])
+@extract_bp.route('/start', methods=['POST'])
 def start_extraction():
+    """创建文档提取任务"""
     if 'file' not in request.files:
-        return error_response(40001, "缺少文件")
+        return error_response(40001, "缺少文件参数")
     
     file = request.files['file']
+    if not file or file.filename == '':
+        return error_response(40001, "文件为空")
+    
+    # 验证文件类型
+    allowed_extensions = {'.doc', '.docx', '.xlsx', '.xls', '.csv'}
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    if file_ext not in allowed_extensions:
+        return error_response(40001, f"不支持的文件格式，请上传 {', '.join(allowed_extensions)} 格式的文件")
+    
     field_ids = request.form.getlist('field_ids')
     
     task_id = str(uuid.uuid4())
     upload_path = os.path.join('backend', 'uploads', f"{task_id}_{file.filename}")
     os.makedirs(os.path.dirname(upload_path), exist_ok=True)
-    file.save(upload_path)
     
-    # 模拟任务运行 (实际应异步)
+    # 初始化任务信息（包含仪表盘所需数据）
     tasks_status[task_id] = {
         'status': 'running',
-        'progress': 10,
+        'progress': 0,
         'file_path': upload_path,
-        'filename': file.filename
+        'filename': file.filename,
+        'created_at': datetime.now().isoformat(),
+        'msg_name': '',  # 表名称（第一个表的名称）
+        'table_count': 0,
+        'output_path': None,
+        'message': ''
     }
     
     try:
+        # 保存文件
+        file.save(upload_path)
+        tasks_status[task_id]['progress'] = 10
+        
         # 执行提取
         parser = DocumentParser()
         result = parser.parse(upload_path)
+        tasks_status[task_id]['progress'] = 50
         
         processor = DataProcessor()
         matcher = FieldMatcher()
         
         processed_tables = []
-        print(f"识别到 {len(result['tables'])} 个表格")
-        for table in result['tables']:
+        table_count = len(result['tables'])
+        
+        # 记录第一个表的名称作为主表名
+        if result['tables']:
+            tasks_status[task_id]['msg_name'] = result['tables'][0].get('msg_name', '')
+            tasks_status[task_id]['table_count'] = table_count
+        
+        for idx, table in enumerate(result['tables']):
             table_rows = []
             for row in table['data_rows']:
                 proc_res = processor.process_row(row)
@@ -60,6 +85,7 @@ def start_extraction():
                     matched_row['类型（bit）'] = proc_res['converted']['位数']
                 
                 table_rows.append(matched_row)
+            
             # 构建表格数据，包含元数据（meta）
             table_data = {
                 'msg_name': table['msg_name'],
@@ -68,10 +94,16 @@ def start_extraction():
             }
             processed_tables.append(table_data)
             
+            # 更新进度
+            progress = 50 + int((idx + 1) / table_count * 30) if table_count > 0 else 80
+            tasks_status[task_id]['progress'] = progress
+            
         # 导出
         output_dir = os.path.join('backend', 'outputs')
+        os.makedirs(output_dir, exist_ok=True)
         exporter = ExcelExporter(output_dir)
         output_file = exporter.export_with_template(processed_tables, task_id)
+        tasks_status[task_id]['progress'] = 90
         
         tasks_status[task_id].update({
             'status': 'success',
@@ -82,11 +114,21 @@ def start_extraction():
         return success_response({'task_id': task_id})
         
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
         tasks_status[task_id]['status'] = 'failed'
         tasks_status[task_id]['message'] = str(e)
-        return error_response(40002, f"解析失败: {str(e)}")
+        print(f"[提取任务 {task_id}] 错误: {error_trace}")
+        return error_response(40002, f"文件解析失败: {str(e)}")
+    finally:
+        # 清理上传的临时文件
+        try:
+            if os.path.exists(upload_path) and tasks_status[task_id]['status'] == 'failed':
+                os.remove(upload_path)
+        except:
+            pass
 
-@extract_bp.route('/extract/status/<task_id>', methods=['GET'])
+@extract_bp.route('/status/<task_id>', methods=['GET'])
 def get_status(task_id):
     status = tasks_status.get(task_id)
     if not status:
@@ -97,10 +139,24 @@ def get_status(task_id):
         'message': status.get('message', '')
     })
 
-@extract_bp.route('/extract/download/<task_id>', methods=['GET'])
+@extract_bp.route('/download/<task_id>', methods=['GET'])
 def download_result(task_id):
-    status = tasks_status.get(task_id)
-    if not status or status['status'] != 'success':
-        return error_response(40401, "结果文件不存在或任务未完成")
-    
-    return send_file(os.path.abspath(status['output_path']), as_attachment=True)
+    try:
+        status = tasks_status.get(task_id)
+        if not status or status['status'] != 'success':
+            return error_response(40401, "结果文件不存在或任务未完成")
+        
+        output_path = status['output_path']
+        if not os.path.exists(output_path):
+            return error_response(40401, "文件已过期或被删除")
+        
+        # ✅ 提取文件名作为下载名称
+        filename = os.path.basename(output_path)
+        
+        return send_file(
+            os.path.abspath(output_path),
+            as_attachment=True,
+            download_name=filename  # ✅ 设置正确的下载文件名
+        )
+    except Exception as e:
+        return error_response(50001, f"下载失败: {str(e)}")

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from flask import Blueprint, request
-from backend.services.field_matcher import FieldMatcher
+from backend.services.field_matcher import EnhancedFieldMatcher as FieldMatcher
 from backend.utils import success_response, error_response
 import uuid
 from difflib import SequenceMatcher

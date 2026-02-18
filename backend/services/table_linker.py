@@ -403,7 +403,7 @@ class TableLinker:
             
             # 如果msg_name看起来是一个真实的协议名称（不是默认的表类型名）
             if not has_real_protocol_name and msg_name:
-                default_names = ['端口分配表', '协议参数表', '状态表', '指令定义表', 'ID编码表', '消息ID编码表', '某状态信息']
+                default_names = ['端口分配表', '状态表', '指令定义表', 'ID编码表', '消息ID编码表', '某状态信息']
                 if msg_name not in default_names:
                     has_real_protocol_name = True
             

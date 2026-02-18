@@ -2,12 +2,14 @@
 from flask import Blueprint, request, send_file
 import os
 import uuid
+import json
 from datetime import datetime
 from backend.utils import success_response, error_response
+from backend.config import Config
 from backend.services.table_detector import DocumentParser
 from backend.services.excel_exporter import ExcelExporter
 from backend.services.data_cleaner import DataProcessor
-from backend.services.field_matcher import FieldMatcher
+from backend.services.field_matcher import EnhancedFieldMatcher as FieldMatcher
 
 extract_bp = Blueprint('extract', __name__)
 
@@ -32,11 +34,14 @@ def start_extraction():
     
     field_ids = request.form.getlist('field_ids')
     
+    # 加载用户选择的期望字段
+    expected_fields = _load_expected_fields(field_ids)
+    
     task_id = str(uuid.uuid4())
     upload_path = os.path.join('backend', 'uploads', f"{task_id}_{file.filename}")
     os.makedirs(os.path.dirname(upload_path), exist_ok=True)
     
-    # 初始化任务信息（包含仪表盘所需数据）
+    # 初始化任务信息（包含仪表盘所需数据和期望字段）
     tasks_status[task_id] = {
         'status': 'running',
         'progress': 0,
@@ -46,7 +51,10 @@ def start_extraction():
         'msg_name': '',  # 表名称（第一个表的名称）
         'table_count': 0,
         'output_path': None,
-        'message': ''
+        'message': '',
+        'field_ids': field_ids,
+        'expected_fields': expected_fields,  # 期望字段
+        'mapping_quality': None  # 映射质量评分
     }
     
     try:
@@ -62,8 +70,14 @@ def start_extraction():
         processor = DataProcessor()
         matcher = FieldMatcher()
         
+        # 使用原始表格数据而不是处理后的数据
+        # 保存原始提取的表格数据用于预览
+        tasks_status[task_id]['raw_tables'] = result['tables']
+        
+        # 保存处理后的表格数据用于导出
         processed_tables = []
         table_count = len(result['tables'])
+        tasks_status[task_id]['table_count'] = table_count
         
         # 记录第一个表的名称作为主表名
         if result['tables']:
@@ -77,7 +91,9 @@ def start_extraction():
                 matched_row = {}
                 for field, value in proc_res['cleaned'].items():
                     match_res = matcher.match_field(field)
-                    target = match_res.target if match_res.target else field
+                    # 兼容字典和对象格式
+                    target = match_res.get('target') if isinstance(match_res, dict) else (match_res.target if hasattr(match_res, 'target') else field)
+                    target = target if target else field
                     matched_row[target] = value
                 
                 # 位数对齐
@@ -105,13 +121,35 @@ def start_extraction():
         output_file = exporter.export_with_template(processed_tables, task_id)
         tasks_status[task_id]['progress'] = 90
         
+        # 计算映射质量
+        extracted_field_names = []
+        for table in processed_tables:
+            for row in table['data_rows']:
+                extracted_field_names.extend(row.keys())
+        
+        # 去重
+        extracted_field_names = list(set(extracted_field_names))
+        expected_fields = tasks_status[task_id].get('expected_fields', [])
+        
+        print(f'[映射质量调试] 提取字段数: {len(extracted_field_names)}')
+        print(f'[映射质量调试] 期望字段数: {len(expected_fields)}')
+        print(f'[映射质量调试] 提取字段: {extracted_field_names[:10]}...')
+        print(f'[映射质量调试] 期望字段: {expected_fields}')
+        
+        mapping_quality = _calculate_mapping_quality(extracted_field_names, expected_fields)
+        print(f'[映射质量调试] 计算结果: {mapping_quality}')
+        
         tasks_status[task_id].update({
             'status': 'success',
             'progress': 100,
-            'output_path': output_file
+            'output_path': output_file,
+            'mapping_quality': mapping_quality
         })
         
-        return success_response({'task_id': task_id})
+        return success_response({
+            'task_id': task_id,
+            'expected_fields': expected_fields
+        })
         
     except Exception as e:
         import traceback
@@ -136,7 +174,8 @@ def get_status(task_id):
     return success_response({
         'status': status['status'],
         'progress': status.get('progress', 0),
-        'message': status.get('message', '')
+        'message': status.get('message', ''),
+        'mapping_quality': status.get('mapping_quality')
     })
 
 @extract_bp.route('/download/<task_id>', methods=['GET'])
@@ -189,3 +228,78 @@ def download_result(task_id):
         return response
     except Exception as e:
         return error_response(50001, f"下载失败: {str(e)}")
+
+
+def _load_expected_fields(field_ids):
+    """
+    根据用户选择的字段ID加载期望字段名称
+    """
+    try:
+        # 从配置文件加载协议字段
+        config_path = Config.PROTOCOL_FIELDS_PATH
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                protocol_fields = json.load(f)
+                
+                # 根据ID查找字段名称
+                expected_names = []
+                for field_id in field_ids:
+                    # 处理数组格式的配置文件
+                    if isinstance(protocol_fields, list):
+                        for field in protocol_fields:
+                            if isinstance(field, dict) and str(field.get('id', '')) == str(field_id):
+                                expected_names.append(field['name'])
+                                break
+                
+                return expected_names
+        
+        return []
+    except Exception as e:
+        print(f"[加载期望字段] 错误: {e}")
+        return []
+
+
+def _calculate_mapping_quality(extracted_fields, expected_fields):
+    """
+    计算字段映射质量评分
+    """
+    if not extracted_fields or not expected_fields:
+        return {
+            'score': 0,
+            'level': 'unknown',
+            'exact_count': 0,
+            'fuzzy_count': 0,
+            'unmatched_count': 0,
+            'total': 0
+        }
+    
+    matcher = FieldMatcher()
+    mapping_results = []
+    
+    # 对每个提取的字段进行匹配
+    for ext_field in extracted_fields:
+        match_result = matcher.match_field(ext_field)
+        mapping_results.append(match_result)
+    
+    # 统计匹配结果
+    exact_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'exact')
+    fuzzy_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'fuzzy')
+    unmatched_count = sum(1 for r in mapping_results if isinstance(r, dict) and not r.get('target'))
+    total = len(mapping_results)
+    
+    # 计算加权评分
+    if total > 0:
+        score = (exact_count * 1.0 + fuzzy_count * 0.7) / total
+        level = 'excellent' if score > 0.9 else 'good' if score > 0.7 else 'poor'
+    else:
+        score = 0
+        level = 'unknown'
+    
+    return {
+        'score': score,
+        'level': level,
+        'exact_count': exact_count,
+        'fuzzy_count': fuzzy_count,
+        'unmatched_count': unmatched_count,
+        'total': total
+    }

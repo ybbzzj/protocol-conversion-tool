@@ -1,0 +1,70 @@
+{
+  "protocolFields": [
+    {
+      "id": "comp_pf_1",
+      "name": "序号"
+    },
+    {
+      "id": "comp_pf_2",
+      "name": "参数名称"
+    },
+    {
+      "id": "comp_pf_3",
+      "name": "数据类型说明"
+    },
+    {
+      "id": "comp_pf_4",
+      "name": "单位"
+    },
+    {
+      "id": "comp_pf_5",
+      "name": "备注信息"
+    },
+    {
+      "id": "comp_pf_6",
+      "name": "范围"
+    },
+    {
+      "id": "comp_pf_7",
+      "name": "精度"
+    },
+    {
+      "id": "comp_pf_8",
+      "name": "更新频率"
+    }
+  ],
+  "targetFields": [
+    {
+      "id": "comp_tf_1",
+      "name": "ID"
+    },
+    {
+      "id": "comp_tf_2",
+      "name": "参数"
+    },
+    {
+      "id": "comp_tf_3",
+      "name": "类型"
+    },
+    {
+      "id": "comp_tf_4",
+      "name": "单位"
+    },
+    {
+      "id": "comp_tf_5",
+      "name": "备注"
+    },
+    {
+      "id": "comp_tf_6",
+      "name": "取值范围"
+    },
+    {
+      "id": "comp_tf_7",
+      "name": "精度要求"
+    },
+    {
+      "id": "comp_tf_8",
+      "name": "采样频率"
+    }
+  ]
+}

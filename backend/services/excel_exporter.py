@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from typing import List, Dict, Any
 from openpyxl import load_workbook
-from backend.services.field_matcher import FieldMatcher
+from backend.services.field_matcher import EnhancedFieldMatcher as FieldMatcher
 from backend.services.data_cleaner import DataProcessor
 
 class ExcelExporter:
@@ -328,9 +328,11 @@ class ExcelExporter:
                         else:
                             # 尝试用 FieldMatcher 进行智能匹配（处理来自辅助表的动态字段）
                             match_result = self.matcher.match_field(meta_key)
-                            if match_result.target and match_result.target in available_columns:
+                            # 兼容字典和对象格式
+                            target_field = match_result.get('target') if isinstance(match_result, dict) else (match_result.target if hasattr(match_result, 'target') else None)
+                            if target_field and target_field in available_columns:
                                 # 找到匹配的Excel列
-                                fill_data[match_result.target] = meta_value
+                                fill_data[target_field] = meta_value
                             # 无法映射也不追加到备注，直接跳过
                 else:
                     fill_data['名称'] = ""
@@ -513,7 +515,10 @@ class ExcelExporter:
         # 别名查找
         for k, v in fill_data.items():
             res = self.matcher.match_field(k)
-            if res.target == col_name: return v
+            if isinstance(res, dict) and res.get('target') == col_name:
+                return v
+            elif hasattr(res, 'target') and res.target == col_name:
+                return v
             
         # 手动补丁
         if col_name == '内容': return fill_data.get('参数', fill_data.get('信号名称', None))

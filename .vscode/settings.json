@@ -1,3 +1,4 @@
 {
-    "codezy.be.logFilePath": []
+    "codezy.be.logFilePath": [],
+    "kiroAgent.configureMCP": "Disabled"
 }

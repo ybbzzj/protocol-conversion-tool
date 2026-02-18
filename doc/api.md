@@ -41,7 +41,16 @@ GET /api/history  【reserved】
 
 **GET /api/extract/status/{task_id}**  【active】
 - 描述：查询任务执行状态
-- 响应：`{ data: { status:'queued'|'running'|'success'|'failed', progress:number, message?:string } }`
+- 响应：`{ data: { status:queued|running|success|failed, progress:number, message?:string } }`
+
+**GET /api/extract/preview/{task_id}**  【新增】
+- 描述：预览提取结果和字段映射建议
+- 响应：`{ data: { extracted_fields:array, mapping_suggestions:array, unmatched_fields:array } }`
+
+**POST /api/extract/apply-mapping**  【新增】
+- 描述：应用用户定义的字段映射配置
+- 请求体：`{ task_id:string, mappings:array }`
+- 响应：`{ data: { success:boolean } }`
 
 **GET /api/extract/download/{task_id}**  【active】
 - 描述：下载处理结果文件
@@ -49,28 +58,26 @@ GET /api/history  【reserved】
 
 ---
 
-## 知识库
+## 知识库管理
 
-GET /api/knowledge/list  【active】
+**GET /api/knowledge/list**  【active】
 - 描述：分页获取知识库条目
-- 查询：q?, table_id?, page?, page_size?
-- 响应：{ data: { list: Array<{ id:string, table_id:string, source:string, target:string, hits:number, confidence:number }>, total:number } }
+- 查询参数：`q?, table_id?, page?, page_size?`
+- 响应：`{ data: { list: Array<{ id:string, table_id:string, source:string, target:string, hits:number, confidence:number }>, total:number } }`
 
-GET /api/knowledge/stats  【reserved】
-- 描述：知识库匹配统计
-- 响应：{ data: { total:number, by_table: Array<{ table_id:string, count:number }>, top_hits: Array<{ source:string, target:string, hits:number }> } }
+**POST /api/knowledge/query**  【active】
+- 描述：查询字段匹配建议
+- 请求体：`{ source:string, table_id?:string, context?:string }`
+- 响应：`{ data: { candidates: Array<{ target:string, confidence:number, match_type:'exact'|'fuzzy'|'semantic' }> } }`
 
-POST /api/knowledge/upsert  【reserved】
-- 描述：新增或更新一条知识库映射
-- 请求：application/json
-  - body: { id?:string, table_id:string, source:string, target:string, confidence?:number }
-- 响应：{ data: { id:string } }
+**POST /api/knowledge/upsert**  【reserved】
+- 描述：新增或更新知识库映射
+- 请求体：`{ id?:string, table_id:string, source:string, target:string, confidence?:number }`
+- 响应：`{ data: { id:string } }`
 
-POST /api/knowledge/query  【reserved】
-- 描述：根据源字段与上下文查询知识库建议（模糊匹配/NLP 由后端实现）
-- 请求：application/json
-  - body: { table_id?:string, source:string, context?:string }
-- 响应：{ data: { candidates: Array<{ target:string, confidence:number, match_type:'exact'|'fuzzy'|'semantic' }> } }
+**GET /api/knowledge/stats**  【reserved】
+- 描述：知识库统计信息
+- 响应：`{ data: { total:number, by_table: Array<{ table_id:string, count:number }>, top_hits: Array<{ source:string, target:string, hits:number }> } }`
 
 ---
 

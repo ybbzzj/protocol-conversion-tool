@@ -4,7 +4,7 @@ from backend.utils import success_response, error_response
 from backend.services.table_detector import DocumentParser
 from backend.services.excel_exporter import ExcelExporter
 from backend.services.data_cleaner import DataProcessor
-from backend.services.field_matcher import FieldMatcher
+from backend.services.field_matcher import EnhancedFieldMatcher as FieldMatcher
 import uuid
 import os
 from datetime import datetime
@@ -75,7 +75,9 @@ def upload_batch():
                 matched_row = {}
                 for field, value in proc_res['cleaned'].items():
                     match_res = matcher.match_field(field)
-                    target = match_res.target if match_res.target else field
+                    # 兼容字典和对象格式
+                    target = match_res.get('target') if isinstance(match_res, dict) else (match_res.target if hasattr(match_res, 'target') else field)
+                    target = target if target else field
                     matched_row[target] = value
                 
                 # 位数对齐

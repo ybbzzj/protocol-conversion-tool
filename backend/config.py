@@ -11,6 +11,14 @@ class Config:
     # 知识库本地文件路径 (不再使用数据库)
     KNOWLEDGE_BASE_FILE = os.path.join(DATA_DIR, 'knowledge_base.json')
     
+    # 字段配置文件路径
+    PROTOCOL_FIELDS_PATH = os.path.join(BASE_DIR, 'backend', 'config_protocol_fields.json')
+    TARGET_FIELDS_PATH = os.path.join(BASE_DIR, 'backend', 'config_target_fields.json')
+    
+    # 新增的配置项
+    KNOWLEDGE_BASE_PATH = KNOWLEDGE_BASE_FILE
+    MAPPING_THRESHOLD = 0.7
+    
     # 其他配置
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'protocol-tool-secret'
     ALLOWED_EXTENSIONS = {'docx', 'doc', 'xlsx'}

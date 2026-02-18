@@ -19,6 +19,7 @@ def create_app(config_name='development'):
     from backend.routes.batch import batch_bp
     from backend.routes.config import config_bp
     from backend.routes.templates import templates_bp
+    from backend.routes.mapping import mapping_bp
     
     # ✅ 正确方式: 为每个蓝图指定完整的 url_prefix
     app.register_blueprint(extract_bp, url_prefix='/api/extract')
@@ -29,9 +30,14 @@ def create_app(config_name='development'):
     app.register_blueprint(batch_bp, url_prefix='/api/batch')
     app.register_blueprint(config_bp, url_prefix='/api/config')
     app.register_blueprint(templates_bp, url_prefix='/api/templates')
+    app.register_blueprint(mapping_bp, url_prefix='/api/mapping')
     
     @app.route('/health')
     def health_check():
         return {'status': 'healthy', 'version': '2.0.0'}
         
     return app
+
+if __name__ == '__main__':
+    app = create_app()
+    app.run(host='0.0.0.0', port=5001, debug=True)

@@ -1,0 +1,22 @@
+{
+  "protocolFields": [
+    {
+      "id": "test_pf_1",
+      "name": "测试协议字段1"
+    },
+    {
+      "id": "test_pf_2", 
+      "name": "测试协议字段2"
+    }
+  ],
+  "targetFields": [
+    {
+      "id": "test_tf_1",
+      "name": "测试目标字段1"
+    },
+    {
+      "id": "test_tf_2",
+      "name": "测试目标字段2"
+    }
+  ]
+}

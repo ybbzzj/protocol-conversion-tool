@@ -61,6 +61,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { api, endpoints } from '../api'
 import { useToastStore, useLoadingStore } from '../stores/ui'
 
@@ -69,6 +70,7 @@ type TemplateItem = { id:string, name:string, field_ids:string[] }
 
 const toast = useToastStore()
 const loading = useLoadingStore()
+const router = useRouter()
 
 // 本地存储 Key
 const LS_PROTOCOL_FIELDS = 'local_protocol_fields'
@@ -222,11 +224,54 @@ function startPolling(){
       taskStatus.value = st
       if(st.status==='success' || st.status==='failed'){
         stopPolling()
-        if(st.status==='success') toast.show('提取完成，可下载结果')
-        else toast.show('提取失败：'+(st.message||''))
+        if(st.status==='success') {
+          // 智能流程分流
+          handleSmartWorkflow(st)
+        } else {
+          toast.show('提取失败：'+(st.message||''))
+        }
       }
     }catch(e:any){ /* 静默或展示错误 */ }
   }, 2000)
+}
+
+function handleSmartWorkflow(statusData) {
+  const quality = statusData.mapping_quality
+  
+  if (quality && quality.score !== undefined) {
+    const score = quality.score
+    const level = quality.level
+    
+    console.log('[智能分流] 映射质量:', quality)
+    
+    if (score > 0.9) {
+      // 高质量 - 直接下载
+      toast.show(`字段映射质量优秀(${(score*100).toFixed(1)}%)，直接下载结果`)
+      setTimeout(() => {
+        downloadResult()
+      }, 1000)
+    } else if (score > 0.7) {
+      // 中等质量 - 提示可选修正
+      const confirmMsg = `字段映射质量良好(${(score*100).toFixed(1)}%)，是否需要人工修正后再下载？\n\n匹配详情:\n- 精确匹配: ${quality.exact_count}个\n- 模糊匹配: ${quality.fuzzy_count}个\n- 未匹配: ${quality.unmatched_count}个\n\n点击"确定"进入修正页面，"取消"直接下载`
+      
+      if (confirm(confirmMsg)) {
+        // 跳转到字段映射页面
+        router.push({ name: 'mapping', params: { taskId: currentTaskId.value } })
+      } else {
+        downloadResult()
+      }
+    } else {
+      // 低质量 - 强制修正
+      toast.show(`字段映射质量较低(${(score*100).toFixed(1)}%)，需要人工修正`)
+      setTimeout(() => {
+        router.push({ name: 'mapping', params: { taskId: currentTaskId.value } })
+      }, 1500)
+    }
+  } else {
+    // 兼容旧版本或无质量评分的情况
+    toast.show('提取完成，可下载结果')
+    downloadResult()
+  }
 }
 
 function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null } }

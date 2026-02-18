@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-02-18 14:17:29",
+  "summary": {
+    "total": 9,
+    "passed": 9,
+    "failed": 0,
+    "pass_rate": "100.0%"
+  },
+  "details": [
+    {
+      "test": "后端服务健康检查",
+      "success": true,
+      "details": "版本: 2.0.0"
+    },
+    {
+      "test": "前端服务健康检查",
+      "success": true,
+      "details": ""
+    },
+    {
+      "test": "协议字段API功能",
+      "success": true,
+      "details": "字段数: 19 → 20"
+    },
+    {
+      "test": "目标字段API功能",
+      "success": true,
+      "details": "字段数: 16"
+    },
+    {
+      "test": "配置文件验证 核心字段配置.json",
+      "success": true,
+      "details": "协议字段:16 目标字段:16"
+    },
+    {
+      "test": "配置文件验证 字段配置模板.json",
+      "success": true,
+      "details": "协议字段:15 目标字段:17"
+    },
+    {
+      "test": "配置文件验证 完整字段配置模板.json",
+      "success": true,
+      "details": "协议字段:38 目标字段:26"
+    },
+    {
+      "test": "字段映射工作流程",
+      "success": true,
+      "details": "匹配率: 100.0%"
+    },
+    {
+      "test": "导入导出功能",
+      "success": true,
+      "details": "配置结构正确 - 协议字段:3, 目标字段:2"
+    }
+  ]
+}

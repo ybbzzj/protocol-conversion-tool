@@ -147,16 +147,38 @@ def download_result(task_id):
             return error_response(40401, "结果文件不存在或任务未完成")
         
         output_path = status['output_path']
-        if not os.path.exists(output_path):
+        if not output_path or not os.path.exists(output_path):
             return error_response(40401, "文件已过期或被删除")
         
-        # ✅ 提取文件名作为下载名称
-        filename = os.path.basename(output_path)
+        # ✅ 提取文件名作为下载名称，使用英文文件名避免编码问题
+        filename = f"result_{task_id[:8]}.xlsx"
         
-        return send_file(
-            os.path.abspath(output_path),
-            as_attachment=True,
-            download_name=filename  # ✅ 设置正确的下载文件名
+        # 直接返回文件内容，避免send_file的潜在问题
+        from flask import Response
+        
+        with open(os.path.abspath(output_path), 'rb') as f:
+            file_content = f.read()
+        
+        response = Response(
+            file_content,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={
+                'Content-Disposition': f'attachment; filename={filename}',
+                'Content-Length': str(len(file_content))
+            }
         )
+        
+        # 暂时注释掉自动删除功能，确保可以验证文件一致性
+        # try:
+        #     if os.path.exists(output_path):
+        #         os.remove(output_path)
+        #         print(f"[下载完成] 已删除文件: {output_path}")
+        #         # 更新任务状态，标记文件已被下载
+        #         status['output_path'] = None
+        #         status['message'] = '文件已下载并删除'
+        # except Exception as e:
+        #     print(f"[警告] 删除文件失败: {e}")
+        
+        return response
     except Exception as e:
         return error_response(50001, f"下载失败: {str(e)}")

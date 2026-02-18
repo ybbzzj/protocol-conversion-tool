@@ -114,7 +114,7 @@
                 <!-- 推荐提示 -->
                 <div v-if="hoveredField === field && getTopSuggestion(field)" class="suggestion-tooltip">
                   推荐: {{ getTopSuggestion(field)?.target }} 
-                  ({{ (getTopSuggestion(field)?.confidence * 100).toFixed(0) }}%)
+                  ({{ getTopSuggestion(field)?.confidence ? (getTopSuggestion(field)!.confidence * 100).toFixed(0) : '0' }}%)
                 </div>
               </div>
             </div>
@@ -226,7 +226,7 @@
         <button @click="applyMappings" class="btn primary" :disabled="applying">
           {{ applying ? '应用中...' : `应用 ${mappings.length} 个映射` }}
         </button>
-        <button @click="clearMappings" class="btn secondary">
+        <button @click="clearAllMappings" class="btn secondary">
           清空映射
         </button>
       </div>
@@ -540,8 +540,8 @@ function handleDragEnter(event: DragEvent, targetField: string) {
 
 function handleDragLeave(event: DragEvent, targetField: string) {
   // 只在真正离开时清除
-  const relatedTarget = event.relatedTarget as HTMLElement
-  if (!relatedTarget || !event.currentTarget?.contains(relatedTarget)) {
+  const relatedTarget = event.relatedTarget as Node | null
+  if (!relatedTarget || !(event.currentTarget as HTMLElement)?.contains?.(relatedTarget)) {
     if (dropTarget.value === targetField) {
       dropTarget.value = ''
     }

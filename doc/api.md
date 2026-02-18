@@ -1,16 +1,14 @@
-# 后端接口文档
+# 后端API接口文档
 
-后端语言：Python
-
-## 约定
-- 统一前缀：/api
-- 响应体统一格式：{ code:number, message:string, data:any }
-- 错误码：
-  - 0：成功
-  - 40001：参数错误
-  - 40002：文件解析失败
-  - 40401：资源不存在
-  - 50001：内部错误
+## 基础约定
+- **统一前缀**: `/api`
+- **响应格式**: `{ code:number, message:string, data:any }`
+- **错误码**:
+  - `0`: 成功
+  - `40001`: 参数错误
+  - `40002`: 文件解析失败
+  - `40401`: 资源不存在
+  - `50001`: 内部错误
 
 ## 接口状态说明
 - active：当前前端正在使用，后端需实现并保证可用
@@ -34,20 +32,20 @@ GET /api/history  【reserved】
 
 ## 文档提取流程
 
-POST /api/extract/start  【active】
-- 描述：创建文档提取任务（后端解析 .doc/.docx，按所选协议字段抽取）
-- 请求：multipart/form-data
-  - file: File
-  - field_ids: string[]（以 JSON 文本或重复字段形式传递均可）
-- 响应：{ data: { task_id:string } }
+**POST /api/extract/start**  【active】
+- 描述：创建文档提取任务
+- 请求体：`multipart/form-data`
+  - `file`: Word文档文件(.doc/.docx)
+  - `field_ids`: 协议字段ID数组
+- 响应：`{ data: { task_id:string } }`
 
-GET /api/extract/status/{task_id}  【active】
-- 描述：查询提取任务状态
-- 响应：{ data: { status:'queued'|'running'|'success'|'failed', progress:number, message?:string } }
+**GET /api/extract/status/{task_id}**  【active】
+- 描述：查询任务执行状态
+- 响应：`{ data: { status:'queued'|'running'|'success'|'failed', progress:number, message?:string } }`
 
-GET /api/extract/download/{task_id}  【active】
-- 描述：下载提取结果（Excel/CSV 文件流）
-- 响应：application/octet-stream 或具体文件类型
+**GET /api/extract/download/{task_id}**  【active】
+- 描述：下载处理结果文件
+- 响应：Excel文件流(`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`)
 
 ---
 

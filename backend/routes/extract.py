@@ -150,8 +150,11 @@ def download_result(task_id):
         if not output_path or not os.path.exists(output_path):
             return error_response(40401, "文件已过期或被删除")
         
-        # ✅ 提取文件名作为下载名称，使用英文文件名避免编码问题
-        filename = f"result_{task_id[:8]}.xlsx"
+        # ✅ 使用原始上传文件名作为下载文件名
+        original_filename = status.get('filename', f"result_{task_id[:8]}")
+        # 移除文件扩展名并添加.xlsx
+        name_without_ext = os.path.splitext(original_filename)[0]
+        filename = f"{name_without_ext}.xlsx"
         
         # 直接返回文件内容，避免send_file的潜在问题
         from flask import Response
@@ -159,25 +162,29 @@ def download_result(task_id):
         with open(os.path.abspath(output_path), 'rb') as f:
             file_content = f.read()
         
+        # 对文件名进行URL编码以避免中文编码问题
+        import urllib.parse
+        encoded_filename = urllib.parse.quote(filename.encode('utf-8'))
+        
         response = Response(
             file_content,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             headers={
-                'Content-Disposition': f'attachment; filename={filename}',
+                'Content-Disposition': f'attachment; filename*=UTF-8\'\'{encoded_filename}',
                 'Content-Length': str(len(file_content))
             }
         )
         
-        # 暂时注释掉自动删除功能，确保可以验证文件一致性
-        # try:
-        #     if os.path.exists(output_path):
-        #         os.remove(output_path)
-        #         print(f"[下载完成] 已删除文件: {output_path}")
-        #         # 更新任务状态，标记文件已被下载
-        #         status['output_path'] = None
-        #         status['message'] = '文件已下载并删除'
-        # except Exception as e:
-        #     print(f"[警告] 删除文件失败: {e}")
+        # 文件传输完成后删除源文件，确保结果只保留一份
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+                print(f"[下载完成] 已删除文件: {output_path}")
+                # 更新任务状态，标记文件已被下载
+                status['output_path'] = None
+                status['message'] = '文件已下载并删除'
+        except Exception as e:
+            print(f"[警告] 删除文件失败: {e}")
         
         return response
     except Exception as e:

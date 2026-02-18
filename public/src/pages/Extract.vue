@@ -83,6 +83,7 @@ const fieldSearch = ref('')
 
 const fileObj = ref<File | null>(null)
 const currentTaskId = ref<string>('')
+const originalFilename = ref<string>('')
 const taskStatus = ref<{ status:string, progress:number, message?:string } | null>(null)
 let pollTimer: any = null
 
@@ -183,6 +184,10 @@ function downloadJSON(data: any, filename: string){
 function onFileChange(ev: Event){
   const input = ev.target as HTMLInputElement
   fileObj.value = input.files && input.files[0] ? input.files[0] : null
+  // 保存原始文件名
+  if(fileObj.value){
+    originalFilename.value = fileObj.value.name
+  }
 }
 
 async function startExtract(){
@@ -234,12 +239,15 @@ async function downloadResult(){
     const response = await fetch(endpoints.extractDownload(currentTaskId.value))
     if(!response.ok){ throw new Error(`HTTP ${response.status}`) }
     
-    // 获取文件名（从 Content-Disposition 头）
-    const contentDisposition = response.headers.get('content-disposition')
-    let filename = `result_${currentTaskId.value.slice(0, 8)}.xlsx`
-    if(contentDisposition){
-      const matches = contentDisposition.match(/filename[^;=\n]*=((["\']*).*?\2|[^;\n]*)/)
-      if(matches && matches[1]) filename = matches[1].replace(/["\\']/g, '')
+    // 使用原始文件名作为下载文件名
+    let filename = originalFilename.value
+    // 如果原始文件名存在，移除扩展名并添加.xlsx
+    if(filename){
+      const nameWithoutExt = filename.replace(/\.[^\.]*$/, '')
+      filename = `${nameWithoutExt}.xlsx`
+    } else {
+      // 回退到默认命名
+      filename = `result_${currentTaskId.value.slice(0, 8)}.xlsx`
     }
     
     // 创建 blob 并下载

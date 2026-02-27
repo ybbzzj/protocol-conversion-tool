@@ -261,7 +261,7 @@ class DataProcessor:
         # ── 转换公式标准化 ─────────────────────────────────────────────────────
         formula_val = ''
         for k, v in cleaned.items():
-            if any(kw in k for kw in ['转换公式', '数据处理方法', '数据处理', '数据转换']):
+            if any(kw in k for kw in ['转换公式', '数据转换']):  # 移除「数据处理方法」和「数据处理」，它们是描述文本而非公式
                 formula_val = str(v) if v else ''
                 break
 

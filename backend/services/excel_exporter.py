@@ -19,6 +19,29 @@ COLOR_BLUE  = "0070C0"   # 从辅助表关联补充的元数据
 COLOR_BLACK = "000000"   # 正常
 
 
+def _extract_unit_from_remark(remark: str) -> Optional[str]:
+    """从备注中提取单位信息"""
+    if not remark:
+        return None
+        
+    # 常见的单位提取模式
+    patterns = [
+        r'单位[为是]\s*([^\s，。,\.]+)',  # 单位为xxx
+        r'([\wΩμ°%Ω℃dBmVAsHzkHzMHzGHz]+)$',  # 行尾的单位符号
+        r'\b(ms|s|min|h|Hz|kHz|MHz|GHz|V|mV|A|mA|W|mW|dB|dBm|℃|°|%|bit|byte|KB|MB)\b',  # 常见单位
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, remark)
+        if match:
+            unit = match.group(1) if len(match.groups()) > 0 else match.group(0)
+            # 过滤掉太长或不合理的结果
+            if len(unit) <= 10 and unit not in ['为', '是', '的']:
+                return unit.strip()
+    
+    return None
+
+
 class ExcelExporter:
     """
     Excel 导出器（重构版）
@@ -151,7 +174,7 @@ class ExcelExporter:
                     if range_source == 'extracted':
                         color_map['判读公式'] = COLOR_RED
 
-                # 4. 单位列
+                # 4. 单位列：先查原始单位列，为空则从备注/处理方法中提取单位符号（标红）
                 unit_result = self._extract_unit(cleaned)
                 if unit_result:
                     unit_val, unit_source = unit_result
@@ -159,25 +182,13 @@ class ExcelExporter:
                     if unit_source == 'extracted':
                         color_map['单位'] = COLOR_RED
 
-                # 5. 转换公式列
+                # 5. 转换公式列：只从明确的转换公式字段取值，不使用数据处理方法描述文本
                 formula_val = formatted.get('转换公式', '')
                 if not formula_val:
-                    # 从 cleaned 中查找公式：优先 转换公式 > 数据处理 > 数据处理方法
                     formula_val = cleaned.get('转换公式', '')
-                    if not formula_val:
-                        formula_val = cleaned.get('数据处理', '')
-                    if not formula_val:
-                        formula_val = cleaned.get('数据处理方法', '')
-                    # 如果还是没有，尝试从备注中提取公式（如"乘以10"）
-                    if not formula_val and '备注' in cleaned:
-                        remark = str(cleaned['备注']).strip()
-                        # 匹配常见公式模式
-                        if remark:
-                            from backend.services.data_cleaner import FormulaStandardizer
-                            std = FormulaStandardizer().standardize(remark)
-                            # 只有非空且不是原样保留的才当作公式
-                            if std and std not in ('—', '-', remark):
-                                formula_val = std
+                if not formula_val:
+                    formula_val = cleaned.get('数据处理', '')
+                # 注意：不再把'数据处理方法'的描述文本当作转换公式
                 if formula_val:
                     fill_data['转换公式'] = formula_val
 
@@ -186,13 +197,17 @@ class ExcelExporter:
                 if seq_val:
                     fill_data['序号'] = seq_val
 
-                # 7. 备注列（原始备注）
+                # 7. 备注列：原始备注内容（包含数据处理方法描述，不做删减）
                 remark_val = self._find_remark_value(cleaned)
+                # 若没有专门的备注字段，把数据处理方法内容放入备注
+                if not remark_val and '数据处理方法' in cleaned and cleaned['数据处理方法']:
+                    remark_val = str(cleaned['数据处理方法']).strip()
                 if remark_val:
                     fill_data['备注'] = remark_val
 
                 # 8. 主行：注入消息名称和元数据
                 if first_row:
+                    # 直接使用原始消息名称，不添加序号
                     fill_data['名称'] = msg_name
 
                     # 注入元数据（来自端口表/ID表等）
@@ -340,7 +355,7 @@ class ExcelExporter:
             (r'[°∠]\s*/\s*(h|小时)', '°/h'),
             (r'(m/s2|m/s²|m/s\^2)', 'm/s²'),
             (r'(km/h|千米/小时)', 'km/h'),
-            (r'\b(ms|毫秒)\b', 'ms'),
+            (r'(?<![a-zA-Z])(ms|\u6beb\u79d2)(?![a-zA-Z])', 'ms'),
             (r'\b(Hz|赫兹)\b', 'Hz'),
             (r'[°∠度]\b', '°'),
             (r'(℃|°C|摄氏度)\b', '℃'),

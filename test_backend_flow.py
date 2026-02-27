@@ -114,7 +114,14 @@ def run_detailed_test():
             retained_rows = []
             for i, row in enumerate(table.get('data_rows', [])):
                 row_display = ' | '.join([f"{k}:{v}" for k, v in row.items()])
-                content_val = row.get('参数', row.get('内容', row.get('信号名称', '')))
+                
+                # 改进的内容字段识别逻辑 - 包含更多可能的内容字段名
+                content_fields = ['参数', '内容', '信号名称', '字段', '数据含义', '名称', '参数名称', '数据项名称', '代号']
+                content_val = ''
+                for field in content_fields:
+                    if field in row and row[field]:
+                        content_val = row[field]
+                        break
                 
                 # 判定决策逻辑
                 noise_reasons = []
@@ -123,7 +130,12 @@ def run_detailed_test():
                 # 重要特征保留：含元数据或含实质内容
                 has_important_metadata = any(key in ['消息ID', '接收组播地址', '接收端口号', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码'] and row[key] for key in row.keys())
                 
-                if not content_val and not has_important_metadata:
+                # 改进的保留条件：只要有任意内容字段有值，或者有重要元数据，或者有足够的非空字段
+                non_empty_count = sum(1 for v in row.values() if v and str(v).strip())
+                has_content = bool(content_val)
+                has_enough_fields = non_empty_count >= 2  # 至少2个非空字段
+                
+                if not (has_content or has_important_metadata or has_enough_fields):
                     noise_reasons.append("内容字段为空且无重要元数据")
                 if '参见' in row_text_all: 
                     noise_reasons.append("含噪声词'参见'")

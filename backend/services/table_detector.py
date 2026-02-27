@@ -1,614 +1,618 @@
 # -*- coding: utf-8 -*-
 import re
 import logging
-import html
-from typing import List, Dict, Any, Optional
-from docx2python import docx2python
+from typing import List, Dict, Any, Optional, Tuple
 from docx import Document
+from docx.oxml.ns import qn
 
 logger = logging.getLogger(__name__)
 
-# 使用相对导入处理模块间的依赖关系
-try:
-    from .table_linker import TableLinker
-except ImportError:
-    # 如果相对导入失败，尝试绝对导入
-    try:
-        from backend.services.table_linker import TableLinker
-    except ImportError:
-        # 如果仍在主进程中运行，添加路径后再导入
-        import sys
-        import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-        from backend.services.table_linker import TableLinker
+# ─── 常量定义 ────────────────────────────────────────────────────────────────
 
+# 信息名称行中不是消息名称的固定噪声词
+INFO_NAME_ROW_NOISE = {
+    '信息名称', '通信帧名称', '信息标识', '上级信息名称',
+    '信息流向', '—', '－', '-', '', 'xx', 'XX',
+    '信源、信宿', '信源、信目', '信源', '信宿',
+    '传输周期', '发起时机', '错误处理', '其他',
+}
+
+# 数据类型关键字（用于识别字段定义表）
+DATA_TYPE_KEYWORDS = {
+    'UINTEGER', 'UINT', 'USHORT', 'UFLOAT', 'FLOAT',
+    'DOUBLE', 'CHAR', 'BYTE', 'SHORT', 'BIT',
+    'UINT8', 'UINT16', 'UINT32', 'INT8', 'INT16', 'INT32',
+    '字节',
+}
+
+# 干扰表格前置段落关键词
+NOISE_PARA_MARKERS = ['干扰表格', '测试用', '不需要提取']
+
+# 干扰表格表头关键词
+NOISE_HEADER_KEYWORDS = ['测试指令', '是否带数据', '周期']
+
+# 示例/目标格式表标志（首行包含这些列名，说明是示例表，跳过）
+EXAMPLE_TABLE_HEADERS = {'名称', '信源系统码', '内容', '转换类型', '判读公式'}
+
+# 内容列候选名（按优先级排列）
+COL_CONTENT_CANDIDATES = ['内容', '数据含义', '字段', '参数', '信号名称', '名称']
+# 数据类型列候选名
+COL_TYPE_CANDIDATES = ['数据类型', '类型', '数据格式']
+# 字节数列候选名
+COL_BYTES_CANDIDATES = ['字节数', '字节', '数据长度（字节）', '长度']
+# 值域列候选名
+COL_RANGE_CANDIDATES = ['值域', '取值范围', '区间']
+# 转换公式列候选名
+COL_FORMULA_CANDIDATES = ['数据处理', '数据转换方法', '转换公式', '数据处理方法']
+# 备注列候选名
+COL_REMARK_CANDIDATES = ['备注', '说明', '数据来源']
+# 单位列候选名
+COL_UNIT_CANDIDATES = ['单位']
+# 固定值列候选名（计算结果表中的"值"列）
+COL_VALUE_CANDIDATES = ['值']
+
+
+# ─── 辅助函数 ─────────────────────────────────────────────────────────────────
+
+def _get_para_text(para_elem) -> str:
+    """从段落 XML 元素中提取纯文本"""
+    text = ''
+    for child in para_elem:
+        ctag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+        if ctag == 'r':
+            for t in child:
+                ttag = t.tag.split('}')[-1] if '}' in t.tag else t.tag
+                if ttag == 't' and t.text:
+                    text += t.text
+    return text.strip()
+
+
+def _build_grid(table) -> Tuple[List[List[str]], List[List[bool]]]:
+    """
+    用 python-docx 构建表格文本网格，精确处理合并单元格。
+
+    - 水平合并（gridSpan）：同行跨列的单元格，grid 中每列都填写相同内容
+    - 垂直合并（vMerge）：跨行合并，续行单元格填写起始行的内容，并标记 is_vmerge_cont=True
+
+    返回：
+        grid[r][c]         : 字符串，单元格文本（合并区域均填充实际值）
+        is_vmerge_cont[r][c]: bool，True 表示该格是垂直合并的续行（非起始行）
+    """
+    n_rows = len(table.rows)
+    # 列数用第一行的列数估算（含合并）
+    try:
+        n_cols = len(table.columns)
+    except Exception:
+        n_cols = max(len(r.cells) for r in table.rows) if n_rows else 0
+
+    grid = [[''] * n_cols for _ in range(n_rows)]
+    is_vmerge_cont = [[False] * n_cols for _ in range(n_rows)]
+    # 记录每列最近一次 vMerge restart 的值（用于续行填充）
+    vmerge_values = [''] * n_cols
+
+    for r_idx, row in enumerate(table.rows):
+        col_cursor = 0
+        # 直接遍历行的 XML w:tc 元素，避免 python-docx row.cells 自动扩展合并格导致重复
+        tr = row._tr
+        for tc in tr.findall(qn('w:tc')):
+            # 跳过已被水平合并填充的列（前一个单元格的 gridSpan 填充过）
+            while col_cursor < n_cols and grid[r_idx][col_cursor] != '':
+                col_cursor += 1
+            if col_cursor >= n_cols:
+                break
+
+            tcpr = tc.find(qn('w:tcPr'))
+
+            # ── 水平合并（gridSpan） ──
+            gridspan = 1
+            if tcpr is not None:
+                gs_elem = tcpr.find(qn('w:gridSpan'))
+                if gs_elem is not None:
+                    try:
+                        gridspan = int(gs_elem.get(qn('w:val'), '1'))
+                    except (ValueError, TypeError):
+                        gridspan = 1
+
+            # ── 垂直合并（vMerge） ──
+            vmerge_elem = tcpr.find(qn('w:vMerge')) if tcpr is not None else None
+            # 提取单元格文本（遍历 w:p/w:r/w:t）
+            cell_text_parts = []
+            for p_elem in tc.findall(qn('w:p')):
+                para_text = ''
+                for r_elem in p_elem.findall(qn('w:r')):
+                    for t_elem in r_elem.findall(qn('w:t')):
+                        if t_elem.text:
+                            para_text += t_elem.text
+                if para_text.strip():
+                    cell_text_parts.append(para_text.strip())
+            cell_text = ' '.join(cell_text_parts)
+
+            if vmerge_elem is not None:
+                val = vmerge_elem.get(qn('w:val'), '')
+                if val == 'restart':
+                    # 垂直合并起始行：记录文本
+                    vmerge_values[col_cursor] = cell_text
+                    actual_text = cell_text
+                else:
+                    # 垂直合并续行：使用起始行文本，标记为续行
+                    actual_text = vmerge_values[col_cursor]
+                    for c in range(col_cursor, min(col_cursor + gridspan, n_cols)):
+                        is_vmerge_cont[r_idx][c] = True
+            else:
+                actual_text = cell_text
+                vmerge_values[col_cursor] = cell_text  # 更新该列的最新值
+
+            # 填充水平合并的所有列
+            for c in range(col_cursor, min(col_cursor + gridspan, n_cols)):
+                grid[r_idx][c] = actual_text
+
+            col_cursor += gridspan
+
+    return grid, is_vmerge_cont
+
+
+def _dedup_row(row: List[str]) -> List[str]:
+    """对行进行水平合并去重：相邻相同值只保留一个"""
+    result = []
+    prev = None
+    for cell in row:
+        if cell != prev:
+            result.append(cell)
+            prev = cell
+    return result
+
+
+def _dedup_headers(header_row: List[str]) -> Tuple[List[str], List[int]]:
+    """
+    对表头行去重，返回 (去重后的表头列表, 对应原始列索引列表)。
+    相邻相同的表头（水平合并产生）只保留第一个。
+    空表头替换为 column_N。
+    """
+    unique_headers = []
+    kept_indices = []
+    prev = None
+    for idx, h in enumerate(header_row):
+        h_clean = h.strip()
+        if h_clean != prev:
+            if not h_clean:
+                h_clean = f'column_{idx}'
+            unique_headers.append(h_clean)
+            kept_indices.append(idx)
+            prev = h_clean if h_clean else None
+        # 相同的相邻值跳过（水平合并重复列）
+    return unique_headers, kept_indices
+
+
+def _extract_msg_name_from_info_row(row_unique: List[str]) -> str:
+    """
+    从"信息名称行"（行0）的去重单元格列表中提取消息名称。
+    过滤掉 INFO_NAME_ROW_NOISE 中所有固定噪声词，取第一个有效值。
+    """
+    for cell in row_unique:
+        cell_clean = cell.strip()
+        if cell_clean and cell_clean not in INFO_NAME_ROW_NOISE:
+            if len(cell_clean) >= 2 and not cell_clean.isdigit():
+                return cell_clean
+    return ''
+
+
+def _extract_name_from_para(para_text: str) -> str:
+    """
+    从前置段落文本中提取消息/表格名称。
+    支持：'表XX 某状态信息'、'表B.1某信道状态'、普通文本
+    """
+    if not para_text:
+        return ''
+    text = para_text.strip()
+
+    # 格式1：'表XX 某状态信息'（数字/字母后有空格）
+    m = re.match(r'^表[A-Za-z0-9.。\s]*\s+(.+)', text)
+    if m:
+        name = m.group(1).strip()
+        if name and len(name) >= 2:
+            return name
+
+    # 格式2：'表B.1某信道状态'（无空格，字母+数字+点后紧跟中文）
+    m = re.match(r'^表[A-Za-z0-9.。]+(.+)', text)
+    if m:
+        name = m.group(1).strip()
+        if name and len(name) >= 2:
+            return name
+
+    # 格式3：普通文本（非纯序号）
+    if len(text) >= 2 and len(text) <= 60:
+        if not re.match(r'^[一二三四五六七八九十百千\d\s]+$', text):
+            return text
+
+    return ''
+
+
+def _parse_aggregate_meta(text: str) -> Dict:
+    """
+    解析聚合式消息元数据字符串。
+    如 'BCRT1-SA0-模式码0x03' → {信源机器码:'BC', 信宿机器码:'1', 子地址:'0', 数据段长度:'3'}
+    """
+    meta = {}
+    # 信源机器码 BC，信宿机器码 RT后的数字
+    m = re.search(r'(BC)\s*(?:→|->)?\s*RT\s*(\w+)', text, re.IGNORECASE)
+    if m:
+        meta['信源机器码'] = 'BC'
+        meta['信宿机器码'] = m.group(2)
+    # 子地址 SA0
+    m = re.search(r'SA\s*(\d+)', text, re.IGNORECASE)
+    if m:
+        meta['子地址'] = m.group(1)
+    # 数据段长度（模式码0x03）
+    m = re.search(r'模式码\s*(0x[0-9A-Fa-f]+|\d+)', text)
+    if m:
+        val = m.group(1)
+        if val.upper().startswith('0X'):
+            meta['数据段长度'] = str(int(val, 16))
+        else:
+            meta['数据段长度'] = val
+    return meta
+
+
+def _is_noise_table(grid: List[List[str]], preceding_para: str) -> bool:
+    """
+    判断是否为干扰/无效表格：
+    1. 前置段落含干扰词
+    2. 表头含干扰词（如测试指令、周期等）
+    3. 是帧格式说明表（帧头/帧尾）
+    4. 整表无任何数据类型关键字
+    5. 是示例/目标格式表（首行就是输出Excel的列名）
+    """
+    if any(marker in preceding_para for marker in NOISE_PARA_MARKERS):
+        return True
+    if not grid:
+        return True
+
+    row0_unique = _dedup_row(grid[0])
+    row0_text = ' '.join(row0_unique)
+
+    # 检查是否是示例/目标格式表
+    row0_set = set(row0_unique)
+    if EXAMPLE_TABLE_HEADERS.issubset(row0_set):
+        return True
+
+    # 检查表头含干扰词
+    if any(kw in row0_text for kw in NOISE_HEADER_KEYWORDS):
+        return True
+
+    # 帧格式表
+    all_text = ' '.join(cell for row in grid for cell in row)
+    if '帧头' in all_text and '帧尾' in all_text:
+        return True
+    if '帧格式' in preceding_para:
+        return True
+
+    # 检查整表是否含数据类型关键字
+    all_upper = all_text.upper()
+    has_data_type = any(kw.upper() in all_upper for kw in DATA_TYPE_KEYWORDS)
+    return not has_data_type
+
+
+# ─── 主类 ─────────────────────────────────────────────────────────────────────
 
 class TableDetector:
-    def __init__(self, config=None):
-        # 表头识别关键字（扩展）
-        self.keywords = ['序号', '参数', '内容', '信号名称', '信息内容', '数据类型', '类型', '长度', '单位', '备注', '值域',
-                        '信源', '信宿', '信息内容', '消息ID', '接口名称', '周期', '数据处理方法', '发起时机', '错误处理']
-        # 噪声行标记（精简，避免误过滤）
-        self.noise_markers = ['参见附录']
-        # 内容字段候选名（用于判断数据行有效性）
-        self.content_fields = ['参数', '内容', '信号名称', '信息内容', '接口名称', '飞行计时']
-        # 新的更精确的字段分类
-        self.header_categories = {
-            'sequence': ['序号'],  # 序号类
-            'content': ['参数', '内容', '信号名称', '信息内容'],  # 内容类
-            'type': ['数据类型', '类型', '类型（bit）', '转换类型'],  # 类型类
-            'unit': ['单位'],  # 单位类
-            'remark': ['备注', '值域', '数据处理方法'],  # 备注类
-            'meta': ['信源', '信宿', '信息内容', '消息ID', '接口名称', '周期', '发起时机', '错误处理']  # 消息元数据类
-        }
-        # 用于存储从python-docx获取的表格标题映射 (table_index -> title)
-        self.table_titles_from_docx = {}
-    
-    def _extract_table_titles_from_docx(self, file_path: str) -> Dict[int, str]:
-        """
-        从Word文档中提取表格前面的标题文本
-        返回一个映射：{table_index -> title}
-        
-        策略：
-        1. 优先查找"表X 标题"或"表X. 标题"格式的明确标题
-        2. 只提取真实存在的标题，不生成默认名称
-        3. 没有标题的表格将被忽略（留作空值，由表检测器的后续逻辑处理）
-        """
-        titles = {}
-        try:
-            doc = Document(file_path)
-            table_count = 0
-            
-            # 获取所有body元素（段落和表格）
-            for block_idx, block in enumerate(list(doc.element.body)):
-                if block.tag.endswith('tbl'):  # 表格
-                    # 回溯查找前面的标题
-                    parent = block.getparent()
-                    block_position = parent.index(block)
-                    
-                    # 从这个表格往前查找最近的标题性文本
-                    title = ""
-                    # 限制回溯范围，避免查找到太远的不相关文本（最多往前2个段落）
-                    for i in range(max(0, block_position - 2), -1, -1):
-                        elem = parent[i]
-                        if elem.tag.endswith('p'):
-                            text = elem.text if hasattr(elem, 'text') else ''
-                            if text.strip() and len(text) < 100:
-                                # 只接受"表X"格式的标题
-                                if '表' in text:
-                                    # 匹配"表X 标题"、"表X. 标题"或"表 标题"等格式
-                                    match = re.search(r'表[0-9A-Za-z.。]*\s*(.+?)(?:\s*$|[\s。，；])', text)
-                                    if match:
-                                        title = match.group(1).strip()
-                                        # 移除末尾可能的标点
-                                        title = re.sub(r'[\s。，；]+$', '', title).strip()
-                                        # 移除末尾可能的"表"字
-                                        if title.endswith('表'):
-                                            title = title[:-1].strip()
-                                        
-                                        if title and len(title) > 0 and len(title) < 80:
-                                            break
-                        
-                        # 如果找到有效标题，立即跳出
-                        if title:
-                            break
-                    
-                    # 只有找到真实的标题才记录
-                    if title:
-                        titles[table_count] = title
-                    
-                    table_count += 1
-        except Exception as e:
-            logger.warning(f"Failed to extract table titles from docx: {str(e)}")
-        
-        return titles
+    """
+    协议文档表格检测器（python-docx 版本）。
+    完整替换 docx2python，精确处理水平/垂直合并单元格。
+    """
 
-    def _clean_html_entities(self, text):
-        """清理HTML实体编码（如&#x00E8;等），但保留分隔符"""
-        if not text:
-            return text
-        # 解码HTML实体
-        text = html.unescape(text)
-        # 移除剩余的HTML标签
-        text = re.sub(r'<[^>]+>', '', text)
-        # 只删除【无用的特殊字符】，但【保留分隔符】
-        # 保留的字符：ASCII(32-126)、中文(\u4e00-\u9fff)、箭头(→等)、中文符号(、。等)
-        # 删除的字符：除上述外的其他特殊字符（如è等无用编码字符）
-        kept_chars = set()
-        for c in text:
-            ord_val = ord(c)
-            # 保留：ASCII字符、中文、箭头、常见标点
-            if (32 <= ord_val <= 126 or  # ASCII
-                '\u4e00' <= c <= '\u9fff' or  # 中文
-                c in '→→→·—–-_()（）【】《》「」『』、，。；：！？=+-*/'):  # 分隔符和标点
-                kept_chars.add(c)
-        
-        text = ''.join(c for c in text if c in kept_chars or ord(c) >= 128)
-        return text.strip()
+    def __init__(self, config=None):
+        # 保留 keywords 等属性以兼容外部调用
+        self.keywords = ['序号', '参数', '内容', '信号名称', '信息内容', '数据类型', '类型',
+                         '长度', '单位', '备注', '值域', '信源', '信宿', '消息ID']
+        self.noise_markers = ['参见附录']
+        self.content_fields = ['参数', '内容', '信号名称', '信息内容', '数据含义', '字段']
+        self.header_categories = {
+            'sequence': ['序号'],
+            'content': ['参数', '内容', '信号名称', '信息内容', '数据含义', '字段'],
+            'type': ['数据类型', '类型', '数据格式'],
+            'unit': ['单位'],
+            'remark': ['备注', '说明', '值域', '数据处理方法'],
+            'meta': ['信源', '信宿', '信息内容', '消息ID', '接口名称', '周期', '发起时机', '错误处理']
+        }
 
     def extract_tables_from_docx(self, file_path: str) -> List[Dict]:
+        """
+        主入口：解析 docx 文件，返回结构化表格列表。
+        每个表格字典包含：
+            index, msg_name, headers, data_rows, meta,
+            table_type ('field_def'|'port_allocation'|'message_id'|'bit_def'|'skip'),
+            is_auxiliary (bool, 兼容旧接口)
+        """
         extracted_tables = []
         try:
-            # 首先从python-docx获取表格标题映射
-            self.table_titles_from_docx = self._extract_table_titles_from_docx(file_path)
-            
-            # 捕获 docx2python 库的索引错误
-            try:
-                doc_temp = docx2python(file_path)
-            except IndexError as e:
-                if "list index out of range" in str(e):
-                    logger.error(f"docx2python encountered index error processing {file_path}: {str(e)}")
-                    logger.error("This usually happens when the document has complex formatting that docx2python can't handle")
-                    return []
-                else:
-                    raise  # 重新抛出其他IndexError
-            
-            with doc_temp as doc:
-                # doc.body 包含所有表格，结构为：Tables -> Rows -> Cells -> Paragraphs
-                
-                # 获取全文本用于备选标题回溯
-                full_text_paragraphs = [p.strip() for p in doc.text.split('\n') if p.strip()]
-
-                for table_idx, table in enumerate(doc.body):
-                    if not table or len(table) < 2:
-                        continue
-                    
-                    # 预处理表格：合并单元格内的段落并去除空白
-                    # docx2python 会自动填充合并单元格的内容
-                    grid = []
-                    for row in table:
-                        # 确保行不为空
-                        if row:
-                            grid.append([" ".join(cell).strip() if cell else "" for cell in row])
-                    
-                    # 1. 定位表头 - 改进逻辑以适应混合结构表格
-                    header_row_idx = -1
-                    max_score = 0
-                    # 确保grid不为空
-                    if not grid:
-                        continue
-                    
-                    # 扩大搜索范围，检查更多行以适应复杂结构
-                    # 首先尝试找到真正的数据表头行（包含序号、内容、类型等标准字段）
-                    for r_idx, row in enumerate(grid[:min(20, len(grid))]):
-                        if not row:
-                            continue
-                        
-                        # 检查是否包含标准的数据表头关键词
-                        has_seq = any('序号' in cell for cell in row)
-                        has_content = any('参数' in cell or '内容' in cell or '信号名称' in cell for cell in row)
-                        has_type = any('类型' in cell or '数据类型' in cell for cell in row)
-                        has_value = any('值域' in cell or '取值范围' in cell for cell in row)
-                        has_unit = any('单位' in cell for cell in row)
-                        
-                        # 检查是否包含这些标准字段的组合
-                        standard_field_count = sum([has_seq, has_content, has_type, has_value, has_unit])
-                        
-                        if standard_field_count >= 3:  # 至少包含3个标准字段
-                            header_row_idx = r_idx
-                            break
-                    
-                    # 如果没找到标准字段表头，使用关键词匹配方法
-                    if header_row_idx == -1:
-                        for r_idx, row in enumerate(grid[:min(20, len(grid))]):
-                            # 确保行不为空
-                            if not row:
-                                continue
-                            matches = sum(1 for cell in row if any(k in cell for k in self.keywords))
-                            # 评分机制：至少匹配2个关键字
-                            score = matches / 4.0 if matches <= 4 else 1.0
-                            if matches >= 2 and score > max_score:
-                                max_score, header_row_idx = score, r_idx
-                    
-                    # 如果还是找不到，尝试基于结构特征
-                    if header_row_idx == -1:
-                        for r_idx, row in enumerate(grid[:min(15, len(grid))]):
-                            if not row:
-                                continue
-                            # 检查是否包含典型的参数表头关键词组合
-                            has_seq = any('序号' in cell for cell in row)
-                            has_content = any('参数' in cell or '内容' in cell or '信号名称' in cell for cell in row)
-                            has_type = any('类型' in cell or '数据类型' in cell for cell in row)
-                            if (has_seq and has_content and has_type) or (has_content and has_type and len(row) >= 4):
-                                header_row_idx = r_idx
-                                break
-
-                    # 特殊处理：识别混合结构表格
-                    is_mixed_structure = False
-                    metadata_end_row = -1
-                    if header_row_idx >= 0:
-                        # 检查表头前是否存在元数据区域
-                        for r_idx in range(min(5, header_row_idx)):
-                            row = grid[r_idx] if r_idx < len(grid) else []
-                            if row:
-                                # 检查是否为键值对结构（相邻单元格成对出现）
-                                kv_pairs = 0
-                                for i in range(0, len(row)-1, 2):
-                                    if i+1 < len(row):
-                                        key_cell = row[i]
-                                        value_cell = row[i+1]
-                                        # 检查是否为有效的键值对
-                                        if (key_cell and value_cell and 
-                                            key_cell != value_cell and
-                                            value_cell not in ['-', '—', 'xx', ''] and
-                                            any(keyword in key_cell for keyword in ['信息名称', '名称', '信息标识', '信源', '信宿', '传输周期', '发起时机'])):
-                                            kv_pairs += 1
-                                
-                                # 如果找到足够的键值对，标记为混合结构
-                                if kv_pairs >= 2:
-                                    is_mixed_structure = True
-                                    metadata_end_row = r_idx
-                                    break
-
-                    if header_row_idx != -1 and 0 <= header_row_idx < len(grid):
-                        headers = grid[header_row_idx] if 0 <= header_row_idx < len(grid) else []
-                        # 初始化msg_name为空，后续从表内元数据提取
-                        msg_name = ""
-                        meta = {}
-                        
-                        # 2. 提取元数据（表头之上的行）
-                        # 初始化unique_cells
-                        unique_cells = []
-                        
-                        # 【改进】总是尝试从表头之前的所有行提取元数据（支持多种配对方式）
-                        # 遍历表头之前的所有行，提取所有的键值对
-                        for meta_row_idx in range(header_row_idx):  # 遍历表头之前的所有行
-                            meta_row = grid[meta_row_idx] if meta_row_idx < len(grid) else []
-                            if len(meta_row) >= 2:  # 确保有足够的单元格形成键值对
-                                col_count = len(meta_row)
-                                
-                                # 策略：在元数据行中寻找所有有效的键值对
-                                # 处理方式：逐列扫描，找到"键"和"值"的组合
-                                processed_keys = set()  # 记录已处理的键，避免重复
-                                
-                                for col_idx in range(0, col_count - 1):
-                                    # 尝试将当前列作为"键"
-                                    potential_key = meta_row[col_idx].strip() if col_idx < len(meta_row) else ""
-                                    
-                                    # 检查是否是有效的元数据键
-                                    is_metadata_key = any(kw in potential_key for kw in [
-                                        '信息名称', '名称', '数据项名称', '协议名称',
-                                        '信息标识', '标识', '消息ID',
-                                        '信源', '信宿', '信源、信宿',
-                                        '传输周期', '发起时机', '错误处理', '其他',
-                                        '代号', '上级'
-                                    ])
-                                    
-                                    if not is_metadata_key or not potential_key:
-                                        continue
-                                    
-                                    if potential_key in processed_keys:
-                                        continue
-                                    
-                                    # 找到一个有效的键，现在寻找对应的值
-                                    # 策略1：检查紧邻的下一列
-                                    value_col = col_idx + 1
-                                    if value_col < col_count:
-                                        potential_value = meta_row[value_col].strip() if value_col < len(meta_row) else ""
-                                        
-                                        # 如果下一列是键值相同的情况（重复列），则跳过，继续找下一个非重复值
-                                        if potential_value == potential_key:
-                                            # 尝试跳过相同值，找下一个不同的值
-                                            for next_col in range(value_col + 1, col_count):
-                                                next_value = meta_row[next_col].strip() if next_col < len(meta_row) else ""
-                                                if next_value and next_value != potential_key and next_value not in ['-', '—', 'xx', '']:
-                                                    potential_value = next_value
-                                                    break
-                                        
-                                        # 验证找到了一个有效的值
-                                        if potential_value and potential_value != potential_key and potential_value not in ['']:
-                                            # 检查 potential_value 是否看起来是一个表名（作为 msg_name 候选）
-                                            if any(kw in potential_key for kw in ['信息名称', '名称', '协议名称']) and not msg_name:
-                                                msg_name = potential_value
-                                            
-                                            # 将键值对存储到meta中
-                                            meta[potential_key] = potential_value
-                                            processed_keys.add(potential_key)
-                        
-                        # 清理meta中的HTML实体编码
-                        for key in meta:
-                            if isinstance(meta[key], str):
-                                meta[key] = self._clean_html_entities(meta[key])
-
-                        # 特殊处理：对于多行元数据结构（如Table 21），检查是否有更丰富的元数据
-                        # 检查前几行是否有键值对结构
-                        for r_idx in range(min(5, header_row_idx)):  # 扩大检查范围
-                            row = grid[r_idx]
-                            if row and len(row) >= 2:
-                                # 检查是否为键值对结构
-                                for i in range(len(row) - 1):
-                                    key_cell = row[i]
-                                    value_cell = row[i+1]
-                                    if any(kw in key_cell for kw in ['信息名称', '名称', '协议名称', '信息标识', '标识', '消息ID', '上级']):
-                                        if not msg_name and value_cell and value_cell not in ['—', '-'] and value_cell != key_cell:
-                                            msg_name = value_cell
-                                        elif value_cell and value_cell not in ['—', '-'] and value_cell != key_cell:
-                                            # 尝试将值存储到meta中
-                                            if any(kw in key_cell for kw in ['信息标识', '标识', '消息ID']):
-                                                meta['信息标识'] = value_cell
-                                            elif any(kw in key_cell for kw in ['上级']):
-                                                meta['上级'] = value_cell
-                                
-                                # 特别处理：检查整行是否都是键值对（横向排列）
-                                if len(row) >= 4:  # 至少需要4个单元格才能形成有意义的键值对
-                                    for i in range(0, len(row)-1, 2):  # 步长为2，成对处理
-                                        if i+1 < len(row):
-                                            key_cell = row[i]
-                                            value_cell = row[i+1]
-                                            # 检查是否为有效的键值对
-                                            if (any(kw in key_cell for kw in ['信息名称', '名称', '协议名称']) and 
-                                                value_cell and value_cell not in ['—', '-', 'xx'] and 
-                                                value_cell != key_cell):
-                                                if not msg_name:
-                                                    msg_name = value_cell
-                                            elif (any(kw in key_cell for kw in ['信息标识', '标识']) and 
-                                                  value_cell and value_cell not in ['—', '-', 'xx'] and 
-                                                  value_cell != key_cell):
-                                                meta['信息标识'] = value_cell
-                        
-                        # 继续原来的逻辑，处理表头之上的行，提取所有唯一的单元格内容用于 K-V 匹配
-                        all_unique_cells = []
-                        for r_idx in range(header_row_idx):
-                            row = grid[r_idx]
-                            if row and len(row) > 0:
-                                row_unique = []
-                                row_unique.append(row[0])
-                                for i in range(1, len(row)):
-                                    if row[i] != row[i-1]:
-                                        row_unique.append(row[i])
-                                all_unique_cells.extend(row_unique)
-                        
-                        # A. 尝试在单元格之间寻找 Key-Value (例如: [名称][PD指令])
-                        for i in range(len(all_unique_cells) - 1):
-                            k = all_unique_cells[i]
-                            v = all_unique_cells[i+1]
-                            if any(kw in k for kw in ['信息名称', '名称', '协议名称']):
-                                if not msg_name and v and v not in ['—', '-'] and v != k: msg_name = v
-                            elif any(kw in k for kw in ['信息标识', '标识', '消息ID']):
-                                if v and v not in ['—', '-'] and v != k: meta['信息标识'] = v
-                            elif any(kw in k for kw in ['上级']):
-                                if v and v not in ['—', '-'] and v != k: meta['上级'] = v
-                        
-                        # B. 尝试在单个单元格内寻找 (例如: [名称：PD指令])
-                        if not msg_name:
-                            for cell in all_unique_cells:
-                                if any(kw in cell for kw in ['信息名称', '名称', '协议名称']):
-                                    parts = re.split(r'[：:\s]+', cell)
-                                    if len(parts) > 1 and parts[-1] not in ['—', '-']:
-                                        msg_name = parts[-1].strip()
-                                        break
-                        
-                        # 【备选方案】如果表格外部没有标题，再尝试从表格内部提取
-                        # 3. 备选方案：如果表格内没找到标题，向文档段落回溯
-                        if not msg_name:
-                            for p_text in reversed(full_text_paragraphs[:200]):
-                                if any(k in p_text for k in ['信息名称', '名称', '协议名称']):
-                                    res = re.split(r'[：:\s]+', p_text)
-                                    if len(res) > 1:
-                                        msg_name = res[-1].strip()
-                                        break
-                        
-                        # 4. 新增：处理类似"表1 端口分配表"或"表2. ID的定义"格式的表格标题
-                        if not msg_name and grid:
-                            # 检查表头上方的几行，看是否有表格标题格式
-                            for r_idx in range(min(5, header_row_idx)):  # 检查表头上方最多5行
-                                row = grid[r_idx]
-                                if row:
-                                    # 检查每行的第一个单元格，通常包含表格标题
-                                    first_cell = row[0] if row and len(row) > 0 else ""
-                                    if first_cell and '表' in first_cell:
-                                        # 优先处理"表X. 表名"格式（带句号或圆点）
-                                        match = re.match(r'^表\d+[.。]\s*(.+?)(?:\s|$)', first_cell)
-                                        if match:
-                                            msg_name = match.group(1).strip()
-                                            if msg_name:
-                                                break
-                                        
-                                        # 退而求其次处理"表X 表名"格式（带空格）
-                                        if ' ' in first_cell:
-                                            space_pos = first_cell.find(' ')
-                                            if space_pos != -1:
-                                                table_name_part = first_cell[space_pos + 1:].strip()
-                                                # 移除可能的"表"字
-                                                if table_name_part.endswith('表'):
-                                                    table_name_part = table_name_part[:-1]
-                                                if table_name_part:
-                                                    msg_name = table_name_part
-                                                    break
-                        
-                        # 5. 如果还是没有找到名称，尝试从表头中推断
-                        if not msg_name:
-                            headers_str = ' '.join(headers) if headers else ''
-                            
-                            # 第一优先级：检查是否为特殊表格类型
-                            if any('消息ID' in h or '消息标识' in h for h in headers):
-                                msg_name = '消息ID编码表'
-                            elif any(keyword in headers_str for keyword in ['接收组播地址', '接收端口号', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码']):
-                                msg_name = '端口分配表'
-                            else:
-                                # 第二优先级：基于表头内容推断
-                                temp_seq_found = any(any(kw in h for kw in self.header_categories['sequence']) for h in headers) if headers else False
-                                temp_content_found = any(any(kw in h for kw in self.header_categories['content']) for h in headers) if headers else False
-                                temp_type_found = any(any(kw in h for kw in self.header_categories['type']) for h in headers) if headers else False
-                                
-                                # 检查特殊业务关键词
-                                if '接口' in headers_str and temp_content_found:
-                                    msg_name = '接口参数表'
-                                elif '指令' in headers_str or '命令' in headers_str:
-                                    msg_name = '指令定义表'
-                                elif '状态' in headers_str:
-                                    msg_name = '状态表'
-                                elif temp_content_found and temp_type_found:
-                                    msg_name = '协议参数表'
-                        
-                        # 清洗标题标签
-                        msg_name = re.sub(r'^(信息|名称|标识|信号|消息|—)+', '', msg_name).strip()
-                        
-                        # 6. 最后备选：如果仍未找到标题，使用从Word文档结构提取的外部标题
-                        if not msg_name:
-                            external_title = self.table_titles_from_docx.get(table_idx, "")
-                            if external_title:
-                                msg_name = external_title
-                        
-                        # 4. 提取数据行
-                        data_rows = []
-                        # 处理表头重复（合并单元格）：去除完全重复的列，只保留第一个
-                        unique_headers = []
-                        seen_headers = set()  # 用于跟踪已见过的表头
-                        header_indices_to_keep = []  # 记录要保留的原始列索引
-                        
-                        for col_idx, h in enumerate(headers):
-                            clean_h = re.sub(r'<[^>]+>', '', h).strip()  # 移除HTML标签
-                            if not clean_h:
-                                clean_h = f"column_{col_idx}"
-                            
-                            # 如果这个表头之前没见过，就保留它
-                            if clean_h not in seen_headers:
-                                seen_headers.add(clean_h)
-                                unique_headers.append(clean_h)
-                                header_indices_to_keep.append(col_idx)
-                        
-                        # 更新headers为去重后的版本
-                        headers = unique_headers
-                        
-                        # --- 添加：标记表格类型用于日志输出 ---
-                        # 检查表头是否包含数据内容所需的核心类别
-                        seq_found = any(any(kw in h for kw in self.header_categories['sequence']) for h in unique_headers)
-                        content_found = any(any(kw in h for kw in self.header_categories['content']) for h in unique_headers)
-                        type_found = any(any(kw in h for kw in self.header_categories['type']) for h in unique_headers)
-                        
-                        # 检查是否包含消息ID等相关信息（这些通常属于元数据表）
-                        meta_found = any(any(kw in h for kw in self.header_categories['meta']) for h in unique_headers)
-                        
-                        # 检查是否为端口分配表等辅助表
-                        is_port_table = any(keyword in str(unique_headers) for keyword in ['接收组播地址', '接收端口号', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码'])
-                        
-                        # 检查是否为消息ID编码表等辅助表
-                        is_meta_table = any('消息ID' in h or '消息标识' in h for h in unique_headers)
-                        
-                        # 检查是否为协议参数表（主要包含参数和数据类型）
-                        is_param_table = content_found and type_found
-                        
-                        # 检查是否为指令相关的协议表（包含指令、命令、控制等关键词）
-                        msg_name_lower = msg_name.lower()
-                        is_instruction_related = any(keyword in msg_name_lower for keyword in ['指令', '控制', '命令'])
-                        
-                        # 检查是否为状态相关的协议表（也属于协议的一部分）
-                        is_status_related = '状态' in msg_name_lower
-                        
-                        # 检查是否为协议相关的表格（但排除通用的参数表）
-                        is_protocol_related = '协议' in msg_name_lower and '参数' not in msg_name_lower
-                        
-                        # 检查是否为消息相关的表格
-                        is_message_related = '消息' in msg_name_lower
-                        
-                        # 检查业务含义相关的关键词
-                        msg_name_lower = msg_name.lower()
-                        # 扩展重要业务关键词，涵盖用户提到的“检查”、“结果”、“数据”、“测量”
-                        is_important_business = any(keyword in msg_name_lower for keyword in ['指令', '控制', '命令', '状态', '检查', '结果', '数据', '测量', '协议', '消息'])
-                        
-                        # 只要包含核心列（内容/类型）或具有业务含义的标题，就认定为核心协议数据表
-                        is_core_protocol_table = is_param_table or is_important_business
-                        
-                        # 标记是否为辅助性元数据表（仅当既没有业务关键词也不是参数表时才标记为辅助）
-                        # 根据用户要求，我们要尽量保留这些表格，因此这里缩小辅助表的定义
-                        is_auxiliary_table = (is_port_table or is_meta_table) and not is_important_business
-                        
-                        # 强制保留所有包含数据行的表格，除非明确是端口/ID等纯元数据辅助表且用户未要求展示
-                        # 这里我们根据用户反馈，将核心判断改为：只要有数据行且不是纯噪声，就保留
-                        is_core_protocol_table = True if data_rows else is_core_protocol_table
-                        
-                        # 提取数据行（只保留去重后的列）
-                        for r_idx in range(header_row_idx + 1, len(grid)):
-                            if r_idx >= len(grid):
-                                continue
-                            row = grid[r_idx]
-                            if not row or len(row) == 0 or len(row) < len(headers) // 2: continue
-                            
-                            row_data = {}
-                            # 使用处理过的表头来创建行数据，只提取要保留的列
-                            for kept_idx, col_idx in enumerate(header_indices_to_keep):
-                                if kept_idx < len(headers):
-                                    clean_h = headers[kept_idx]
-                                    cell_val = row[col_idx] if col_idx < len(row) else ""
-                                    # 清理HTML标签
-                                    cell_val = re.sub(r'<[^>]+>', '', cell_val).strip()
-                                    row_data[clean_h] = cell_val
-                            
-                            # 过滤空行和噪声
-                            row_all_text = "".join(row_data.values())
-                            if not row_all_text.strip(): continue
-                            
-                            # 过滤注释行（如'注：时间按小端处理'）
-                            if any(comment_prefix in row_all_text for comment_prefix in ['注：', '注:', '说明：', '说明:', '备注：', '备注:']):
-                                continue
-                            
-                            # 检查行的列数是否与表头匹配（至少要有一定比例的列）
-                            non_empty_cols = sum(1 for cell in row if cell and cell.strip())
-                            expected_cols = len(unique_headers)
-                            min_required_cols = max(2, expected_cols // 3)  # 至少需要2列或1/3的列
-                            
-                            if non_empty_cols < min_required_cols:
-                                continue
-                            
-                            is_noise = any(m in row_all_text for m in self.noise_markers)
-                            if is_noise: continue
-                            
-                            # 改进的有效性判断：检查是否有任何内容字段有值，或者至少有3个非空字段
-                            content = None
-                            for field in self.content_fields:
-                                if field in row_data and row_data[field]:
-                                    content = row_data[field]
-                                    break
-                            
-                            # 检查是否有任何非空内容字段或至少3个非特殊字符字段
-                            non_special_count = sum(1 for v in row_data.values() if v and v not in ['—', '-', ''])
-                            
-                            if content or non_special_count >= 3:
-                                data_rows.append(row_data)
-                        
-                        # 临时保存所有表格，后续统一过滤
-                        if data_rows:
-                            # 【元数据注入】将所有meta字段注入到data_rows[0]
-                            # 按照需求：如果目标字段已存在且非空，则不覆盖；否则注入meta中的值
-                            if data_rows and meta:
-                                for meta_key, meta_value in meta.items():
-                                    # 检查是否已存在对应的表头（允许模糊匹配，如"名称"可能对应"消息名称"）
-                                    existing_key = None
-                                    for header in unique_headers:
-                                        if meta_key in header or header in meta_key:
-                                            existing_key = header
-                                            break
-                                    
-                                    # 如果没有对应的表头，直接注入到第一行
-                                    if not existing_key:
-                                        # 检查第一行是否已有该键值且非空
-                                        if meta_key not in data_rows[0] or not data_rows[0][meta_key]:
-                                            data_rows[0][meta_key] = meta_value
-                            
-                            # 创建表格数据副本，添加辅助表标记用于过滤
-                            table_data = {
-                                'index': table_idx,
-                                'msg_name': msg_name,
-                                'meta': meta,
-                                'data_rows': data_rows,
-                                'headers': unique_headers,  # 使用处理后的表头
-                                'is_auxiliary': is_auxiliary_table  # 添加辅助表标记
-                            }
-                            extracted_tables.append(table_data)
+            doc = Document(file_path)
         except Exception as e:
-            logger.error(f"Error extracting tables from {file_path}: {str(e)}")
-            
-        # 返回所有识别到的表格，不再进行硬过滤
-        # 内部逻辑标记 is_auxiliary 仅用于后续日志分级，不作为删除依据
+            logger.error(f"Failed to open {file_path}: {e}")
+            return []
+
+        # 遍历 body 元素，建立段落-表格位置关系
+        table_idx = 0
+        last_para = ''
+        noise_next = False  # 前置段落含干扰词时，标记后续表格为干扰
+
+        for elem in doc.element.body:
+            tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+
+            if tag == 'p':
+                para_text = _get_para_text(elem)
+                if para_text:
+                    last_para = para_text
+                    if any(marker in para_text for marker in NOISE_PARA_MARKERS):
+                        noise_next = True
+                    # 注意：不重置 noise_next，因为后续连续表格也要跳过
+                    # 只有下一个非干扰段落后才重置（见下方逻辑）
+
+            elif tag == 'tbl':
+                if table_idx >= len(doc.tables):
+                    table_idx += 1
+                    continue
+
+                table = doc.tables[table_idx]
+                parsed = self._parse_single_table(table, table_idx, last_para, noise_next)
+                extracted_tables.append(parsed)
+
+                # 如果当前表格是干扰表，且前置段落也是干扰，保持 noise_next
+                # 否则重置（只有明确标记才跳过）
+                if not any(marker in last_para for marker in NOISE_PARA_MARKERS):
+                    noise_next = False
+
+                table_idx += 1
+
         return extracted_tables
+
+    def _parse_single_table(self, table, t_idx: int, preceding_para: str, force_skip: bool) -> Dict:
+        """解析单个表格"""
+        base = {
+            'index': t_idx,
+            'msg_name': '',
+            'headers': [],
+            'data_rows': [],
+            'meta': {},
+            'table_type': 'skip',
+            'is_auxiliary': False,
+            'preceding_para': preceding_para,
+        }
+
+        try:
+            grid, is_vmerge_cont = _build_grid(table)
+        except Exception as e:
+            logger.warning(f"Table #{t_idx}: grid error: {e}")
+            return base
+
+        if not grid or len(grid) < 1:
+            return base
+
+        # 强制跳过
+        if force_skip:
+            return base
+
+        # ── 判断是否为干扰/无效表格 ──────────────────────────────────────────
+        if _is_noise_table(grid, preceding_para):
+            return base
+
+        # ── 获取行0去重内容 ─────────────────────────────────────────────────
+        row0_unique = _dedup_row(grid[0])
+        row0_text = ' '.join(row0_unique)
+
+        # ── 端口分配表识别（含信源系统码+信宿系统码） ────────────────────────
+        if '信源系统码' in row0_text and '信宿系统码' in row0_text:
+            return self._parse_port_allocation(grid, t_idx, preceding_para)
+
+        # ── 消息ID表识别（含消息ID+信息内容，≤6列） ──────────────────────────
+        if '消息ID' in row0_text and '信息内容' in row0_text:
+            unique_cols, _ = _dedup_headers(grid[0])
+            if len(unique_cols) <= 7:
+                return self._parse_message_id_table(grid, t_idx, preceding_para)
+
+        # ── bit位定义表识别（含位号+状态参数） ────────────────────────────────
+        if ('位号' in row0_text or '位号' in ' '.join(_dedup_row(grid[1])) if len(grid) > 1 else False) \
+                and '状态参数' in row0_text:
+            return self._parse_bit_def_table(grid, t_idx, preceding_para)
+        # 也匹配只有"位号"列的情况
+        if '位号' in row0_text and any(kw in row0_text for kw in ['状态参数', '取值说明']):
+            return self._parse_bit_def_table(grid, t_idx, preceding_para)
+
+        # ── 字段定义表（A/B/C三种类型） ────────────────────────────────────────
+        return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para)
+
+    # ── 端口分配表 ────────────────────────────────────────────────────────────
+
+    def _parse_port_allocation(self, grid: List[List[str]], t_idx: int, preceding_para: str) -> Dict:
+        headers, kept_indices = _dedup_headers(grid[0])
+        data_rows = self._extract_data_rows(grid, headers, kept_indices, start_row=1)
+        return {
+            'index': t_idx,
+            'msg_name': '端口分配表',
+            'headers': headers,
+            'data_rows': data_rows,
+            'meta': {},
+            'table_type': 'port_allocation',
+            'is_auxiliary': True,
+            'preceding_para': preceding_para,
+        }
+
+    # ── 消息ID映射表 ──────────────────────────────────────────────────────────
+
+    def _parse_message_id_table(self, grid: List[List[str]], t_idx: int, preceding_para: str) -> Dict:
+        headers, kept_indices = _dedup_headers(grid[0])
+        data_rows = self._extract_data_rows(grid, headers, kept_indices, start_row=1)
+        return {
+            'index': t_idx,
+            'msg_name': '消息ID表',
+            'headers': headers,
+            'data_rows': data_rows,
+            'meta': {},
+            'table_type': 'message_id',
+            'is_auxiliary': True,
+            'preceding_para': preceding_para,
+        }
+
+    # ── bit位定义表 ───────────────────────────────────────────────────────────
+
+    def _parse_bit_def_table(self, grid: List[List[str]], t_idx: int, preceding_para: str) -> Dict:
+        headers, kept_indices = _dedup_headers(grid[0])
+        data_rows = self._extract_data_rows(grid, headers, kept_indices, start_row=1)
+        msg_name = _extract_name_from_para(preceding_para)
+        return {
+            'index': t_idx,
+            'msg_name': msg_name,
+            'headers': headers,
+            'data_rows': data_rows,
+            'meta': {},
+            'table_type': 'bit_def',
+            'is_auxiliary': True,
+            'preceding_para': preceding_para,
+        }
+
+    # ── 字段定义表（A/B/C 三种类型 + 聚合式） ─────────────────────────────────
+
+    def _parse_field_def_table(self, grid: List[List[str]], is_vmerge_cont: List[List[bool]],
+                                t_idx: int, preceding_para: str) -> Dict:
+        n_rows = len(grid)
+        skip_result = {
+            'index': t_idx, 'msg_name': '', 'headers': [], 'data_rows': [],
+            'meta': {}, 'table_type': 'skip', 'is_auxiliary': False,
+            'preceding_para': preceding_para,
+        }
+
+        # ── 判断是否有"信息名称行"（行0 含 信息名称/通信帧名称） ──────────────
+        row0_unique = _dedup_row(grid[0])
+        row0_text = ' '.join(row0_unique)
+        has_info_name_row = any(kw in row0_text for kw in ['信息名称', '通信帧名称'])
+
+        header_row_idx = -1
+        msg_name = ''
+        meta = {}
+
+        if has_info_name_row:
+            # 类型A / 聚合式：行0 是信息名称行
+            msg_name = _extract_msg_name_from_info_row(row0_unique)
+
+            # 从行1开始找真正的列名行（含数据类型/内容等关键字）
+            for r_idx in range(1, min(8, n_rows)):
+                ru = _dedup_row(grid[r_idx])
+                rt = ' '.join(ru)
+                has_type = any(kw in rt for kw in ['数据类型', '类型', '数据格式', '字节', '字节数', '长度'])
+                has_content = any(kw in rt for kw in ['内容', '参数', '信号名称', '字段', '数据含义', '名称'])
+                has_seq = '序号' in rt
+                if has_type or (has_content and has_seq) or (has_content and len(ru) >= 3):
+                    header_row_idx = r_idx
+                    break
+
+            # 聚合式：收集元数据区（行1到表头行之间）
+            if header_row_idx >= 2:
+                for r_idx in range(1, header_row_idx):
+                    row_text = ' '.join(_dedup_row(grid[r_idx]))
+                    if any(kw in row_text for kw in ['BCRT', 'SA', '模式码', '→', 'BC']):
+                        meta.update(_parse_aggregate_meta(row_text))
+                    # 提取信源信宿（IP地址格式）
+                    if '信源、信宿' in row_text or '信源、信目' in row_text:
+                        for cell in _dedup_row(grid[r_idx]):
+                            if '→' in cell or ':' in cell:
+                                meta['信源、信宿'] = cell
+        else:
+            # 类型B / C：行0 就是列名行
+            row0_text = ' '.join(_dedup_row(grid[0]))
+            has_type = any(kw in row0_text for kw in ['数据类型', '类型', '数据格式'])
+            has_content = any(kw in row0_text for kw in ['内容', '参数', '信号名称', '字段', '数据含义', '名称'])
+            if has_type or has_content:
+                header_row_idx = 0
+                # 消息名称来自前置段落标题
+                msg_name = _extract_name_from_para(preceding_para)
+            else:
+                return skip_result
+
+        if header_row_idx == -1:
+            return skip_result
+
+        # ── 提取列名（去重） ──────────────────────────────────────────────────
+        headers, kept_indices = _dedup_headers(grid[header_row_idx])
+
+        # ── 提取数据行 ─────────────────────────────────────────────────────────
+        data_rows = self._extract_data_rows(grid, headers, kept_indices,
+                                             start_row=header_row_idx + 1,
+                                             is_vmerge_cont=is_vmerge_cont)
+
+        if not data_rows:
+            return skip_result
+
+        # ── 判断是否是辅助表（端口/ID 已经提前识别，这里只标记字段定义表） ──
+        is_auxiliary = False
+
+        return {
+            'index': t_idx,
+            'msg_name': msg_name,
+            'headers': headers,
+            'data_rows': data_rows,
+            'meta': meta,
+            'table_type': 'field_def',
+            'is_auxiliary': is_auxiliary,
+            'preceding_para': preceding_para,
+        }
+
+    # ── 通用数据行提取 ─────────────────────────────────────────────────────────
+
+    def _extract_data_rows(self, grid: List[List[str]], headers: List[str],
+                           kept_indices: List[int], start_row: int,
+                           is_vmerge_cont: Optional[List[List[bool]]] = None) -> List[Dict]:
+        """
+        从 grid 的 start_row 开始提取数据行，按 headers/kept_indices 映射列。
+        过滤空行、注释行。
+        """
+        data_rows = []
+        for r_idx in range(start_row, len(grid)):
+            row = grid[r_idx]
+
+            row_dict = {}
+            for h_idx, (h, col_idx) in enumerate(zip(headers, kept_indices)):
+                val = row[col_idx] if col_idx < len(row) else ''
+                row_dict[h] = val.strip()
+
+            # 过滤纯空行
+            row_all = ''.join(row_dict.values())
+            if not row_all.strip():
+                continue
+
+            # 过滤注释行
+            if any(row_all.startswith(p) for p in ['注：', '注:', '说明：', '说明:']):
+                continue
+
+            # 过滤噪声（参见附录等）
+            if any(m in row_all for m in self.noise_markers):
+                continue
+
+            # 至少要有1个有实际意义的字段
+            non_empty = [v for v in row_dict.values() if v and v not in ('—', '-', '序号', '')]
+            if not non_empty:
+                continue
+
+            data_rows.append(row_dict)
+
+        return data_rows
+
+
+# ─── DocumentParser ──────────────────────────────────────────────────────────
 
 class DocumentParser:
     def __init__(self, config=None):
-        self.detector = TableDetector()
+        self.detector = TableDetector(config)
+        try:
+            from .table_linker import TableLinker
+        except ImportError:
+            try:
+                from backend.services.table_linker import TableLinker
+            except ImportError:
+                import sys, os
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+                from backend.services.table_linker import TableLinker
         self.linker = TableLinker()
-    def parse(self, path):
+
+    def parse(self, path: str) -> Dict:
         raw_tables = self.detector.extract_tables_from_docx(path)
-        # 关联表格信息
         linked_tables = self.linker.link_tables(raw_tables)
         return {'tables': linked_tables, 'tables_count': len(linked_tables)}

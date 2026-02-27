@@ -7,6 +7,7 @@ from datetime import datetime
 from backend.utils import success_response, error_response
 from backend.config import Config
 from backend.services.table_detector import DocumentParser
+from backend.services.table_linker import TableLinker
 from backend.services.excel_exporter import ExcelExporter
 from backend.services.data_cleaner import DataProcessor
 from backend.services.field_matcher import EnhancedFieldMatcher as FieldMatcher
@@ -67,6 +68,10 @@ def start_extraction():
         result = parser.parse(upload_path)
         tasks_status[task_id]['progress'] = 50
         
+        # 表格关联：注入元数据、过滤辅助表、附加bit子行
+        linker = TableLinker()
+        linked_tables = linker.link_tables(result['tables'])
+        
         processor = DataProcessor()
         matcher = FieldMatcher()
         
@@ -76,17 +81,29 @@ def start_extraction():
         
         # 保存处理后的表格数据用于导出
         processed_tables = []
-        table_count = len(result['tables'])
+        table_count = len(linked_tables)
         tasks_status[task_id]['table_count'] = table_count
         
         # 记录第一个表的名称作为主表名
-        if result['tables']:
-            tasks_status[task_id]['msg_name'] = result['tables'][0].get('msg_name', '')
+        if linked_tables:
+            tasks_status[task_id]['msg_name'] = linked_tables[0].get('msg_name', '')
             tasks_status[task_id]['table_count'] = table_count
         
-        for idx, table in enumerate(result['tables']):
+        for idx, table in enumerate(linked_tables):
+            # 只保留 field_def 类型的表格（辅助表已由 table_linker 过滤掉）
+            table_type = table.get('table_type', '')
+            if table_type not in ('field_def', '', None):
+                # 辅助表（端口分配/消息ID/bit定义）不输出到 Excel
+                table_count -= 1
+                continue
+
             table_rows = []
             for row in table['data_rows']:
+                # bit 子行直接透传，不做 field 匹配
+                if row.get('_is_bit_row'):
+                    table_rows.append(row)
+                    continue
+
                 proc_res = processor.process_row(row)
                 matched_row = {}
                 for field, value in proc_res['cleaned'].items():
@@ -95,18 +112,24 @@ def start_extraction():
                     target = match_res.get('target') if isinstance(match_res, dict) else (match_res.target if hasattr(match_res, 'target') else field)
                     target = target if target else field
                     matched_row[target] = value
-                
+
+                # 保留格式化结果（值域、转换公式）
+                for fkey, fval in proc_res.get('formatted', {}).items():
+                    matched_row[f'_fmt_{fkey}'] = fval
+
                 # 位数对齐
                 if '位数' in proc_res['converted']:
                     matched_row['类型（bit）'] = proc_res['converted']['位数']
-                
+
                 table_rows.append(matched_row)
-            
-            # 构建表格数据，包含元数据（meta）
+
+            # 构建表格数据，包含元数据（meta）及元数据来源（meta_sources）
             table_data = {
                 'msg_name': table['msg_name'],
                 'data_rows': table_rows,
-                'meta': table.get('meta', {})  # 传递元数据，包括信源、信宿、消息ID等
+                'meta': table.get('meta', {}),
+                'table_type': table_type,
+                'meta_sources': table.get('meta_sources', {}),
             }
             processed_tables.append(table_data)
             

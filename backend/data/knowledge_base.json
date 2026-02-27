@@ -53,7 +53,7 @@
       "target": "ID",
       "table_id": "default",
       "confidence": 0.9,
-      "hits": 7,
+      "hits": 8,
       "created_at": "2026-02-18T15:44:40.070490"
     },
     {
@@ -69,7 +69,7 @@
       "target": "内容",
       "table_id": "default",
       "confidence": 1,
-      "hits": 6,
+      "hits": 7,
       "created_at": "2026-02-18T17:23:24.683342"
     },
     {
@@ -77,7 +77,7 @@
       "target": "类型",
       "table_id": "default",
       "confidence": 1,
-      "hits": 6,
+      "hits": 7,
       "created_at": "2026-02-18T17:23:24.683628"
     },
     {
@@ -85,7 +85,7 @@
       "target": "值域",
       "table_id": "default",
       "confidence": 1,
-      "hits": 6,
+      "hits": 7,
       "created_at": "2026-02-18T17:23:24.683889"
     },
     {
@@ -93,7 +93,7 @@
       "target": "单位",
       "table_id": "default",
       "confidence": 1,
-      "hits": 6,
+      "hits": 7,
       "created_at": "2026-02-18T17:23:24.684135"
     },
     {
@@ -105,5 +105,5 @@
       "created_at": "2026-02-18T17:23:24.684389"
     }
   ],
-  "updated_at": "2026-02-18T18:36:40.138262"
+  "updated_at": "2026-02-27T23:25:59.589638"
 }

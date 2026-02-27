@@ -1,0 +1,170 @@
+{
+  "protocolFields": [
+    {
+      "id": "pf_seq",
+      "name": "序号"
+    },
+    {
+      "id": "pf_param",
+      "name": "参数"
+    },
+    {
+      "id": "pf_content",
+      "name": "内容"
+    },
+    {
+      "id": "pf_signal_name",
+      "name": "信号名称"
+    },
+    {
+      "id": "pf_data_type",
+      "name": "数据类型"
+    },
+    {
+      "id": "pf_type",
+      "name": "类型"
+    },
+    {
+      "id": "pf_length",
+      "name": "长度"
+    },
+    {
+      "id": "pf_byte",
+      "name": "字节"
+    },
+    {
+      "id": "pf_unit",
+      "name": "单位"
+    },
+    {
+      "id": "pf_remark",
+      "name": "备注"
+    },
+    {
+      "id": "pf_value_range",
+      "name": "值域"
+    },
+    {
+      "id": "pf_source",
+      "name": "信源"
+    },
+    {
+      "id": "pf_destination",
+      "name": "信宿"
+    },
+    {
+      "id": "pf_message_content",
+      "name": "信息内容"
+    },
+    {
+      "id": "pf_message_id",
+      "name": "消息ID"
+    },
+    {
+      "id": "pf_interface_name",
+      "name": "接口名称"
+    },
+    {
+      "id": "pf_processing_method",
+      "name": "数据处理方法"
+    },
+    {
+      "id": "pf_conversion_method",
+      "name": "数据转换方法"
+    },
+    {
+      "id": "pf_interval",
+      "name": "区间"
+    },
+    {
+      "id": "pf_multicast_address",
+      "name": "接收组播地址"
+    },
+    {
+      "id": "pf_port",
+      "name": "接收端口号"
+    },
+    {
+      "id": "pf_source_system_code",
+      "name": "信源系统码"
+    },
+    {
+      "id": "pf_source_machine_code",
+      "name": "信源机器码"
+    },
+    {
+      "id": "pf_dest_system_code",
+      "name": "信宿系统码"
+    },
+    {
+      "id": "pf_dest_machine_code",
+      "name": "信宿机器码"
+    }
+  ],
+  "targetFields": [
+    {
+      "id": "tf_id",
+      "name": "ID"
+    },
+    {
+      "id": "tf_content",
+      "name": "内容"
+    },
+    {
+      "id": "tf_conversion_type",
+      "name": "转换类型"
+    },
+    {
+      "id": "tf_bit_type",
+      "name": "类型（bit）"
+    },
+    {
+      "id": "tf_source_system_code",
+      "name": "信源系统码"
+    },
+    {
+      "id": "tf_source_machine_code",
+      "name": "信源机器码"
+    },
+    {
+      "id": "tf_dest_system_code",
+      "name": "信宿系统码"
+    },
+    {
+      "id": "tf_dest_machine_code",
+      "name": "信宿机器码"
+    },
+    {
+      "id": "tf_sub_address",
+      "name": "子地址"
+    },
+    {
+      "id": "tf_remark",
+      "name": "备注"
+    },
+    {
+      "id": "tf_message_id",
+      "name": "信息标识"
+    },
+    {
+      "id": "tf_signal_name",
+      "name": "信号名称"
+    },
+    {
+      "id": "tf_data_type",
+      "name": "数据类型"
+    },
+    {
+      "id": "tf_byte_count",
+      "name": "字节数"
+    },
+    {
+      "id": "tf_unit",
+      "name": "单位"
+    },
+    {
+      "id": "tf_value_range",
+      "name": "取值范围"
+    }
+  ]
+}

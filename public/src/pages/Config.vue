@@ -150,7 +150,15 @@ async function onImportFileChange(ev: Event){
     const json = JSON.parse(text)
     const incomingProtocol: FieldItem[] = Array.isArray(json?.protocolFields) ? json.protocolFields : []
     const incomingTarget: FieldItem[] = Array.isArray(json?.targetFields) ? json.targetFields : []
-    // 以名称去重合并，保留现有字段
+    // 以名称去重合并，保留现有字段code
+: 
+40002
+data
+: 
+null
+message
+: 
+"文件解析失败: [Errno 2] No such file or directory: 'D:\\\\codes\\\\protocol-conversion-tool\\\\backend\\\\word\\\\csvfile\\\\协议模板.xlsx'"
     const mergedProtocol = mergeByName(loadFromLS(LS_PROTOCOL_FIELDS), incomingProtocol)
     const mergedTarget = mergeByName(loadFromLS(LS_TARGET_FIELDS), incomingTarget)
     saveToLS(LS_PROTOCOL_FIELDS, mergedProtocol)

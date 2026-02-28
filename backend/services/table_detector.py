@@ -259,8 +259,12 @@ def _is_noise_table(grid: List[List[str]], preceding_para: str) -> bool:
     1. 前置段落含干扰词
     2. 表头含干扰词（如测试指令、周期等）
     3. 是帧格式说明表（帧头/帧尾）
-    4. 整表无任何数据类型关键字
+    4. 整表无任何数据类型关键字（特殊情况除外）
     5. 是示例/目标格式表（首行就是输出Excel的列名）
+    
+    【特殊情况】：以下表格即使无数据类型关键字也不应被过滤：
+    - 端口分配表（含信源系统码+信宿系统码+信息内容）
+    - 消息ID表（含消息ID+信息内容）
     """
     if any(marker in preceding_para for marker in NOISE_PARA_MARKERS):
         return True
@@ -285,6 +289,12 @@ def _is_noise_table(grid: List[List[str]], preceding_para: str) -> bool:
         return True
     if '帧格式' in preceding_para:
         return True
+
+    # ◄ 【新增】不过滤端口分配表和消息ID表（即使无数据类型关键字）
+    has_port_allocation_features = ('信源系统码' in row0_text and '信宿系统码' in row0_text and '信息内容' in row0_text)
+    has_message_id_features = ('消息ID' in row0_text and '信息内容' in row0_text)
+    if has_port_allocation_features or has_message_id_features:
+        return False
 
     # 检查整表是否含数据类型关键字
     all_upper = all_text.upper()

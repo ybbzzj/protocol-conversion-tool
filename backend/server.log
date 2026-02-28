@@ -5,9 +5,16 @@
  * Running on http://127.0.0.1:5001
  * Running on http://11.64.68.248:5001
 [33mPress CTRL+C to quit[0m
-127.0.0.1 - - [28/Feb/2026 16:22:03] "POST /api/extract/start HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 16:22:05] "GET /api/extract/status/37cc34c3-5606-43ea-9ea4-ae4be95c6e7b HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 16:22:06] "GET /api/mapping/preview/37cc34c3-5606-43ea-9ea4-ae4be95c6e7b HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 16:22:06] "POST /api/mapping/batch-suggest HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 16:22:11] "POST /api/mapping/auto-map HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 16:22:16] "GET /api/extract/download/37cc34c3-5606-43ea-9ea4-ae4be95c6e7b HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:01:18] "GET /health HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:01:32] "POST /api/extract/start HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:01:34] "GET /api/extract/status/301823fd-cd93-41a9-b32b-34c873b425b5 HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:01:35] "GET /api/mapping/preview/301823fd-cd93-41a9-b32b-34c873b425b5 HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:01:35] "POST /api/mapping/batch-suggest HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:01:50] "POST /api/mapping/apply HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:01:50] "GET /api/extract/download/301823fd-cd93-41a9-b32b-34c873b425b5 HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:05:35] "POST /api/extract/start HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:05:37] "GET /api/extract/status/4c2f0541-f747-4ed5-b73f-853a334c6f2e HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:05:39] "GET /api/mapping/preview/4c2f0541-f747-4ed5-b73f-853a334c6f2e HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:05:39] "POST /api/mapping/batch-suggest HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:05:41] "POST /api/mapping/apply HTTP/1.1" 200 -
+127.0.0.1 - - [28/Feb/2026 17:05:42] "GET /api/extract/download/4c2f0541-f747-4ed5-b73f-853a334c6f2e HTTP/1.1" 200 -

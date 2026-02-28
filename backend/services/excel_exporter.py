@@ -82,7 +82,9 @@ class ExcelExporter:
         """
         将 tables_data 写入模板 Excel 并返回输出路径。
         """
-        template_path = os.path.join(os.getcwd(), 'word', 'csvfile', '协议模板.xlsx')
+        # 使用 __file__ 定位项目根目录，避免因启动目录不同导致路径错误
+        _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        template_path = os.path.join(_project_root, 'word', 'csvfile', '协议模板.xlsx')
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         output_path = os.path.join(self.output_dir, f"协议_{timestamp}.xlsx")
         shutil.copy(template_path, output_path)

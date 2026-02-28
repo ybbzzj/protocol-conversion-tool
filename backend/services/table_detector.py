@@ -499,6 +499,37 @@ class TableDetector:
                 # 来自聚合式前置段落，消息名称从前置段落提取
                 msg_name = _extract_name_from_para(preceding_para)
 
+            # ◄ 【新增】名称优先级：优先从横向元数据结构中提取
+            # 聚合式表格的元数据是横向排列的，且由于合并单元格，实际列排列为：
+            # 列0=键1（如"数据项名称"），列1=键1_重复（合并），列2=值1（如"计算结果"），列3=值1_重复（合并）...
+            # 或更简单地说：找第一个非空的非重复值（不是"数据项名称"等元数据键）
+            if is_aggregate_table and n_rows > 0:
+                row0 = grid[0]
+                if row0 and len(row0) >= 2:
+                    # 在行0中查找表名（通常是第一个不是元数据键的值）
+                    metadata_keys = {'数据项名称', '消息名称', '表名', '通信名称', '数据流名称'}
+                    for col_idx, cell_val in enumerate(row0):
+                        cell_clean = cell_val.strip()
+                        # 跳过元数据键和空值
+                        if cell_clean and cell_clean not in metadata_keys and cell_clean not in INFO_NAME_ROW_NOISE:
+                            # 检查这是否看起来像表名（不含数据类型关键字）
+                            if not any(kw in cell_clean for kw in ['字节', 'UINT', 'INT', 'FLOAT', '序号', '内容']):
+                                msg_name = cell_clean  # 【最高优先级】从横向元数据取表名
+                                break
+            
+            # 备选：从表内第一列纵向元数据提取（如果上面的逻辑不适用）
+            if not msg_name and is_aggregate_table and n_rows > 1:
+                for check_row in range(1, min(4, n_rows)):  # 检查行1-3
+                    first_col_val = grid[check_row][0].strip()  # 第一列
+                    if first_col_val and first_col_val not in INFO_NAME_ROW_NOISE:
+                        # 检查这是否是有效的表名（不是元数据关键词）
+                        if not any(kw in first_col_val for kw in ['发起时机', '错误处理', '传输周期', '按实际操作流程', '序号', '检查结果']):
+                            # 再检查这一行是否看起来像表名而不是数据行
+                            row_content = ' '.join(_dedup_row(grid[check_row]))
+                            if not any(kw in row_content for kw in ['字节', '字节数', 'UINT', 'INT', 'FLOAT']):
+                                msg_name = first_col_val  # 【次优先级】
+                                break
+
             # 从行1开始找真正的列名行（含数据类型/内容等关键字）
             # 对于聚合式表格，表头可能在行1-7之间的任何位置
             start_search = 1 if has_info_name_row else 0
@@ -540,14 +571,40 @@ class TableDetector:
                     break
 
             # 聚合式：收集元数据区（行1到表头行之间）
+            # 支持两种格式：
+            # 1. 纵向：行1列0=键，后续行处理
+            # 2. 横向：行0-N中，列0=键1，列1=值1，列2=键2，列3=值2...
             if has_info_name_row and header_row_idx >= 2:
                 for r_idx in range(1, header_row_idx):
-                    row_text = ' '.join(_dedup_row(grid[r_idx]))
+                    row = _dedup_row(grid[r_idx])
+                    row_text = ' '.join(row)
+                    
+                    # ◄ 新增：横向元数据提取（键值对横向排列）
+                    # 特别处理这一行，假设列0=键1，列1=值1，列2=键2，列3=值2...
+                    for col_idx in range(0, len(row) - 1, 2):
+                        key_cell = row[col_idx].strip()
+                        val_cell = row[col_idx + 1].strip() if col_idx + 1 < len(row) else ''
+                        
+                        if key_cell and val_cell and key_cell not in ('—', '-', ''):
+                            # 标准化元数据键
+                            if key_cell in ['信源、信宿', '信源、信目']:
+                                meta['信源、信宿'] = val_cell
+                            elif '发起时机' in key_cell:
+                                meta['发起时机'] = val_cell
+                            elif '发送周期' in key_cell:
+                                meta['发送周期'] = val_cell
+                            elif '错误处理' in key_cell:
+                                meta['错误处理'] = val_cell
+                            elif '备注' in key_cell:
+                                meta['备注'] = val_cell
+                    
+                    # ◄ 原有逻辑：处理特殊格式（BCRT、SA等）
                     if any(kw in row_text for kw in ['BCRT', 'SA', '模式码', '→', 'BC']):
                         meta.update(_parse_aggregate_meta(row_text))
-                    # 提取信源信宿（IP地址格式）
+                    
+                    # ◄ 原有逻辑：提取信源信宿（IP地址格式）
                     if '信源、信宿' in row_text or '信源、信目' in row_text:
-                        for cell in _dedup_row(grid[r_idx]):
+                        for cell in row:
                             if '→' in cell or ':' in cell:
                                 meta['信源、信宿'] = cell
         else:
@@ -698,6 +755,56 @@ class DocumentParser:
         self.linker = TableLinker()
 
     def parse(self, path: str) -> Dict:
+        import json
+        import os
+        
         raw_tables = self.detector.extract_tables_from_docx(path)
         linked_tables = self.linker.link_tables(raw_tables)
+        
+        # ◄ 【新增】输出识别结果为JSON
+        self._output_recognition_results(raw_tables, linked_tables, path)
+        
         return {'tables': linked_tables, 'tables_count': len(linked_tables)}
+    
+    def _output_recognition_results(self, raw_tables: List[Dict], linked_tables: List[Dict], doc_path: str):
+        """输出表格识别结果为JSON文件（用于调试和验证）"""
+        import json
+        import os
+        from datetime import datetime
+        
+        # 仅保留一份结果
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(doc_path))), 'table_recognition_results')
+        os.makedirs(output_dir, exist_ok=True)
+        output_file = os.path.join(output_dir, 'latest_recognition.json')
+        
+        # 构建简化的输出结构
+        result_data = {
+            'file': os.path.basename(doc_path),
+            'timestamp': datetime.now().isoformat(),
+            'total_tables': len(linked_tables),
+            'tables': []
+        }
+        
+        for idx, table in enumerate(linked_tables):
+            table_info = {
+                'index': table.get('index'),
+                'msg_name': table.get('msg_name', ''),
+                'table_type': table.get('table_type', ''),
+                'is_auxiliary': table.get('is_auxiliary', False),
+                'headers': table.get('headers', []),
+                'data_rows_count': len(table.get('data_rows', [])),
+                'meta': table.get('meta', {}),
+                'data_rows': [
+                    {k: (str(v)[:100] if v else '') for k, v in row.items() if not str(k).startswith('_')}
+                    for row in table.get('data_rows', [])[:10]  # 仅保留前10行
+                ]
+            }
+            result_data['tables'].append(table_info)
+        
+        # 写入JSON文件（覆盖旧文件）
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(result_data, f, ensure_ascii=False, indent=2)
+            print(f"✅ 表格识别结果已保存: {output_file}")
+        except Exception as e:
+            print(f"❌ 保存识别结果失败: {e}")

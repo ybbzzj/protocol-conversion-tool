@@ -99,6 +99,11 @@ def start_extraction():
 
             table_rows = []
             for row in table['data_rows']:
+                # 过滤掉只有名称/内容但没有其他数据的无效行
+                # （如"聚合式的信息流表征示意"、"发起时机"等元数据行）
+                if not row.get('_is_bit_row') and not processor.is_valid_data_row(row):
+                    continue
+                
                 # bit 子行直接透传，不做 field 匹配
                 if row.get('_is_bit_row'):
                     table_rows.append(row)

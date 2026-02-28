@@ -483,29 +483,64 @@ class TableDetector:
         # ── 判断是否有"信息名称行"（行0 含 信息名称/通信帧名称） ──────────────
         row0_unique = _dedup_row(grid[0])
         row0_text = ' '.join(row0_unique)
+        # 聚合式表格识别：行0含特定关键词 或 前置段落含"聚合式"
         has_info_name_row = any(kw in row0_text for kw in ['信息名称', '通信帧名称'])
+        is_aggregate_table = '聚合式' in preceding_para
 
         header_row_idx = -1
         msg_name = ''
         meta = {}
 
-        if has_info_name_row:
-            # 类型A / 聚合式：行0 是信息名称行
-            msg_name = _extract_msg_name_from_info_row(row0_unique)
+        if has_info_name_row or is_aggregate_table:
+            # 类型A / 聚合式：行0 是信息名称行 或 前置段落标记为聚合式
+            if has_info_name_row:
+                msg_name = _extract_msg_name_from_info_row(row0_unique)
+            else:
+                # 来自聚合式前置段落，消息名称从前置段落提取
+                msg_name = _extract_name_from_para(preceding_para)
 
             # 从行1开始找真正的列名行（含数据类型/内容等关键字）
-            for r_idx in range(1, min(8, n_rows)):
+            # 对于聚合式表格，表头可能在行1-7之间的任何位置
+            start_search = 1 if has_info_name_row else 0
+            for r_idx in range(start_search, min(8, n_rows)):
                 ru = _dedup_row(grid[r_idx])
                 rt = ' '.join(ru)
                 has_type = any(kw in rt for kw in ['数据类型', '类型', '数据格式', '字节', '字节数', '长度'])
+                # 对于聚合式表格，需要更精确地识别内容列（排除元数据行）
                 has_content = any(kw in rt for kw in ['内容', '参数', '信号名称', '字段', '数据含义', '名称'])
+                # 添加聚合式特有的表头标记
+                has_aggregate_marker = any(kw in rt for kw in ['计算结果', '消息类型', '消息序号']) and has_type
                 has_seq = '序号' in rt
-                if has_type or (has_content and has_seq) or (has_content and len(ru) >= 3):
+                
+                # 排除元数据行（聚合式表格的元数据区特征：只有特定的关键词，没有"内容"列）
+                # 元数据行特征：包含元数据关键词且行只有2-3个唯一的非空值
+                is_metadata_row_pattern = False
+                if has_info_name_row or is_aggregate_table:
+                    non_empty_cells = [c for c in ru if c and c not in ('—', '-')]
+                    metadata_keywords = {'信息名称', '信息标识', '信源、信宿', '信源、信目', '传输周期', '发起时机', '错误处理'}
+                    # 如果行包含元数据关键词且无"内容"和"序号"，则是元数据行
+                    has_metadata_kw = any(kw in rt for kw in metadata_keywords)
+                    is_metadata_row_pattern = has_metadata_kw and not has_content and not has_seq
+                    
+                    # 对于聚合式表格：如果只有"计算结果"/"消息类型"等特殊列但没有"序号"或真正的"内容"列
+                    # 说明这不是字段定义表的表头，而是元数据行的变体
+                    if not is_metadata_row_pattern and r_idx < 3 and is_aggregate_table:
+                        # 行0-2：检查是否缺少"序号"且只有特殊关键词
+                        has_special_marker = any(kw in rt for kw in ['计算结果', '消息类型', '消息序号', '信源、信宿', '信源、信目'])
+                        if has_special_marker and not has_seq and not (has_content and has_type):
+                            # 这是元数据行，跳过
+                            is_metadata_row_pattern = True
+                
+                if is_metadata_row_pattern:
+                    continue
+                
+                # 判断是否是表头行
+                if has_type or (has_content and has_seq) or (has_content and len(ru) >= 3) or has_aggregate_marker:
                     header_row_idx = r_idx
                     break
 
             # 聚合式：收集元数据区（行1到表头行之间）
-            if header_row_idx >= 2:
+            if has_info_name_row and header_row_idx >= 2:
                 for r_idx in range(1, header_row_idx):
                     row_text = ' '.join(_dedup_row(grid[r_idx]))
                     if any(kw in row_text for kw in ['BCRT', 'SA', '模式码', '→', 'BC']):
@@ -562,9 +597,19 @@ class TableDetector:
                            is_vmerge_cont: Optional[List[List[bool]]] = None) -> List[Dict]:
         """
         从 grid 的 start_row 开始提取数据行，按 headers/kept_indices 映射列。
-        过滤空行、注释行。
+        过滤空行、注释行、无效元数据行（只有名称和内容但无其他数据的行）。
         """
         data_rows = []
+        # 定义内容字段名称集合（这些字段用于存放数据名称或描述）
+        content_field_names = {'名称', '内容', '参数', '信号名称', '字段', '数据含义', '参数名称', '数据项名称', '代号', '描述'}
+        # 聚合式表格元数据行关键词（这些作为"内容"出现时，表示是元数据行而非数据行）
+        # 注意：只匹配精确的元数据行标记，避免误匹配包含这些词的字段名（如"消息序号"不应被当作"序号"元数据）
+        metadata_row_keywords = {
+            '聚合式的信息流表征示意', '信息名称行', '信息标识行', '信源、信宿', '信源、信目',
+            '传输周期', '发起时机', '错误处理', '^序号$',  # 用正则表达式匹配单独的"序号"
+            '检查结果', '非周期', '按实际操作流程'
+        }
+        
         for r_idx in range(start_row, len(grid)):
             row = grid[r_idx]
 
@@ -589,6 +634,46 @@ class TableDetector:
             # 至少要有1个有实际意义的字段
             non_empty = [v for v in row_dict.values() if v and v not in ('—', '-', '序号', '')]
             if not non_empty:
+                continue
+
+            # ◄ 元数据行检测（聚合式表格中的元数据区）
+            # 如果行的内容字段（名称、内容等）包含元数据关键词，则过滤掉
+            is_metadata_row = False
+            for header, value in row_dict.items():
+                if header in content_field_names and value:
+                    value_str = str(value).strip()
+                    # 检查该内容字段是否包含元数据关键词
+                    for keyword in metadata_row_keywords:
+                        if keyword.startswith('^') and keyword.endswith('$'):
+                            # 正则表达式：精确匹配
+                            pattern = keyword[1:-1]
+                            if re.fullmatch(pattern, value_str):
+                                is_metadata_row = True
+                                break
+                        elif keyword in value_str:
+                            # 子串匹配
+                            is_metadata_row = True
+                            break
+                if is_metadata_row:
+                    break
+            
+            if is_metadata_row:
+                continue
+
+            # ◄ 核心过滤：如果只有名称/内容字段有值，但其他数据字段全空，则过滤掉
+            # 这些通常是错误包含的元数据行，如"聚合式的信息流表征示意"
+            has_non_content_data = False
+            for header, value in row_dict.items():
+                # 跳过内容字段（名称、内容等描述字段）
+                if header in content_field_names:
+                    continue
+                # 检查其他字段是否有实际数据
+                if value and str(value).strip() and str(value).strip() not in ('—', '-', ''):
+                    has_non_content_data = True
+                    break
+            
+            # 如果没有任何非内容字段的数据，说明这是无效行，过滤掉
+            if not has_non_content_data:
                 continue
 
             data_rows.append(row_dict)

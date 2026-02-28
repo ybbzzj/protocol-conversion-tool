@@ -10,7 +10,6 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from backend.services.field_matcher import EnhancedFieldMatcher as FieldMatcher
 from backend.services.data_cleaner import DataProcessor
-from backend.config import Config  # 添加配置导入
 
 
 # ── 颜色常量 ─────────────────────────────────────────────────────────────────
@@ -83,12 +82,7 @@ class ExcelExporter:
         """
         将 tables_data 写入模板 Excel 并返回输出路径。
         """
-        # 使用配置中的BASE_DIR来构建正确的模板路径
-        template_path = os.path.join(Config.BASE_DIR, 'word', 'csvfile', '协议模板.xlsx')
-        
-        # 检查模板文件是否存在
-        if not os.path.exists(template_path):
-            raise FileNotFoundError(f"模板文件不存在: {template_path}")
+        template_path = os.path.join(os.getcwd(), 'word', 'csvfile', '协议模板.xlsx')
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         output_path = os.path.join(self.output_dir, f"协议_{timestamp}.xlsx")
         shutil.copy(template_path, output_path)

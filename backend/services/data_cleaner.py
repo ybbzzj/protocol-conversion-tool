@@ -217,6 +217,70 @@ class DataProcessor:
         self.type_converter = DataTypeConverter()
         self.range_formatter = RangeValueFormatter()
         self.formula_std = FormulaStandardizer()
+        # 定义内容字段名称集合（这些字段用于存放数据名称或描述）
+        self.content_field_names = {'名称', '内容', '参数', '信号名称', '字段', '数据含义', '参数名称', '数据项名称', '代号', '描述'}
+
+    def is_valid_data_row(self, row: Dict[str, Any]) -> bool:
+        """
+        验证行是否为有效数据行。
+        
+        过滤掉只有"名称"和"内容"但没有其他实际数据的无效行。
+        这些通常是错误包含的元数据行，如：
+        - 只有 '名称'='聚合式的信息流表征示意', '内容'='' 的行
+        - 只有 '名称'='发起时机', '内容'='' 的行
+        - 只有 '名称'='错误处理', '内容'='' 的行
+        - 只有 '名称'='序号', '内容'='' 的行
+        
+        Args:
+            row: 数据行字典
+        
+        Returns:
+            bool: 如果行有效返回 True，否则返回 False
+        """
+        if not row:
+            return False
+        
+        # 聚合式表格元数据行关键词（这些作为"内容"出现时，表示是元数据行而非数据行）
+        # 注意：只匹配精确的元数据行标记，避免误匹配包含这些词的字段名（如"消息序号"不应被当作"序号"元数据）
+        metadata_row_keywords = {
+            '聚合式的信息流表征示意', '信息名称行', '信息标识行', '信源、信宿', '信源、信目',
+            '传输周期', '发起时机', '错误处理', '检查结果', '非周期', '按实际操作流程'
+        }
+        
+        # 检测元数据行（聚合式表格中的元数据区）
+        for key, value in row.items():
+            # 跳过内部字段
+            if str(key).startswith('_'):
+                continue
+            # 只检查内容字段
+            if key in self.content_field_names and value:
+                value_str = str(value).strip()
+                # 检查该内容字段是否完全等于元数据关键词（精确匹配）
+                if value_str in metadata_row_keywords:
+                    return False  # 是元数据行，不是有效数据行
+                # 检查是否以元数据关键词开头（对于"聚合式的信息流表征示意"等）
+                for keyword in metadata_row_keywords:
+                    if keyword in value_str and len(value_str) - len(value_str.replace(keyword, '')) >= len(keyword):
+                        # 只有当元数据关键词占比超过50%或是标题类关键词时才过滤
+                        if '的' in keyword or len(keyword) >= 8:
+                            return False
+        
+        # 检查是否有任何非内容字段的实际数据
+        has_non_content_data = False
+        for key, value in row.items():
+            # 跳过内部字段
+            if str(key).startswith('_'):
+                continue
+            # 跳过内容字段（名称、内容等描述字段）
+            if key in self.content_field_names:
+                continue
+            # 检查是否有实际值
+            if value and str(value).strip() and str(value).strip() not in ('—', '-', ''):
+                has_non_content_data = True
+                break
+        
+        # 如果没有任何非内容字段的数据，说明这是无效行
+        return has_non_content_data
 
     def process_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """

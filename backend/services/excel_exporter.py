@@ -302,12 +302,13 @@ class ExcelExporter:
         if '值域' in formatted:
             return formatted['值域'], 'original'
 
-        # 原始值域/取值范围列
+        # 原始值域/取值范围/区间列
         for k, v in cleaned.items():
-            if any(kw in k for kw in ['值域', '取值范围']):
-                if v and v not in ('—', '-'):
+            if any(kw in k for kw in ['值域', '取值范围', '区间']):
+                val = str(v).strip() if v else ''
+                if val and val not in ('—', '-', ''):
                     from backend.services.data_cleaner import RangeValueFormatter
-                    return RangeValueFormatter().format_range(str(v)), 'original'
+                    return RangeValueFormatter().format_range(val), 'original'
 
         # 从备注中提取
         remark = ''
@@ -317,18 +318,27 @@ class ExcelExporter:
                 break
 
         if remark:
+            # 按优先级从高到低提取范围，防止误识别（如 "LSB=1ms" 不是范围）
             range_patterns = [
-                r'取值范围[：:]*\s*([0-9][0-9~\-x,，A-Fa-f]*[0-9xXfF])',
-                r'值域[：:]*\s*\[?([0-9a-fxA-FX~\-,，]+)\]?',
-                r'(\d+[~\-]0x[0-9A-Fa-f]+)',
-                r'(0x[0-9A-Fa-f]+[~\-]0x[0-9A-Fa-f]+)',
-                r'(\d+[~\-]\d+)',
+                # 最高优先级：明确标注"取值范围"或"值域"
+                r'取值范围[：:]*\s*([\dxXa-fA-F]+\s*[~\-]\s*[\dxXa-fA-F]+)',
+                r'值域[：:]*\s*\[?([\dxXa-fA-F]+\s*[~\-]\s*[\dxXa-fA-F]+)\]?',
+                # 16进制范围（如 "0~0xFFFF"）
+                r'(\d+\s*[~\-]\s*0x[0-9A-Fa-f]+)',
+                r'(0x[0-9A-Fa-f]+\s*[~\-]\s*0x[0-9A-Fa-f]+)',
+                # 纯数字范围（如 "0~400"），要求是整行或句子开头，或明确上下文
+                # 避免匹配 "1ms" 中的 "1" 这类非范围内容
+                r'^(0\s*[~\-]\s*\d+)$',        # 整行就是范围
+                r'^(\d+\s*[~\-]\s*\d+)$',       # 整行就是范围
             ]
             for pattern in range_patterns:
-                m = re.search(pattern, remark)
+                m = re.search(pattern, remark.strip(), re.MULTILINE)
                 if m:
-                    from backend.services.data_cleaner import RangeValueFormatter
-                    return RangeValueFormatter().format_range(m.group(1)), 'extracted'
+                    extracted = m.group(1).strip()
+                    # 过滤太短的匹配（单个数字不是范围）
+                    if extracted and re.search(r'[~\-]', extracted):
+                        from backend.services.data_cleaner import RangeValueFormatter
+                        return RangeValueFormatter().format_range(extracted), 'extracted'
 
         return None
 

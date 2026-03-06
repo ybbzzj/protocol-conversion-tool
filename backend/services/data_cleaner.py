@@ -145,13 +145,34 @@ class FormulaStandardizer:
     """
     数据处理公式标准化器。
 
+    目标格式：aX+b（标准线性变换形式）
     将中文描述的转换方法规范化为代数表达式：
-      '乘以10'       → '10x'
-      '除以100'      → 'x/100'
-      '乘以0.1'      → '0.1x'
-      '×0.125'      → '0.125x'
-      '量化单位0.5°' → '0.5x'
+      '乘以10'         → '10X+0'
+      '除以100'        → '0.01X+0'
+      '乘以0.1'        → '0.1X+0'
+      '×0.125'        → '0.125X+0'
+      '量化单位0.5°'   → '0.5X+0'
+      '10X+5'          → '10X+5'（已标准格式直接规范化）
     """
+
+    @staticmethod
+    def _fmt_num(val_str: str) -> str:
+        """将数字字符串格式化：去掉不必要的 .0 末尾（如 10.0→10, 0.5→0.5）"""
+        try:
+            f = float(val_str)
+            # 如果是整数值，输出整数形式
+            if f == int(f):
+                return str(int(f))
+            # 否则保留小数，但去掉末尾多余的 0
+            return f'{f:g}'
+        except (ValueError, TypeError):
+            return str(val_str)
+
+    def _make_formula(self, a: str, b: str = '0') -> str:
+        """生成 aX+b 格式字符串，自动规范化系数"""
+        a_str = self._fmt_num(a)
+        b_str = self._fmt_num(b)
+        return f'{a_str}X+{b_str}'
 
     def standardize(self, formula_str: str) -> str:
         if not formula_str:
@@ -163,49 +184,57 @@ class FormulaStandardizer:
         if s in ('—', '-', '', '无', 'N/A'):
             return s
 
-        # 1. '乘以N' / '×N'
+        # 1. 已经是 aX+b 格式（大小写均可），直接规范化
+        m = re.match(r'^([\d.]+)\s*[xX]\s*([+\-])\s*([\d.]+)$', s)
+        if m:
+            a, sign, b = m.group(1), m.group(2), m.group(3)
+            b_val = float(b) if sign == '+' else -float(b)
+            return self._make_formula(a, str(b_val))
+
+        # 2. 纯 aX 格式（没有 +b 部分）
+        m = re.match(r'^([\d.]+)\s*[xX]$', s)
+        if m:
+            return self._make_formula(m.group(1), '0')
+
+        # 3. x/N 格式 → (1/N)X+0
+        m = re.match(r'^[xX]/([\d.]+)$', s)
+        if m:
+            divisor = float(m.group(1))
+            if divisor != 0:
+                a_val = 1.0 / divisor
+                # 保留有意义的精度
+                a_str = f'{a_val:.6g}'
+                return self._make_formula(a_str, '0')
+
+        # 4. '乘以N' / '×N' / '乘N'
         m = re.search(r'[乘×]\s*[以]?\s*([\d.]+)', s)
         if m:
-            factor = m.group(1)
-            return f'{factor}x'
+            return self._make_formula(m.group(1), '0')
 
-        # 2. '除以N' / '÷N' / '/N'
-        m = re.search(r'[除÷/]\s*[以]?\s*([\d.]+)', s)
+        # 5. '除以N' / '÷N'
+        m = re.search(r'[除÷]\s*[以]?\s*([\d.]+)', s)
         if m:
-            divisor = m.group(1)
-            return f'x/{divisor}'
+            divisor = float(m.group(1))
+            if divisor != 0:
+                a_val = 1.0 / divisor
+                return self._make_formula(f'{a_val:.6g}', '0')
 
-        # 3. '量化单位N' / '分辨率N'
+        # 6. '量化单位N' / '分辨率N'
         m = re.search(r'(?:量化单位|分辨率)\s*([\d.]+)', s)
         if m:
-            factor = m.group(1)
-            return f'{factor}x'
+            return self._make_formula(m.group(1), '0')
 
-        # 4. 含小数点数字直接提取（如 '0.125°'）
-        m = re.search(r'([\d.]+)\s*°?\s*$', s)
+        # 7. 含小数点数字直接提取（如 '0.125°'）
+        m = re.search(r'([\d.]+)\s*[°度]?\s*$', s)
         if m:
             factor = m.group(1)
-            # 避免把大整数（如年份）误判为系数
-            val = float(factor)
-            if 0 < val < 1000 and '.' in factor:
-                return f'{factor}x'
-
-        # 5. 保留含数学表达式原样（如已经是 'x/10' 格式）
-        if re.match(r'^[xX]?[*/+\-]?[\d.xX()]+$', s):
-            return s
-
-        # 6. 对含小数点的数字保留3位有效数字
-        def normalize_decimal(m):
-            num_str = m.group(0)
-            if '.' not in num_str:
-                return num_str
-            num = float(num_str)
-            if num == 0:
-                return '0'
-            val_rounded = float(f'{num:.3g}')
-            return str(val_rounded)
-
-        s = re.sub(r'\d+\.\d+', normalize_decimal, s)
+            try:
+                val = float(factor)
+                # 避免把大整数（如年份）误判为系数
+                if 0 < val < 10000 and '.' in factor:
+                    return self._make_formula(factor, '0')
+            except ValueError:
+                pass
 
         return s
 
@@ -323,11 +352,52 @@ class DataProcessor:
             result['formatted']['值域'] = self.range_formatter.format_range(range_val)
 
         # ── 转换公式标准化 ─────────────────────────────────────────────────────
+        # 搜索顺序：专用转换公式列 > 数据处理/数据转换列 > 数据处理方法列 > 备注列
+        # 备注列中的公式识别优先级最低，且只有真正像公式的内容才会提取
         formula_val = ''
+        formula_source = ''   # 记录来源列名，供后续判断
+        # 优先级1：专用转换公式列
         for k, v in cleaned.items():
-            if any(kw in k for kw in ['转换公式', '数据转换']):  # 移除「数据处理方法」和「数据处理」，它们是描述文本而非公式
-                formula_val = str(v) if v else ''
-                break
+            if any(kw == k or k == kw for kw in ['转换公式']):
+                if v and str(v).strip() not in ('—', '-', ''):
+                    formula_val = str(v).strip()
+                    formula_source = k
+                    break
+        # 优先级2：数据处理/数据转换列（含关键词匹配）
+        if not formula_val:
+            for k, v in cleaned.items():
+                if any(kw in k for kw in ['数据转换', '转换公式']):
+                    if v and str(v).strip() not in ('—', '-', ''):
+                        formula_val = str(v).strip()
+                        formula_source = k
+                        break
+        # 优先级3：数据处理/数据处理方法列（中文描述，如"乘以10"）
+        if not formula_val:
+            for k, v in cleaned.items():
+                if any(kw in k for kw in ['数据处理方法', '数据处理']):
+                    if v and str(v).strip() not in ('—', '-', ''):
+                        formula_val = str(v).strip()
+                        formula_source = k
+                        break
+        # 优先级4：备注列（只提取明显像公式/转换描述的内容）
+        if not formula_val:
+            for k, v in cleaned.items():
+                if any(kw in k for kw in ['备注', '说明']):
+                    txt = str(v).strip() if v else ''
+                    if not txt or txt in ('—', '-', ''):
+                        continue
+                    # 只有当备注包含明确的转换描述时才提取
+                    has_formula = (
+                        re.search(r'[乘×]\s*[以]?\s*[\d.]', txt) or   # 乘以N
+                        re.search(r'[除÷]\s*[以]?\s*[\d.]', txt) or   # 除以N
+                        re.search(r'(?:量化单位|分辨率)\s*[\d.]', txt) or
+                        re.match(r'^[\d.]+\s*[xX]', txt) or            # 已是 aX 格式
+                        re.search(r'[\d.]+\s*[xX]\s*[+\-]\s*[\d.]', txt)  # aX+b
+                    )
+                    if has_formula:
+                        formula_val = txt
+                        formula_source = k
+                        break
 
         if formula_val:
             result['formatted']['转换公式'] = self.formula_std.standardize(formula_val)

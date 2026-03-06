@@ -178,13 +178,9 @@ class ExcelExporter:
                     if unit_source == 'extracted':
                         color_map['单位'] = COLOR_RED
 
-                # 5. 转换公式列：只从明确的转换公式字段取值，不使用数据处理方法描述文本
+                # 5. 转换公式列：使用 DataProcessor 已识别并标准化的结果（aX+b 格式）
+                #    DataProcessor 已按优先级从 转换公式 > 数据处理 > 数据处理方法 > 备注 中提取
                 formula_val = formatted.get('转换公式', '')
-                if not formula_val:
-                    formula_val = cleaned.get('转换公式', '')
-                if not formula_val:
-                    formula_val = cleaned.get('数据处理', '')
-                # 注意：不再把'数据处理方法'的描述文本当作转换公式
                 if formula_val:
                     fill_data['转换公式'] = formula_val
 
@@ -193,11 +189,9 @@ class ExcelExporter:
                 if seq_val:
                     fill_data['序号'] = seq_val
 
-                # 7. 备注列：原始备注内容（包含数据处理方法描述，不做删减）
+                # 7. 备注列：保留原始备注内容原样，不删减
+                #    单位已从备注中提取到单位列（若有），备注本身不受影响
                 remark_val = self._find_remark_value(cleaned)
-                # 若没有专门的备注字段，把数据处理方法内容放入备注
-                if not remark_val and '数据处理方法' in cleaned and cleaned['数据处理方法']:
-                    remark_val = str(cleaned['数据处理方法']).strip()
                 if remark_val:
                     fill_data['备注'] = remark_val
 
@@ -280,10 +274,22 @@ class ExcelExporter:
         return ''
 
     def _find_remark_value(self, cleaned: Dict) -> str:
-        """提取备注/说明"""
+        """
+        提取备注/说明内容，保留原始内容原样。
+        
+        查找顺序（只取第一个有值的字段）：
+        1. 备注 / 说明 / 数据来源 列
+        2. 数据处理方法 列（若无专用备注列，把处理方法说明放入备注）
+        """
+        # 优先查专用备注字段
         for k, v in cleaned.items():
             if any(kw in k for kw in ['备注', '说明', '数据来源']):
-                if v and v not in ('—', '-'):
+                if v and str(v).strip() not in ('—', '-', ''):
+                    return str(v).strip()
+        # 其次查数据处理方法（作为补充说明）
+        for k, v in cleaned.items():
+            if '数据处理方法' in k:
+                if v and str(v).strip() not in ('—', '-', ''):
                     return str(v).strip()
         return ''
 
@@ -330,38 +336,55 @@ class ExcelExporter:
         """
         提取单位，返回 (单位字符串, 来源)。
         来源：'original'（来自单位列）、'extracted'（从备注中提取，标红）
+
+        规则：
+        - 优先从单位列提取（黑色，正常）
+        - 单位列为空时，从备注/说明/数据处理列中识别单位符号（红色，标注来源不确定）
+        - 备注列内容始终保留原样，不会因为单位提取而被删改
         """
-        # 单位列直接提取
+        # 优先：单位列直接提取
         for k, v in cleaned.items():
             if '单位' in k and '长度' not in k:
-                if v and v not in ('—', '-', '无'):
+                if v and str(v).strip() not in ('—', '-', '无', ''):
                     return str(v).strip(), 'original'
 
-        # 从备注/数据处理方法中提取
+        # 备选：从备注/说明/数据处理方法列中识别单位符号（备注保留原样，只读取）
         search_text = ''
         for k, v in cleaned.items():
             if any(kw in k for kw in ['备注', '说明', '数据处理']):
-                search_text += str(v) + ' '
+                if v and str(v).strip() not in ('—', '-', ''):
+                    search_text += str(v) + ' '
 
         if not search_text.strip():
             return None
 
+        # 按优先级从高到低匹配，越具体的单位越靠前
         unit_patterns = [
-            (r'[°∠]\s*/\s*(s|秒)', '°/s'),
-            (r'[°∠]\s*/\s*(h|小时)', '°/h'),
-            (r'(m/s2|m/s²|m/s\^2)', 'm/s²'),
-            (r'(km/h|千米/小时)', 'km/h'),
-            (r'(?<![a-zA-Z])(ms|\u6beb\u79d2)(?![a-zA-Z])', 'ms'),
-            (r'\b(Hz|赫兹)\b', 'Hz'),
-            (r'[°∠度]\b', '°'),
-            (r'(℃|°C|摄氏度)\b', '℃'),
-            (r'\b(V|伏)\b', 'V'),
-            (r'\b(A|安)\b', 'A'),
-            (r'\b(bit|位)\b', 'bit'),
-            (r'\b(byte|字节)\b', 'byte'),
-            (r'\b(mV|毫伏)\b', 'mV'),
-            (r'\b(mA|毫安)\b', 'mA'),
-            (r'\b(s|秒)\b', 's'),
+            (r'[°∠]\s*/\s*s\b',          '°/s'),
+            (r'[°∠]\s*/\s*h\b',          '°/h'),
+            (r'm/s[²2\^2]',               'm/s²'),
+            (r'km/h',                      'km/h'),
+            (r'(?<![a-zA-Z])m/s(?![²2])', 'm/s'),
+            (r'(?<![a-zA-Z])ms(?![a-zA-Z\d])', 'ms'),   # 毫秒，排除 GHz 等
+            (r'\b(kHz|千赫)\b',            'kHz'),
+            (r'\b(MHz|兆赫)\b',            'MHz'),
+            (r'\b(GHz)\b',                'GHz'),
+            (r'\b(Hz|赫兹)\b',             'Hz'),
+            (r'(℃|°C|摄氏度)',             '℃'),
+            (r'(?<![a-zA-Z])°(?![/C])',    '°'),
+            (r'\b(mV|毫伏)\b',             'mV'),
+            (r'\b(mA|毫安)\b',             'mA'),
+            (r'\b(mW|毫瓦)\b',             'mW'),
+            (r'(?<![a-zA-Z])V(?![a-zA-Z])', 'V'),
+            (r'(?<![a-zA-Z])A(?![a-zA-Z])', 'A'),
+            (r'\b(bit|位)\b',              'bit'),
+            (r'\b(byte|字节)\b',           'byte'),
+            (r'\b(KB)\b',                  'KB'),
+            (r'\b(MB)\b',                  'MB'),
+            (r'(?<![a-zA-Z])s(?![a-zA-Z])', 's'),        # 秒，排除其他字母组合
+            (r'(?<![a-zA-Z])min\b',        'min'),
+            (r'\b(h|小时)\b',              'h'),
+            (r'(%)',                        '%'),
         ]
         for pattern, unit_name in unit_patterns:
             if re.search(pattern, search_text, re.IGNORECASE):

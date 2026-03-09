@@ -23,19 +23,29 @@ def _extract_unit_from_remark(remark: str) -> Optional[str]:
     if not remark:
         return None
         
-    # 常见的单位提取模式
+    # 常见的单位提取模式（优先级从高到低）
     patterns = [
-        r'单位[为是]\s*([^\s，。,\.]+)',  # 单位为xxx
-        r'([\wΩμ°%Ω℃dBmVAsHzkHzMHzGHz]+)$',  # 行尾的单位符号
-        r'\b(ms|s|min|h|Hz|kHz|MHz|GHz|V|mV|A|mA|W|mW|dB|dBm|℃|°|%|bit|byte|KB|MB)\b',  # 常见单位
+        # 最高优先级：明确标注"单位为/单位:/单位是"的形式
+        r'单位[为是：:]\s*([^\s，。,\.;；]+)',
+        # LSB=N单位（如 LSB=1ms）
+        r'LSB\s*=\s*([\d.]+\s*(?:ms|s|μs|min|h|Hz|kHz|MHz|GHz|V|mV|A|mA|mW|W|dB|dBm|℃|°|°C|%|bit|byte|KB|MB))',
+        # 单位在括号内（如"(ms)"或"[Hz]"）
+        r'[（\(\[]([A-Za-z/°℃\u00b0\u2103]+)[）\)\]]',
+        # 行尾的单位符号（如 "数据处理...ms"）
+        r'([\wΩμ°%℃dBmVAsHzkHzMHzGHz]+)\s*$',
+        # 常见单位的单词边界匹配
+        r'\b(ms|μs|min|s|h|Hz|kHz|MHz|GHz|V|mV|A|mA|W|mW|dB|dBm|℃|°|°C|%|bit|byte|KB|MB)\b',
+        # 组合单位（如 °/h, km/h, m/s 等）
+        r'(°/[hmin]|km/h|m/s[²2\^2]?|[°℃][/]?C)',
     ]
     
     for pattern in patterns:
-        match = re.search(pattern, remark)
+        match = re.search(pattern, remark, re.IGNORECASE)
         if match:
+            # 获取第一个捕获组，或者整个匹配（如果没有捕获组）
             unit = match.group(1) if len(match.groups()) > 0 else match.group(0)
             # 过滤掉太长或不合理的结果
-            if len(unit) <= 10 and unit not in ['为', '是', '的']:
+            if unit and len(unit) <= 15 and unit.strip() not in ['为', '是', '的', '', ' ']:
                 return unit.strip()
     
     return None
@@ -139,9 +149,10 @@ class ExcelExporter:
                             type_val = str(v) if v else ''
                             break
                     if type_val:
-                        std_type, bits, _ = self.processor.type_converter.convert_type(type_val)
+                        std_type, bits, type_status = self.processor.type_converter.convert_type(type_val)
                         conv_info['标准类型'] = std_type
                         conv_info['位数'] = bits
+                        conv_info['类型状态'] = type_status  # 记录是否为推断类型
                 else:
                     proc_res = self.processor.process_row(row)
                     cleaned  = proc_res['cleaned']
@@ -158,9 +169,22 @@ class ExcelExporter:
 
                 # 2. 类型列
                 if '标准类型' in conv_info:
-                    fill_data['转换类型'] = conv_info['标准类型']
+                    std_type = conv_info['标准类型']
+                    # 验证是否在标准类型表中，如果不在则设为空
+                    from backend.services.data_cleaner import DataTypeConverter
+                    valid_types = set(DataTypeConverter().TYPE_MAPPING.values())
+                    valid_types = {t for t, _ in valid_types} | {'ENUM', ''}  # 提取标准类型名
+                    if std_type in valid_types or std_type == '':
+                        fill_data['转换类型'] = std_type
+                        # 如果类型是推断出来的（如"字节" → UINT8），标红
+                        if conv_info.get('类型状态') == 'inferred':
+                            color_map['转换类型'] = COLOR_RED
+                    # 否则不填（非法类型）
                 if '位数' in conv_info:
                     fill_data['类型（bit）'] = conv_info['位数']
+                    # 如果类型是推断出来的，位数也标红
+                    if conv_info.get('类型状态') == 'inferred':
+                        color_map['类型（bit）'] = COLOR_RED
 
                 # 3. 值域 → 判读公式列（格式化后填入）
                 range_result = self._extract_range(cleaned, formatted)
@@ -370,31 +394,54 @@ class ExcelExporter:
 
         # 按优先级从高到低匹配，越具体的单位越靠前
         unit_patterns = [
-            (r'[°∠]\s*/\s*s\b',          '°/s'),
-            (r'[°∠]\s*/\s*h\b',          '°/h'),
-            (r'm/s[²2\^2]',               'm/s²'),
-            (r'km/h',                      'km/h'),
-            (r'(?<![a-zA-Z])m/s(?![²2])', 'm/s'),
-            (r'(?<![a-zA-Z])ms(?![a-zA-Z\d])', 'ms'),   # 毫秒，排除 GHz 等
+            # 组合单位（最高优先级，在单个字符单位前提取）
+            (r'(?<![a-zA-Z\d])km/h(?![a-zA-Z])',  'km/h'),
+            (r'(?<![a-zA-Z\d])m/s[²2\^2]',        'm/s²'),
+            (r'(?<![a-zA-Z\d])m/s(?![²2a-zA-Z])', 'm/s'),
+            (r'[°∠]\s*/\s*h\b',                    '°/h'),    # 角速率
+            (r'[°∠]\s*/\s*min\b',                  '°/min'),  # 角速率/分钟
+            (r'[°∠]\s*/\s*s\b',                    '°/s'),    # 角速率/秒
+            # LSB 相关单位（从"LSB=1ms"中提取，需要捕获 °/h 等组合单位）
+            (r'LSB\s*=\s*[\d.]*\s*(?:ms|μs|s|°/h|km/h|m/s)',  'ms'),  # 这里简化处理
+            # 频率单位
             (r'\b(kHz|千赫)\b',            'kHz'),
             (r'\b(MHz|兆赫)\b',            'MHz'),
             (r'\b(GHz)\b',                'GHz'),
             (r'\b(Hz|赫兹)\b',             'Hz'),
+            # 毫秒，需要特别小心与其他单位混淆
+            (r'(?<![a-zA-Z])ms(?![a-zA-Z\d])', 'ms'),
+            # 微秒
+            (r'(?<![a-zA-Z])μs\b',        'μs'),
+            (r'(?<![a-zA-Z])us\b',        'μs'),     # us 也表示微秒
+            # 温度
             (r'(℃|°C|摄氏度)',             '℃'),
-            (r'(?<![a-zA-Z])°(?![/C])',    '°'),
+            # 角度（仅在不是斜杠形式的时候提取）
+            (r'(?<![/分])°(?![/hmsC])',    '°'),
+            # 电压
             (r'\b(mV|毫伏)\b',             'mV'),
-            (r'\b(mA|毫安)\b',             'mA'),
-            (r'\b(mW|毫瓦)\b',             'mW'),
             (r'(?<![a-zA-Z])V(?![a-zA-Z])', 'V'),
+            # 电流
+            (r'\b(mA|毫安)\b',             'mA'),
             (r'(?<![a-zA-Z])A(?![a-zA-Z])', 'A'),
+            # 功率
+            (r'\b(mW|毫瓦)\b',             'mW'),
+            (r'\b(W|瓦)\b',                'W'),
+            # 增益
+            (r'\b(dB|分贝)\b',             'dB'),
+            (r'\b(dBm)\b',                 'dBm'),
+            # 数据大小
             (r'\b(bit|位)\b',              'bit'),
             (r'\b(byte|字节)\b',           'byte'),
             (r'\b(KB)\b',                  'KB'),
             (r'\b(MB)\b',                  'MB'),
-            (r'(?<![a-zA-Z])s(?![a-zA-Z])', 's'),        # 秒，排除其他字母组合
-            (r'(?<![a-zA-Z])min\b',        'min'),
+            # 时间单位
+            (r'(?<![a-zA-Z])min\b',        'min'),   # 分钟，要求 min 后边界清晰
             (r'\b(h|小时)\b',              'h'),
+            (r'(?<![a-zA-Z])s(?![a-zA-Z])', 's'),   # 秒，排除其他字母组合
+            # 百分比
             (r'(%)',                        '%'),
+            # 欧姆（电阻）
+            (r'(Ω|ohm)',                   'Ω'),
         ]
         for pattern, unit_name in unit_patterns:
             if re.search(pattern, search_text, re.IGNORECASE):

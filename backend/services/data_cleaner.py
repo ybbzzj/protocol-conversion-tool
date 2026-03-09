@@ -13,8 +13,10 @@ class DataTypeConverter:
     - DOUBLE / FLOAT64 / 双精度 → FLOAT64 (64)
     - 枚举型 → ENUM (0 bit, 特殊处理)
     - 空字符串/未知 → 原样返回
+    - "字节" → UINT8 (8)  // 非标准类型转换为标准类型
 
     新增：16进制字节数 → 十进制位数换算
+    返回值新增状态标记：'normal' 或 'inferred'（推断/转换出来的）
     """
 
     TYPE_MAPPING: Dict[str, Tuple[str, int]] = {
@@ -29,6 +31,7 @@ class DataTypeConverter:
         'LONG':    ('UINT32', 32), 'ULONG':   ('UINT32', 32),
         'INTEGER-32':  ('UINT32', 32), 'UINTEGER-32': ('UINT32', 32),
         'UINTERGER-32': ('UINT32', 32),   # 常见拼写错误容错
+        'UINTEGERR-32': ('UINT32', 32),   # 拼写错误容错：多一个R
         'UINT32':  ('UINT32', 32), 'INT32':   ('INT32',  32),
         'INT-32':  ('INT32',  32), 'UINT-32': ('UINT32', 32),
         '32BIT无符号整型': ('UINT32', 32), '32位无符号整型': ('UINT32', 32),
@@ -40,10 +43,10 @@ class DataTypeConverter:
         # 8 bit 中文别名
         '8BIT无符号整型': ('UINT8', 8),  '8位无符号整型': ('UINT8', 8),
         # 浮点
-        'FLOAT':   ('FLOAT32', 32), 'FLOAT32': ('FLOAT32', 32),
-        '单精度浮点':  ('FLOAT32', 32), '单精度': ('FLOAT32', 32),
-        'DOUBLE':  ('FLOAT64', 64), 'FLOAT64': ('FLOAT64', 64),
-        '双精度浮点':  ('FLOAT64', 64), '双精度': ('FLOAT64', 64),
+        'FLOAT':   ('FLOAT', 32), 'FLOAT32': ('FLOAT', 32),
+        '单精度浮点':  ('FLOAT', 32), '单精度': ('FLOAT', 32),
+        'DOUBLE':  ('DOUBLE', 64), 'FLOAT64': ('DOUBLE', 64),
+        '双精度浮点':  ('DOUBLE', 64), '双精度': ('DOUBLE', 64),
         # 枚举
         'ENUM': ('ENUM', 0), '枚举': ('ENUM', 0),
     }
@@ -53,7 +56,11 @@ class DataTypeConverter:
         将原始类型字符串标准化。
 
         Returns:
-            (标准类型名称, 位数, 状态) 其中状态为 'normal' 或 'warning'
+            (标准类型名称, 位数, 状态)
+            其中状态为：
+            - 'normal': 直接来自标准类型映射表
+            - 'inferred': 从非标准类型（如"字节"）推断转换出来的
+            - 'warning': 无法识别的类型
         """
         if not type_str:
             return ("", 0, "warning")
@@ -73,32 +80,37 @@ class DataTypeConverter:
             if clean == key.upper().replace(' ', ''):
                 return t, bits, "normal"
 
-        # 3. 从类型字符串提取字节数并换算为 bit 数（如 "4字节" → 32位）
+        # 3. 处理单独的"字节"或"Bytes"这样的非标准类型
+        # "字节" → UINT8 (8 bit)
+        if clean in ('字节', 'BYTE', 'BYTES'):
+            return 'UINT8', 8, 'inferred'
+
+        # 4. 从类型字符串提取字节数并换算为 bit 数（如 "4字节" → 32位）
         byte_match = re.search(r'(\d+)\s*(?:字节|[Bb][Yy][Tt][Ee]s?|B\b)', type_str, re.IGNORECASE)
         if byte_match:
             nbytes = int(byte_match.group(1))
             bits = nbytes * 8
             # 根据 bit 数推断标准类型
-            if bits == 8:   return 'UINT8',  bits, 'normal'
-            if bits == 16:  return 'UINT16', bits, 'normal'
-            if bits == 32:  return 'UINT32', bits, 'normal'
-            if bits == 64:  return 'UINT64', bits, 'normal'
+            if bits == 8:   return 'UINT8',  bits, 'inferred'
+            if bits == 16:  return 'UINT16', bits, 'inferred'
+            if bits == 32:  return 'UINT32', bits, 'inferred'
+            if bits == 64:  return 'UINT64', bits, 'inferred'
 
-        # 4. 直接找 bit 数（如 "16bit"）
+        # 5. 直接找 bit 数（如 "16bit"）
         bit_match = re.search(r'(\d+)\s*[bB][iI][tT]\b', type_str)
         if bit_match:
             bits = int(bit_match.group(1))
             return type_str_clean, bits, 'normal'
 
-        # 5. 从类型名称里提取数字（如 "UINT32" → 32）
+        # 6. 从类型名称里提取数字（如 "UINT32" → 32）
         # 只有当字符串看起来像类型定义（以字母打头且含数字）时才提取
         if re.match(r'^[A-Za-z]', type_str_clean) and re.search(r'\d', type_str_clean):
             num_match = re.search(r'(\d+)', type_str_clean)
             bits = int(num_match.group(1)) if num_match else 0
-        else:
-            bits = 0
-
-        return type_str_clean, bits, 'normal'
+            return type_str_clean, bits, 'warning'
+        
+        # 7. 如果全是数字或其他非法形式，返回空（不是有效类型）
+        return '', 0, 'warning'
 
 
 class RangeValueFormatter:
@@ -178,10 +190,15 @@ class FormulaStandardizer:
             return str(val_str)
 
     def _make_formula(self, a: str, b: str = '0') -> str:
-        """生成 aX+b 格式字符串，自动规范化系数"""
+        """生成 ax+b 格式字符串，自动规范化系数（注意：使用小写 x）"""
         a_str = self._fmt_num(a)
+        b_float = float(b)
         b_str = self._fmt_num(b)
-        return f'{a_str}X+{b_str}'
+        # 如果 b 是负数，使用 x-|b| 的形式（而不是 x+-|b|）
+        if b_float < 0:
+            return f'{a_str}x{b_str}'  # b_str 已经包含负号，如 "-3"
+        else:
+            return f'{a_str}x+{b_str}'
 
     def standardize(self, formula_str: str) -> str:
         if not formula_str:
@@ -193,9 +210,21 @@ class FormulaStandardizer:
         if s in ('—', '-', '', '无', 'N/A'):
             return s
 
-        # 0. 含16进制数的公式（如 0x000000477*x+0），无法转为标准十进制 aX+b，保留原样
-        if re.search(r'0[xX][0-9A-Fa-f]+', s):
-            return s
+        # 0a. 16进制数格式 (0x开头的数字)：尝试转换为十进制
+        # 如果只是简单的16进制数字，转换为十进制；如果是复杂表达式，保留原样
+        hex_match = re.search(r'0[xX]([0-9A-Fa-f]+)', s)
+        if hex_match:
+            try:
+                hex_val = int(hex_match.group(1), 16)
+                # 替换16进制为十进制
+                s_converted = s[:hex_match.start()] + str(hex_val) + s[hex_match.end():]
+                # 如果转换后仍是有效公式格式，继续处理；否则保留原样
+                if re.search(r'[\d.]+\s*\*?\s*[xX]', s_converted):
+                    s = s_converted
+                else:
+                    return s  # 不是有效公式格式，保留原样
+            except (ValueError, OverflowError):
+                return s
 
         # 1. 已经是 aX+b 或 a*X+b 格式（大小写均可），直接规范化
         m = re.match(r'^([\d.eE+\-]+)\s*\*?\s*[xX]\s*([+\-])\s*([\d.eE+\-]+)$', s)
@@ -212,7 +241,53 @@ class FormulaStandardizer:
         if m:
             return self._make_formula(m.group(1), '0')
 
-        # 3. x/N 格式 → (1/N)X+0
+        # 3. 复杂表达式：(X/A)×B 或 (数字/数字)×数字 → (B/A)X+0
+        # 例如：(模拟量/2^12)×21 → (21/4096)X+0 ≈ 0.00512695X+0
+        # 匹配模式：(任意变量名/常数或2^N)×常数，如 (data/100)*50 或 (模拟量采集数据/2^12)×21
+        m = re.search(r'[\(（]\s*[xX\u4e00-\u9fff\w]*\s*[/÷]\s*([2-9][\^^][\d]+|[\d.]+)\s*[\)）]\s*[×*]\s*([\d.]+)', s)
+        if m:
+            divisor_str = m.group(1)
+            multiplier = float(m.group(2))
+            # 处理 2^12 这样的幂次表达式
+            if '^' in divisor_str or '^' in divisor_str:
+                power_match = re.match(r'([2-9])\s*[\^]\s*(\d+)', divisor_str)
+                if power_match:
+                    base = int(power_match.group(1))
+                    exp = int(power_match.group(2))
+                    divisor = base ** exp
+                else:
+                    divisor = float(divisor_str)
+            else:
+                divisor = float(divisor_str)
+            
+            if divisor != 0:
+                a_val = multiplier / divisor
+                a_str = f'{a_val:.6g}'
+                return self._make_formula(a_str, '0')
+        
+        # 3b. 更灵活的复杂表达式：(任意/常数或幂次表达式)×常数
+        m = re.search(r'[\(（]([^）)]*)[/÷]([2-9][\^^][\d]+|[\d.]+)[\)）]\s*[×*]\s*([\d.]+)', s)
+        if m:
+            divisor_str = m.group(2)
+            multiplier = float(m.group(3))
+            # 处理 2^12 这样的幂次表达式
+            if '^' in divisor_str or '^' in divisor_str:
+                power_match = re.match(r'([2-9])\s*[\^]\s*(\d+)', divisor_str)
+                if power_match:
+                    base = int(power_match.group(1))
+                    exp = int(power_match.group(2))
+                    divisor = base ** exp
+                else:
+                    divisor = float(divisor_str)
+            else:
+                divisor = float(divisor_str)
+            
+            if divisor != 0:
+                a_val = multiplier / divisor
+                a_str = f'{a_val:.6g}'
+                return self._make_formula(a_str, '0')
+
+        # 4. x/N 格式 → (1/N)X+0
         m = re.match(r'^[xX]/([\d.]+)$', s)
         if m:
             divisor = float(m.group(1))
@@ -222,12 +297,30 @@ class FormulaStandardizer:
                 a_str = f'{a_val:.6g}'
                 return self._make_formula(a_str, '0')
 
-        # 4. '乘以N' / '×N' / '乘N'
+        # 5. '乘以N' / '×N' / '乘N'，支持带偏移量 'N+M' 或 'N-M'
+        m = re.search(r'[乘×]\s*[以]?\s*([\d.]+)\s*([+\-])\s*([\d.]+)', s)
+        if m:
+            a = m.group(1)
+            sign = m.group(2)
+            b_abs = float(m.group(3))
+            b = b_abs if sign == '+' else -b_abs
+            return self._make_formula(a, str(b))
+        # 无偏移量的乘以 N
         m = re.search(r'[乘×]\s*[以]?\s*([\d.]+)', s)
         if m:
             return self._make_formula(m.group(1), '0')
 
-        # 5. '除以N' / '÷N'
+        # 6. '除以N' / '÷N'，支持带偏移量 'N+M' 或 'N-M'
+        m = re.search(r'[除÷]\s*[以]?\s*([\d.]+)\s*([+\-])\s*([\d.]+)', s)
+        if m:
+            divisor = float(m.group(1))
+            sign = m.group(2)
+            b_abs = float(m.group(3))
+            if divisor != 0:
+                a_val = 1.0 / divisor
+                b = b_abs if sign == '+' else -b_abs
+                return self._make_formula(f'{a_val:.6g}', str(b))
+        # 无偏移量的除以 N
         m = re.search(r'[除÷]\s*[以]?\s*([\d.]+)', s)
         if m:
             divisor = float(m.group(1))
@@ -235,12 +328,20 @@ class FormulaStandardizer:
                 a_val = 1.0 / divisor
                 return self._make_formula(f'{a_val:.6g}', '0')
 
-        # 6. '量化单位N' / '分辨率N'
+        # 7. '量化单位N' / '分辨率N'，支持带偏移量
+        m = re.search(r'(?:量化单位|分辨率)\s*([\d.]+)\s*([+\-])\s*([\d.]+)', s)
+        if m:
+            a = m.group(1)
+            sign = m.group(2)
+            b_abs = float(m.group(3))
+            b = b_abs if sign == '+' else -b_abs
+            return self._make_formula(a, str(b))
+        # 无偏移量的量化单位/分辨率
         m = re.search(r'(?:量化单位|分辨率)\s*([\d.]+)', s)
         if m:
             return self._make_formula(m.group(1), '0')
 
-        # 7. 含小数点数字直接提取（如 '0.125°'）
+        # 8. 含小数点数字直接提取（如 '0.125°'）
         m = re.search(r'([\d.]+)\s*[°度]?\s*$', s)
         if m:
             factor = m.group(1)
@@ -375,9 +476,10 @@ class DataProcessor:
                         break
 
         if type_val:
-            std_type, bits, _ = self.type_converter.convert_type(type_val)
+            std_type, bits, type_status = self.type_converter.convert_type(type_val)
             result['converted']['标准类型'] = std_type
             result['converted']['位数'] = bits
+            result['converted']['类型状态'] = type_status  # 'normal', 'inferred', 'warning'
         else:
             # 尝试从字节数列推算 bit 数（无类型列时的兜底）
             for k, v in cleaned.items():
@@ -422,26 +524,39 @@ class DataProcessor:
             """
             检测文本是否含有明确的转换公式描述。
             规则：
-            - "乘以N" / "×N"（但排除 "A×B" 这种两个数字间的乘法，如 "212×21"）
-            - "除以N" / "÷N"
-            - "量化单位N" / "分辨率N"
+            - "乘以N" / "乘以N+M" / "×N" 等（但排除 "A×B" 这种两个数字间的乘法，如 "212×21"）
+            - "除以N" / "除以N+M" / "÷N" 等
+            - 复杂表达式：(A/B)×C 或 (X/A)×B 等
+            - "量化单位N" / "分辨率N" 及其带偏移量的变体
             - 以数字开头的 "aX" 或 "a*X" 格式（整段只有公式）
+            - 典型 aX+b 模式
+            
+            注意：纯整数/纯小数（如"1"、"0.5"）不是转换公式，应该被排除
             """
-            # 中文 "乘以N"（允许 "乘以10" 但不允许 "A乘以B" 的多操作数表达式）
-            if re.search(r'(?<![0-9a-zA-Z])乘以\s*[\d.]', txt):
+            # 排除纯整数或纯小数（不含任何运算符或特殊符号）
+            if re.match(r'^[\d.]+$', txt.strip()):
+                return False
+            
+            # 复杂表达式：(变量/常数或2^N)×常数，如 (模拟量/2^12)×21
+            # 检测模式：括号内有除法，后面跟乘法
+            if re.search(r'[\(（][^）)]*[/÷][^）)]*[\)）]\s*[×*]\s*[\d.]', txt):
                 return True
-            # "×N"：×号前不能是数字、字母、中文字、全角括号/标点（避免误识别 "212×21"、"数据）×21"）
-            # 允许：行首或半角空格/标点后的 "×N"，如 "×10"
-            if re.search(r'(?<![0-9a-zA-Z\u4e00-\u9fff\uff01-\uff5e\uff00-\uffef])[×]\s*[\d.]', txt):
+            
+            # 中文 "乘以N" 及 "乘以N±M" 形式（允许 "乘以10" 或 "乘以10+3" 但排除描述性表达）
+            if re.search(r'(?<![0-9a-zA-Z])乘以\s*[\d.]+\s*[+\-]?\s*[\d.]*', txt):
                 return True
-            # 中文 "除以N"
-            if re.search(r'(?<![0-9a-zA-Z])除以\s*[\d.]', txt):
+            # "×N" 及 "×N±M" 形式：×号前不能是数字、字母、中文字、全角括号/标点
+            # 但要允许 (数字)×数字 这样的表达式
+            if re.search(r'(?<![0-9a-zA-Z\u4e00-\u9fff\uff01-\uff5e\uff00-\uffef])[×]\s*[\d.]+\s*[+\-]?\s*[\d.]*', txt):
                 return True
-            # "÷N"
-            if re.search(r'[÷]\s*[\d.]', txt):
+            # 中文 "除以N" 及 "除以N±M" 形式
+            if re.search(r'(?<![0-9a-zA-Z])除以\s*[\d.]+\s*[+\-]?\s*[\d.]*', txt):
                 return True
-            # "量化单位N" / "分辨率N"
-            if re.search(r'(?:量化单位|分辨率)\s*[\d.]', txt):
+            # "÷N" 及 "÷N±M" 形式
+            if re.search(r'[÷]\s*[\d.]+\s*[+\-]?\s*[\d.]*', txt):
+                return True
+            # "量化单位N" / "分辨率N" 及其带偏移量的形式
+            if re.search(r'(?:量化单位|分辨率)\s*[\d.]+\s*[+\-]?\s*[\d.]*', txt):
                 return True
             # 以数字开头的 aX 或 a*X 格式（整行是公式，不是描述文本）
             if re.match(r'^[\d.]+\s*\*?\s*[xX]', txt):
@@ -451,25 +566,56 @@ class DataProcessor:
                 return True
             return False
 
-        # 优先级2：数据转换/数据转换方法列
+        # 先收集所有备注/说明列的文本（用于后续判断"数据处理"是否是干扰项）
+        remark_texts = []
+        for k, v in cleaned.items():
+            if any(kw in k for kw in ['备注', '说明']):
+                t = str(v).strip() if v else ''
+                if t and t not in ('—', '-', ''):
+                    remark_texts.append(t)
+        combined_remark = ' '.join(remark_texts)
+
+        def _is_simple_multiply_description(txt: str) -> bool:
+            """
+            判断是否是"乘以N / 除以N"这样的简短处理描述（而非真正的量化公式）。
+            当同行备注/说明有更详细内容时，这类描述应该被忽略。
+            """
+            return bool(combined_remark and len(txt) <= 5
+                        and re.fullmatch(r'[乘除×÷]\s*[以]?\s*[\d.]+', txt))
+
+        # 优先级2：数据转换相关列（数据转换、数据转换方法、转换公式）
+        # 注意：'数据转换' 会匹配到 '数据转换方法' 这类列
         if not formula_val:
             for k, v in cleaned.items():
-                if any(kw in k for kw in ['数据转换', '转换公式', '数据转换方法']):
+                if any(kw in k for kw in ['转换公式', '数据转换']):
                     txt = str(v).strip() if v else ''
-                    if txt and txt not in ('—', '-', '') and _has_formula_content(txt):
-                        formula_val = txt
-                        formula_source = k
-                        break
+                    if not txt or txt in ('—', '-', ''):
+                        continue
+                    if not _has_formula_content(txt):
+                        continue
+                    # 同样需要过滤：当该列只是简短的"乘以N"且同行有详细备注说明时，忽略
+                    if _is_simple_multiply_description(txt):
+                        continue
+                    formula_val = txt
+                    formula_source = k
+                    break
+
         # 优先级3：数据处理/数据处理方法列（中文描述，如"乘以10"）
         # 只提取明确含有转换公式的内容，避免把描述性文本（如"32位整型数..."）误识别
         if not formula_val:
             for k, v in cleaned.items():
-                if any(kw in k for kw in ['数据处理方法', '数据处理']):
+                if any(kw in k for kw in ['数据处理方法', '数据处理', '数据转换方法']):
                     txt = str(v).strip() if v else ''
-                    if txt and txt not in ('—', '-', '') and _has_formula_content(txt):
-                        formula_val = txt
-                        formula_source = k
-                        break
+                    if not txt or txt in ('—', '-', ''):
+                        continue
+                    if not _has_formula_content(txt):
+                        continue
+                    if _is_simple_multiply_description(txt):
+                        continue
+                    formula_val = txt
+                    formula_source = k
+                    break
+
         # 优先级4：备注/说明列（只提取明显像公式/转换描述的内容）
         if not formula_val:
             for k, v in cleaned.items():

@@ -125,7 +125,18 @@ class ExcelExporter:
                 # ── bit 位子行 ──────────────────────────────────────────────
                 if row.get('_is_bit_row'):
                     fill_data = self._build_bit_row(row, template_headers)
-                    self._write_row(ws, current_row, template_headers, fill_data, color_map={})
+                    
+                    # 对子行的推断类型进行类型转换处理
+                    color_map = {}
+                    if '_inferred_type' in row and row['_inferred_type']:
+                        inferred_type = row['_inferred_type']
+                        # 将推断出的类型标记为需要标红（因为是推断出来的）
+                        for col_name in ['数据类型', '类型', '数据格式']:
+                            if col_name in fill_data and fill_data[col_name] == inferred_type:
+                                color_map[col_name] = COLOR_RED
+                                break
+                    
+                    self._write_row(ws, current_row, template_headers, fill_data, color_map=color_map)
                     current_row += 1
                     continue
 
@@ -168,18 +179,48 @@ class ExcelExporter:
                     fill_data['内容'] = content_val
 
                 # 2. 类型列
-                if '标准类型' in conv_info:
+                # 首先检查是否有嵌套表格引用标记（"见表B.X..."）
+                if row.get('_has_nested_ref'):
+                    # 保留原始的嵌套引用文本，并标红
+                    fill_data['转换类型'] = row.get('_nested_ref_text', '')
+                    color_map['转换类型'] = COLOR_RED
+                elif '标准类型' in conv_info:
                     std_type = conv_info['标准类型']
-                    # 验证是否在标准类型表中，如果不在则设为空
+                    # 验证是否在标准类型表中
                     from backend.services.data_cleaner import DataTypeConverter
                     valid_types = set(DataTypeConverter().TYPE_MAPPING.values())
                     valid_types = {t for t, _ in valid_types} | {'ENUM', ''}  # 提取标准类型名
+                    
                     if std_type in valid_types or std_type == '':
                         fill_data['转换类型'] = std_type
                         # 如果类型是推断出来的（如"字节" → UINT8），标红
                         if conv_info.get('类型状态') == 'inferred':
                             color_map['转换类型'] = COLOR_RED
-                    # 否则不填（非法类型）
+                    else:
+                        # 非标准类型（不在valid_types中），也填充并标红
+                        fill_data['转换类型'] = std_type
+                        color_map['转换类型'] = COLOR_RED
+                else:
+                    # 从 cleaned 数据中直接获取原始类型值，检查是否为标准类型
+                    type_val = ''
+                    for k, v in cleaned.items():
+                        if any(kw in k for kw in ['类型', 'TYPE', '数据格式']):
+                            type_val = str(v).strip() if v else ''
+                            break
+                    
+                    if type_val:
+                        # 检查是否为标准类型
+                        from backend.services.data_cleaner import DataTypeConverter
+                        valid_types = set(DataTypeConverter().TYPE_MAPPING.values())
+                        valid_types = {t for t, _ in valid_types} | {'ENUM', ''}
+                        
+                        if type_val in valid_types:
+                            fill_data['转换类型'] = type_val
+                        else:
+                            # 非标准类型，填充并标红
+                            fill_data['转换类型'] = type_val
+                            color_map['转换类型'] = COLOR_RED
+                
                 if '位数' in conv_info:
                     fill_data['类型（bit）'] = conv_info['位数']
                     # 如果类型是推断出来的，位数也标红
@@ -271,11 +312,41 @@ class ExcelExporter:
     # ── 辅助方法 ──────────────────────────────────────────────────────────────
 
     def _build_bit_row(self, bit_row: Dict, template_headers: List[str]) -> Dict:
-        """将 bit 子行转换为 fill_data 字典"""
+        """
+        将 bit 子行转换为 fill_data 字典。
+        
+        新的子行结构保留了父表的表头，需要正确映射字段值。
+        子行中的推断类型（_inferred_type）会被填充到数据类型列。
+        """
         fill_data = {}
-        fill_data['名称']     = ''
-        fill_data['内容']     = bit_row.get('子内容', '')
-        fill_data['类型（bit）'] = bit_row.get('类型（bit）', '')
+        
+        # 主行的"名称"列为空（子行没有独立的名称）
+        fill_data['名称'] = ''
+        
+        # 遍历所有字段，将子行的值复制到fill_data中
+        for key, value in bit_row.items():
+            # 跳过内部字段（除了_inferred_type）
+            if key.startswith('_') and key != '_inferred_type':
+                continue
+            
+            # 处理推断出的类型
+            if key == '_inferred_type' and value:
+                # 将推断出的类型填充到数据类型列
+                # 查找合适的类型列
+                for col_name in ['数据类型', '类型', '数据格式']:
+                    if col_name in bit_row and bit_row[col_name] == '':
+                        fill_data[col_name] = value
+                        break
+                continue
+            
+            # 直接复制字段值
+            if value is not None and value != '':
+                fill_data[key] = value
+        
+        # 兼容旧的"子内容"字段（如果新字段未生成）
+        if '子内容' in bit_row and '内容' not in fill_data and '数据含义' not in fill_data:
+            fill_data['内容'] = bit_row.get('子内容', '')
+        
         return fill_data
 
     def _find_content_value(self, cleaned: Dict) -> str:

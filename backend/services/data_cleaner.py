@@ -621,10 +621,18 @@ class DataProcessor:
             for k, v in cleaned.items():
                 if any(kw in k for kw in ['备注', '说明']):
                     txt = str(v).strip() if v else ''
-                    if txt and txt not in ('—', '-', '') and _has_formula_content(txt):
-                        formula_val = txt
-                        formula_source = k
-                        break
+                    if txt and txt not in ('—', '-', ''):
+                        # 剥离值域部分（如"0~0xFFFF，"或"[0,65535]，"等）
+                        # 值域通常在文本开头，以逗号或中文句号分隔
+                        cleaned_txt = txt
+                        # 移除开头的值域表达式（如 "0~0xFFFF，" 或 "[0,65535]，"）
+                        cleaned_txt = re.sub(r'^[\[\(]\d+[,，~\-][\d,xXfF]+[\]\)]\s*[，,]\s*', '', cleaned_txt)
+                        cleaned_txt = re.sub(r'^\d+\s*[~\-]\s*[\d,xXfF0-9]+[，,]\s*', '', cleaned_txt)
+                        
+                        if cleaned_txt and _has_formula_content(cleaned_txt):
+                            formula_val = cleaned_txt
+                            formula_source = k
+                            break
 
         if formula_val:
             result['formatted']['转换公式'] = self.formula_std.standardize(formula_val)

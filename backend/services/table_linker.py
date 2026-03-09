@@ -54,6 +54,20 @@ def _parse_bit_range(bit_str: str) -> int:
     return 1
 
 
+def _infer_type_from_bytes(byte_count: int) -> Optional[str]:
+    """
+    从字节数推断标准数据类型。
+    1 字节 → UINT8, 2 字节 → UINT16, 4 字节 → UINT32, 8 字节 → UINT64
+    """
+    byte_to_type = {
+        1: 'UINT8',
+        2: 'UINT16',
+        4: 'UINT32',
+        8: 'UINT64',
+    }
+    return byte_to_type.get(byte_count)
+
+
 class TableLinker:
     def __init__(self):
         # 保留旧接口的名称映射（兼容）
@@ -212,40 +226,55 @@ class TableLinker:
     # ── bit位附加 ─────────────────────────────────────────────────────────────
 
     def _attach_bit_rows(self, field_row: Dict, bit_tables: List[Dict],
-                         field_table_idx: int) -> List[Dict]:
+                         field_table_idx: int, parent_headers: List[str] = None,
+                         parent_row_byte_count: int = None) -> List[Dict]:
         """
         检查某字段行是否有对应的 bit 位定义，如果有则返回 bit 子行列表。
 
         触发条件（满足任一）：
         1. 字段的"数据类型"列含"见表"字样（如"见表B.1某信道状态"）
         2. 字段的备注/说明列含"见表"字样
-        3. 后续表格是 bit_def 类型且前置段落与字段名相关
 
-        返回的每个 bit 子行结构：
-        {'_is_bit_row': True, '子内容': 状态名, '类型（bit）': 位数, '转换类型继承': True}
+        子行结构：
+        - 保留父行的表头结构，每个表头列都有对应的值
+        - 数据含义/内容列：填充"状态X"（来自位定义表的状态参数列）
+        - 类型（bit）列：填充计算出的位数
+        - 根据字节数推断的转换类型填充到对应的数据类型列（保留原有值）
+        - '_is_bit_row': True 用于后续处理
+        - '_nested_table_ref': 记录原始的"见表B.X..."文本，需要标红
         """
         bit_rows = []
 
-        # 获取字段的数据类型和备注文本
+        # 获取字段的数据类型、字节数和备注文本
         type_text = ''
         remark_text = ''
+        byte_count_str = ''
+        original_type_text = ''  # 保留原始的数据类型文本（可能含"见表"）
+        
         for k, v in field_row.items():
             k_lower = k
             if any(kw in k_lower for kw in ['类型', '数据格式', 'TYPE']):
                 type_text = str(v)
+                original_type_text = str(v)  # 保存原始值
             if any(kw in k_lower for kw in ['备注', '说明', '数据来源']):
                 remark_text = str(v)
+            if any(kw in k_lower for kw in ['字节数', '字节', '长度']):
+                byte_count_str = str(v).strip() if v else ''
 
         has_bit_ref = '见表' in type_text or '见表' in remark_text
 
         if not has_bit_ref:
             return []
+        
+        # 标记主行有嵌套表格引用，需要标红
+        if '见表' in original_type_text:
+            field_row['_has_nested_ref'] = True
+            field_row['_nested_ref_text'] = original_type_text
 
         # 查找对应的 bit 定义表（优先使用紧跟在后面的 bit_def 表格）
         matched_bit_table = None
         for bt in bit_tables:
             bt_idx = bt.get('index', -1)
-            bt_para = bt.get('preceding_para', '')
             # 取紧跟在字段定义表后面的 bit_def 表（索引接近且更大）
             if bt_idx > field_table_idx:
                 matched_bit_table = bt
@@ -276,6 +305,19 @@ class TableLinker:
         if col_bit is None:
             return []
 
+        # 尝试从字节数列提取字节数（用于推断转换类型）
+        parent_byte_count = parent_row_byte_count
+        if not parent_byte_count and byte_count_str:
+            try:
+                parent_byte_count = int(byte_count_str)
+            except (ValueError, TypeError):
+                pass
+
+        # 推断转换类型（从字节数）
+        inferred_type = None
+        if parent_byte_count:
+            inferred_type = _infer_type_from_bytes(parent_byte_count)
+
         for row in data_rows:
             vals = list(row.values())
             bit_str = str(vals[col_bit]).strip() if col_bit < len(vals) else ''
@@ -285,12 +327,46 @@ class TableLinker:
                 continue
 
             bit_count = _parse_bit_range(bit_str)
-            bit_rows.append({
+            
+            # 创建新的子行，保留父行的表头结构，同时添加必要的目标字段
+            bit_row = {
                 '_is_bit_row': True,
-                '子内容': state_name,
-                '类型（bit）': bit_count,
                 '_bit_str': bit_str,
-            })
+            }
+            
+            # 首先按父表头创建字段映射
+            if parent_headers:
+                for col_name in parent_headers:
+                    # 内容列：填充状态名
+                    if '内容' in col_name or '数据含义' in col_name or '参数' in col_name:
+                        bit_row[col_name] = state_name
+                    # 类型（bit）列：填充位数（可能在目标模板中而不在原始表中）
+                    elif '类型' in col_name and 'bit' in col_name:
+                        bit_row[col_name] = bit_count
+                    # 数据类型列：先留空
+                    elif '类型' in col_name or '数据格式' in col_name:
+                        bit_row[col_name] = ''
+                    else:
+                        # 其他列留空
+                        bit_row[col_name] = ''
+            
+            # 确保包含数据含义（如果原始表头中没有，就手动添加）
+            if '数据含义' not in bit_row:
+                bit_row['数据含义'] = state_name
+            
+            # 确保包含类型（bit）字段（用于目标Excel模板）
+            if '类型（bit）' not in bit_row:
+                bit_row['类型（bit）'] = bit_count
+            
+            # 为了兼容性，也添加旧的"子内容"字段
+            if '子内容' not in bit_row:
+                bit_row['子内容'] = state_name
+            
+            # 添加推断出的类型信息（供后续处理使用）
+            if inferred_type:
+                bit_row['_inferred_type'] = inferred_type
+            
+            bit_rows.append(bit_row)
 
         return bit_rows
 
@@ -365,11 +441,25 @@ class TableLinker:
 
             # ── 处理 bit 位子行 ────────────────────────────────────────────────
             data_rows = list(table.get('data_rows', []))
+            headers = table.get('headers', [])  # 父表的表头
             new_data_rows = []
             for field_row in data_rows:
                 new_data_rows.append(field_row)
+                
+                # 提取字节数（用于后续推断转换类型）
+                byte_count = None
+                for k, v in field_row.items():
+                    if any(kw in k for kw in ['字节数', '字节', '长度']):
+                        try:
+                            byte_count = int(str(v).strip()) if v else None
+                        except (ValueError, TypeError):
+                            pass
+                        break
+                
                 # 检查是否有 bit 位定义
-                bit_sub_rows = self._attach_bit_rows(field_row, bit_tables, t_idx)
+                bit_sub_rows = self._attach_bit_rows(field_row, bit_tables, t_idx, 
+                                                     parent_headers=headers,
+                                                     parent_row_byte_count=byte_count)
                 if bit_sub_rows:
                     # 在字段行的子内容列标记为 False（表示"有子行但本行无子内容名"）
                     field_row['_has_bit_children'] = True

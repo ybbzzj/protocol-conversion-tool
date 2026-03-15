@@ -7,6 +7,7 @@
       <div class="actions">
         <input class="input" v-model="fieldSearch" placeholder="搜索字段..." style="max-width: 300px;" />
         <button class="btn" @click="doSearch">搜索</button>
+        <button class="btn secondary" @click="toggleSelectAll">{{ isAllSelected ? '取消全选' : '全选' }}</button>
         <button class="btn secondary" @click="reloadProtocolFields">刷新</button>
       </div>
       <div class="field-list">
@@ -95,6 +96,23 @@ const filteredFields = computed(()=>{
   const q = fieldSearch.value.trim().toLowerCase()
   return q ? protocolFields.value.filter(f=>f.name.toLowerCase().includes(q)) : protocolFields.value
 })
+
+const isAllSelected = computed(() => {
+  return filteredFields.value.length > 0 && filteredFields.value.every(f => selectedFieldIds.value.includes(f.id))
+})
+
+function toggleSelectAll() {
+  if (isAllSelected.value) {
+    // 如果已经全选，则在当前筛选结果中取消选中
+    const filteredIds = filteredFields.value.map(f => f.id)
+    selectedFieldIds.value = selectedFieldIds.value.filter(id => !filteredIds.includes(id))
+  } else {
+    // 如果未全选，则将当前筛选结果全部加入选中列表（去重）
+    const filteredIds = filteredFields.value.map(f => f.id)
+    const newIds = [...new Set([...selectedFieldIds.value, ...filteredIds])]
+    selectedFieldIds.value = newIds
+  }
+}
 
 function saveFieldsToLocal(items: FieldItem[]){ localStorage.setItem(LS_PROTOCOL_FIELDS, JSON.stringify(items)) }
 function loadFieldsFromLocal(): FieldItem[]{ try{ const raw = localStorage.getItem(LS_PROTOCOL_FIELDS); return raw ? JSON.parse(raw) : [] } catch{ return [] } }

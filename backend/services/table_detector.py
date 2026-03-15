@@ -120,9 +120,27 @@ def _build_grid(table) -> Tuple[List[List[str]], List[List[bool]]]:
             for p_elem in tc.findall(qn('w:p')):
                 para_text = ''
                 for r_elem in p_elem.findall(qn('w:r')):
+                    # ◄ 【优化】识别上标和下标
+                    is_sup = False
+                    is_sub = False
+                    r_pr = r_elem.find(qn('w:rPr'))
+                    if r_pr is not None:
+                        vert_align = r_pr.find(qn('w:vertAlign'))
+                        if vert_align is not None:
+                            val = vert_align.get(qn('w:val'), '')
+                            if val == 'superscript': is_sup = True
+                            elif val == 'subscript': is_sub = True
+
                     for t_elem in r_elem.findall(qn('w:t')):
                         if t_elem.text:
-                            para_text += t_elem.text
+                            t_text = t_elem.text
+                            if is_sup:
+                                # 如果是上标且不是以 ^ 开头，补上 ^
+                                t_text = f"^{t_text}" if not t_text.startswith('^') else t_text
+                            elif is_sub:
+                                # 如果是下标且不是以 _ 开头，补上 _
+                                t_text = f"_{t_text}" if not t_text.startswith('_') else t_text
+                            para_text += t_text
                 if para_text.strip():
                     cell_text_parts.append(para_text.strip())
             cell_text = ' '.join(cell_text_parts)

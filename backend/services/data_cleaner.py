@@ -356,6 +356,43 @@ class FormulaStandardizer:
         return s
 
 
+class UnitExtractor:
+    """
+    单位提取器。
+    从备注或描述文本中识别物理单位。
+    """
+    
+    # 常见单位列表（支持大小写感知的正则匹配）
+    UNIT_PATTERNS = [
+        r'ms', r'us', r'ns', r's', r'min', r'h',   # 时间
+        r'mV', r'kV', r'V', r'mA', r'uA', r'A',   # 电压电流
+        r'℃', r'°C', r'K',                        # 温度
+        r'Hz', r'kHz', r'MHz', r'GHz',             # 频率
+        r'rad', r'°', r'度',                       # 角度
+        r'%', r'dB', r'dBm',                       # 比例/增益
+        r'km', r'cm', r'mm', r'um', r'nm', r'm',   # 长度
+        r'byte', r'bits', r'bit',                  # 数据量
+    ]
+
+    def extract_unit(self, text: str) -> Optional[str]:
+        if not text or len(text) > 200: # 备注太长可能包含干扰，限制长度
+            return None
+        
+        # 匹配模式：(数字或空格后紧跟单位) 或者 (括号包裹的单位)
+        for pattern in self.UNIT_PATTERNS:
+            # 搜索模式：匹配单位本身，且前后不应有中文字符（除非是"度"这种中文单位）
+            # 这里的正则比较保守，优先匹配独立出现的单位
+            full_pattern = r'(?i)(?<![\u4e00-\u9fff])\b' + pattern + r'\b(?![\u4e00-\u9fff])'
+            if pattern == r'°' or pattern == r'℃' or pattern == r'度' or pattern == r'%':
+                full_pattern = pattern # 特殊符号直接匹配
+            
+            match = re.search(full_pattern, text)
+            if match:
+                return match.group(0)
+        
+        return None
+
+
 class DataProcessor:
     """数据行处理器"""
 
@@ -363,6 +400,7 @@ class DataProcessor:
         self.type_converter = DataTypeConverter()
         self.range_formatter = RangeValueFormatter()
         self.formula_std = FormulaStandardizer()
+        self.unit_extractor = UnitExtractor()
         # 定义内容字段名称集合（这些字段用于存放数据名称或描述）
         self.content_field_names = {'名称', '内容', '参数', '信号名称', '字段', '数据含义', '参数名称', '数据项名称', '代号', '描述'}
 
@@ -507,6 +545,30 @@ class DataProcessor:
 
         if range_val:
             result['formatted']['值域'] = self.range_formatter.format_range(range_val)
+
+        # ── 单位提取 (优先从单位列提取，兜底从备注提取) ─────────────────────────
+        unit_val = ''
+        # 1. 尝试从原有的"单位"列提取
+        for k, v in cleaned.items():
+            if k == '单位' or k == 'UNIT':
+                val = str(v).strip() if v else ''
+                if val and val not in ('—', '-', ''):
+                    unit_val = val
+                    break
+        
+        # 2. 如果单位列为空，尝试从备注列提取
+        if not unit_val:
+            for k, v in cleaned.items():
+                if any(kw in k for kw in ['备注', '说明']):
+                    txt = str(v).strip() if v else ''
+                    if txt and txt not in ('—', '-', ''):
+                        extracted = self.unit_extractor.extract_unit(txt)
+                        if extracted:
+                            unit_val = extracted
+                            break
+        
+        if unit_val:
+            result['formatted']['单位'] = unit_val
 
         # ── 转换公式标准化 ─────────────────────────────────────────────────────
         # 搜索顺序：专用转换公式列 > 数据处理/数据转换列 > 数据处理方法列 > 备注列

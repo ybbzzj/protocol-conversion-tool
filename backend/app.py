@@ -35,6 +35,19 @@ def create_app(config_name='development'):
     app.register_blueprint(templates_bp, url_prefix='/api/templates')
     app.register_blueprint(mapping_bp, url_prefix='/api/mapping')
     
+    # 预加载语义模型（在后台线程或启动时加载）
+    def preload_model():
+        try:
+            from backend.services.embedding_service import embedding_service
+            print("[App] 正在预加载语义模型...")
+            # 简单调用一下，触发初始化
+            embedding_service.get_embedding("初始化")
+        except Exception as e:
+            print(f"[App] 预加载语义模型失败: {e}")
+
+    import threading
+    threading.Thread(target=preload_model).start()
+    
     @app.route('/health')
     def health_check():
         return {'status': 'healthy', 'version': '2.0.0'}

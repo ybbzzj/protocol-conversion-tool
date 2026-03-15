@@ -9,6 +9,7 @@ import re
 from typing import List, Dict, Any, Optional
 from difflib import SequenceMatcher
 from backend.config import Config
+from backend.services.embedding_service import embedding_service
 
 class EnhancedFieldMatcher:
     """增强字段匹配器"""
@@ -17,7 +18,24 @@ class EnhancedFieldMatcher:
         self.knowledge_base_file = Config.KNOWLEDGE_BASE_PATH
         self.knowledge_base = self._load_knowledge_base()
         self.similarity_threshold = 0.7
+        self.semantic_threshold = 0.8  # 语义匹配阈值
         self.standard_fields = self._get_standard_fields()
+        
+        # 预计算标准字段向量以加速匹配
+        self._preload_standard_embeddings()
+        
+        # 匹配结果缓存，避免同一字段在多行中重复计算
+        self._match_cache = {}
+
+    def _preload_standard_embeddings(self):
+        """预先计算所有标准字段的向量"""
+        if not self.standard_fields:
+            return
+        
+        # 只需要触发一次，后续会从 EmbeddingService 的缓存中读取
+        print(f"[FieldMatcher] 预计算 {len(self.standard_fields)} 个标准字段向量...")
+        for field in self.standard_fields:
+            embedding_service.get_embedding(field)
         
     def _load_knowledge_base(self) -> List[Dict]:
         """加载知识库"""
@@ -110,53 +128,80 @@ class EnhancedFieldMatcher:
         results = []
         
         for field in extracted_fields:
+            # 0. 检查缓存
+            if field in self._match_cache:
+                results.append(self._match_cache[field])
+                continue
+
             # 1. 精确匹配
             exact = self._exact_match(field)
             if exact:
-                results.append({
+                res = {
                     'original': field,
                     'matched': exact['target'],
                     'confidence': exact['confidence'],
                     'type': 'exact',
                     'source': exact.get('source', 'knowledge_base')
-                })
+                }
+                self._match_cache[field] = res
+                results.append(res)
                 continue
             
-            # 2. 模糊匹配
+            # 2. 语义匹配 (新增)
+            semantic = self._semantic_match(field)
+            if semantic:
+                res = {
+                    'original': field,
+                    'matched': semantic['target'],
+                    'confidence': semantic['confidence'],
+                    'type': 'semantic',
+                    'source': 'ernie_3.0_nano'
+                }
+                self._match_cache[field] = res
+                results.append(res)
+                continue
+            
+            # 3. 模糊匹配
             fuzzy = self._fuzzy_match(field)
             if fuzzy:
                 # 如果模糊匹配返回的是 exact_match，则使用 exact 类型
                 match_type = 'exact' if fuzzy.get('source') == 'exact_match' else 'fuzzy'
-                results.append({
+                res = {
                     'original': field,
                     'matched': fuzzy['target'],
                     'confidence': fuzzy['confidence'],
                     'type': match_type,
                     'similarity': fuzzy['similarity'],
                     'source': fuzzy.get('source', 'fuzzy_match')
-                })
+                }
+                self._match_cache[field] = res
+                results.append(res)
                 continue
             
-            # 3. 别名匹配
+            # 4. 别名匹配
             alias = self._alias_match(field)
             if alias:
-                results.append({
+                res = {
                     'original': field,
                     'matched': alias['target'],
                     'confidence': alias['confidence'],
                     'type': 'alias',
                     'source': 'alias_mapping'
-                })
+                }
+                self._match_cache[field] = res
+                results.append(res)
                 continue
             
-            # 4. 未匹配字段
-            results.append({
+            # 5. 未匹配字段
+            res = {
                 'original': field,
                 'matched': None,
                 'confidence': 0.0,
                 'type': 'unmatched',
                 'suggestions': self._get_suggestions_for_field(field)
-            })
+            }
+            self._match_cache[field] = res
+            results.append(res)
         
         return results
     
@@ -172,6 +217,25 @@ class EnhancedFieldMatcher:
                 }
         return None
     
+    def _semantic_match(self, field: str) -> Optional[Dict]:
+        """语义匹配"""
+        best_match = None
+        best_score = 0
+        
+        for std_field in self.standard_fields:
+            # 调用语义服务计算相似度
+            score = embedding_service.calculate_similarity(field, std_field)
+            
+            if score > best_score and score >= self.semantic_threshold:
+                best_score = score
+                best_match = {
+                    'target': std_field,
+                    'confidence': score,
+                    'source': 'ernie_3.0_nano'
+                }
+        
+        return best_match
+
     def _fuzzy_match(self, field: str) -> Optional[Dict]:
         """模糊匹配"""
         best_match = None

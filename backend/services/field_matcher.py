@@ -147,7 +147,21 @@ class EnhancedFieldMatcher:
                 results.append(res)
                 continue
             
-            # 2. 语义匹配 (新增)
+            # 2. 别名匹配 (优先级提高，确保领域知识优先)
+            alias = self._alias_match(field)
+            if alias:
+                res = {
+                    'original': field,
+                    'matched': alias['target'],
+                    'confidence': alias['confidence'],
+                    'type': 'alias',
+                    'source': 'alias_mapping'
+                }
+                self._match_cache[field] = res
+                results.append(res)
+                continue
+
+            # 3. 语义匹配
             semantic = self._semantic_match(field)
             if semantic:
                 res = {
@@ -161,7 +175,7 @@ class EnhancedFieldMatcher:
                 results.append(res)
                 continue
             
-            # 3. 模糊匹配
+            # 4. 模糊匹配
             fuzzy = self._fuzzy_match(field)
             if fuzzy:
                 # 如果模糊匹配返回的是 exact_match，则使用 exact 类型
@@ -173,20 +187,6 @@ class EnhancedFieldMatcher:
                     'type': match_type,
                     'similarity': fuzzy['similarity'],
                     'source': fuzzy.get('source', 'fuzzy_match')
-                }
-                self._match_cache[field] = res
-                results.append(res)
-                continue
-            
-            # 4. 别名匹配
-            alias = self._alias_match(field)
-            if alias:
-                res = {
-                    'original': field,
-                    'matched': alias['target'],
-                    'confidence': alias['confidence'],
-                    'type': 'alias',
-                    'source': 'alias_mapping'
                 }
                 self._match_cache[field] = res
                 results.append(res)
@@ -278,6 +278,7 @@ class EnhancedFieldMatcher:
             '数据格式': '数据类型',
             '单位说明': '单位',
             '备注说明': '备注',
+            '说明': '备注',
             '取值范围': '值域',
             '范围': '值域'
         }

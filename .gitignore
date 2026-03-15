@@ -45,6 +45,9 @@ backend/__pycache__/
 # Output files
 backend/outputs/*.xlsx
 !backend/outputs/.gitkeep
-backend/uploads/*
+backend/uploads/
 !backend/uploads/.gitkeep
 table_recognition_results/
+dist
+build
+models

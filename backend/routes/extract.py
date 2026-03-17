@@ -17,6 +17,49 @@ extract_bp = Blueprint('extract', __name__)
 # 全局任务存储 - 所有任务共享此存储
 tasks_status = {}
 
+from backend.config import Config
+TASKS_HISTORY_PATH = os.path.join(Config.DATA_DIR, 'tasks_history.json')
+
+def _load_tasks_from_disk():
+    """从磁盘加载任务历史记录"""
+    global tasks_status
+    try:
+        if os.path.exists(TASKS_HISTORY_PATH):
+            with open(TASKS_HISTORY_PATH, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+                # 过滤掉过期的文件路径或大对象，只保留元数据
+                tasks_status.update(history)
+                print(f"[任务系统] 已从磁盘加载 {len(history)} 条历史记录")
+    except Exception as e:
+        print(f"[任务系统] 加载历史记录失败: {e}")
+
+def _save_tasks_to_disk():
+    """将任务元数据持久化到磁盘"""
+    try:
+        # 只持久化必要的元数据，排除 raw_tables 等大对象
+        persist_data = {}
+        # 只保留最近的 50 条记录
+        sorted_ids = sorted(
+            tasks_status.keys(),
+            key=lambda x: tasks_status[x].get('created_at', ''),
+            reverse=True
+        )[:50]
+        
+        for tid in sorted_ids:
+            task = tasks_status[tid]
+            # 创建副本并删除大字段
+            meta = {k: v for k, v in task.items() if k not in ('raw_tables', 'processed_tables')}
+            persist_data[tid] = meta
+            
+        os.makedirs(os.path.dirname(TASKS_HISTORY_PATH), exist_ok=True)
+        with open(TASKS_HISTORY_PATH, 'w', encoding='utf-8') as f:
+            json.dump(persist_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[任务系统] 持久化历史记录失败: {e}")
+
+# 模块加载时自动读取
+_load_tasks_from_disk()
+
 @extract_bp.route('/start', methods=['POST'])
 def start_extraction():
     """创建文档提取任务"""
@@ -174,6 +217,9 @@ def start_extraction():
             'mapping_quality': mapping_quality
         })
         
+        # ✅ 保存到磁盘
+        _save_tasks_to_disk()
+        
         return success_response({
             'task_id': task_id,
             'expected_fields': expected_fields
@@ -185,6 +231,10 @@ def start_extraction():
         tasks_status[task_id]['status'] = 'failed'
         tasks_status[task_id]['message'] = str(e)
         print(f"[提取任务 {task_id}] 错误: {error_trace}")
+        
+        # ✅ 保存到磁盘
+        _save_tasks_to_disk()
+        
         return error_response(40002, f"文件解析失败: {str(e)}")
     finally:
         # 清理上传的临时文件
@@ -250,6 +300,7 @@ def download_result(task_id):
                 # 更新任务状态，标记文件已被下载
                 status['output_path'] = None
                 status['message'] = '文件已下载并删除'
+                _save_tasks_to_disk()
         except Exception as e:
             print(f"[警告] 删除文件失败: {e}")
         

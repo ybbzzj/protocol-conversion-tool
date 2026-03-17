@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-from paddlenlp.transformers import AutoModel, AutoTokenizer
-import paddle.nn.functional as F
-import paddle
+import os
 import threading
+import paddle
+import paddle.nn.functional as F
+from paddlenlp.transformers import AutoModel, AutoTokenizer
 
 class EmbeddingService:
     '''
@@ -25,11 +26,22 @@ class EmbeddingService:
         
         # baidu ernie-3.0-nano-zh 模型
         self.model_name = "ernie-3.0-nano-zh"
-        print(f"[EmbeddingService] 正在初始化语义模型: {self.model_name}...")
+        
+        # ✅ 增加离线路径检测
+        # 默认模型存放位置：项目根目录/models/ernie-3.0-nano-zh
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        offline_path = os.path.join(base_dir, 'models', self.model_name)
+        
+        if os.path.exists(offline_path):
+            print(f"[EmbeddingService] 检测到离线模型，正在加载: {offline_path}")
+            load_target = offline_path
+        else:
+            print(f"[EmbeddingService] 正在从云端初始化语义模型: {self.model_name}...")
+            load_target = self.model_name
         
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self.model = AutoModel.from_pretrained(self.model_name)
+            self.tokenizer = AutoTokenizer.from_pretrained(load_target)
+            self.model = AutoModel.from_pretrained(load_target)
             self.model.eval() # 设置为评估模式
             self._initialized = True
             print("[EmbeddingService] 模型初始化成功")

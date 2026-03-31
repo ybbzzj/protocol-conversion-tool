@@ -1,30 +1,63 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 import os
+import sys
+from pathlib import Path
 
 # --- 收集第三方库的依赖 ---
-datas, binaries, hiddenimports = collect_all('paddlenlp')
-datas_paddle, binaries_paddle, hiddenimports_paddle = collect_all('paddle')
+# 注意：不包含 paddlepaddle 和 paddlenlp，使用基础匹配算法
+print("Collecting openpyxl dependencies...")
 datas_openpyxl, binaries_openpyxl, hiddenimports_openpyxl = collect_all('openpyxl')
 
-datas.extend(datas_paddle)
-binaries.extend(binaries_paddle)
-hiddenimports.extend(hiddenimports_paddle)
+# 手动添加 numpy 的二进制文件
+try:
+    import numpy
+    
+    numpy_path = os.path.dirname(numpy.__file__)
+    print(f"Found numpy at: {numpy_path}")
+    
+    # 收集 numpy 的二进制文件
+    numpy_datas, numpy_binaries, _ = collect_all('numpy')
+    datas_openpyxl.extend(numpy_datas)
+    binaries_openpyxl.extend(numpy_binaries)
+    
+    print(f"Added numpy binaries via collect_all")
+except Exception as e:
+    print(f"Warning: Could not collect numpy binaries: {e}")
+    import traceback
+    traceback.print_exc()
 
-datas.extend(datas_openpyxl)
-binaries.extend(binaries_openpyxl)
-hiddenimports.extend(hiddenimports_openpyxl)
+# 合并所有依赖
+datas = datas_openpyxl
+binaries = binaries_openpyxl
+hiddenimports = hiddenimports_openpyxl
 
-# --- 添加本项目自定义的资源文件 (格式: (源路径, 目标目录)) ---
+# 添加更多的隐藏导入
+hiddenimports += [
+    'flask',
+    'flask_cors',
+    'docx2python',
+    'python_docx',
+    'rapidfuzz',
+]
+
+# --- 添加本项目自定义的资源文件 (格式：(源路径，目标目录)) ---
+# SPEC 是当前 spec 文件所在目录
+if hasattr(SPEC, 'parent'):
+    base_dir = str(SPEC.parent)
+else:
+    base_dir = os.path.dirname(os.path.abspath(SPEC)) if isinstance(SPEC, str) else os.getcwd()
+    
 added_datas = [
-    ('public/dist', 'public/dist'),
-    ('models', 'models'),
-    ('word/csvfile', 'word/csvfile'),
-    ('backend/data', 'backend/data'),
-    ('backend/config_protocol_fields.json', 'backend'),
-    ('backend/config_target_fields.json', 'backend'),
-    ('backend/config_templates.json', 'backend'),
+    (os.path.join(base_dir, 'public', 'dist'), 'public/dist'),
+    # 注意：models 目录不打包到 exe，需要单独提供
+    # (os.path.join(base_dir, 'models'), 'models'),
+    (os.path.join(base_dir, 'word', 'csvfile'), 'word/csvfile'),
+    (os.path.join(base_dir, 'backend', 'data'), 'backend/data'),
+    (os.path.join(base_dir, 'backend', 'config_protocol_fields.json'), 'backend'),
+    (os.path.join(base_dir, 'backend', 'config_target_fields.json'), 'backend'),
+    (os.path.join(base_dir, 'backend', 'config_templates.json'), 'backend'),
 ]
 
 datas.extend(added_datas)
@@ -39,7 +72,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['paddle', 'paddlenlp'],  # 排除 paddle，避免自动打包
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,
@@ -59,7 +92,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=True,  # 保留控制台以便调试
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -76,6 +109,6 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=True,
-    upx_exclude=[],
+    upx_exclude=[],  # Python 3.8 可能需要排除某些库
     name='协议转换工具'
 )

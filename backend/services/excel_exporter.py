@@ -434,6 +434,51 @@ class ExcelExporter:
                     if extracted and re.search(r'[~\-]', extracted):
                         from backend.services.data_cleaner import RangeValueFormatter
                         return RangeValueFormatter().format_range(extracted), 'extracted'
+            
+            # 提取枚举值格式（如 "0x1701:供电 0x1702:断电"）
+            enum_patterns = [
+                # 枚举值格式：0x1701:供电 0x1702:断电
+                r'((?:0x[0-9A-Fa-f]+:?[^\s]+\s*)+)',
+                # 枚举值格式：{0x1701, 0x1702}
+                r'\{([^\}]+)\}',
+            ]
+            for pattern in enum_patterns:
+                m = re.search(pattern, remark.strip())
+                if m:
+                    extracted = m.group(1).strip()
+                    # 处理枚举值
+                    if extracted:
+                        # 转换为 {} 格式
+                        enum_values = []
+                        # 处理 0x1701:供电 格式
+                        if ':' in extracted:
+                            items = extracted.split()
+                            for item in items:
+                                if ':' in item:
+                                    hex_val = item.split(':')[0]
+                                    if hex_val.startswith('0x'):
+                                        try:
+                                            dec_val = int(hex_val, 16)
+                                            enum_values.append(str(dec_val))
+                                        except ValueError:
+                                            pass
+                        # 处理逗号分隔格式
+                        elif ',' in extracted:
+                            items = extracted.split(',')
+                            for item in items:
+                                val = item.strip()
+                                if val.startswith('0x'):
+                                    try:
+                                        dec_val = int(val, 16)
+                                        enum_values.append(str(dec_val))
+                                    except ValueError:
+                                        enum_values.append(val)
+                                else:
+                                    enum_values.append(val)
+                        # 如果有枚举值，返回 {} 格式
+                        if enum_values:
+                            enum_str = '{'+', '.join(enum_values)+'}'
+                            return enum_str, 'extracted'
 
         return None
 

@@ -129,6 +129,8 @@ class RangeValueFormatter:
           '0x00~0xFF'   → '[0,255]'
           '[0, 255]'    → '[0,255]'
           '0-400'       → '[0,400]'
+          '{0x1701, 0x1702}' → '{5889, 5890}'
+          '0x1701:供电 0x1702:断电' → '{5889, 5890}'
           '乘以10'      → （由 FormulaStandardizer 处理）
         """
         if not range_str:
@@ -140,9 +142,39 @@ class RangeValueFormatter:
         if s in ('—', '-', '', 'N/A', 'n/a'):
             return s
 
+        # 检查是否是枚举值格式（{...}）
+        if s.startswith('{') and s.endswith('}'):
+            # 提取枚举值内容
+            enum_content = s[1:-1].strip()
+            # 处理枚举值中的16进制
+            def hex_to_dec(m):
+                return str(int(m.group(0), 16))
+            enum_content = re.sub(r'0[xX][0-9A-Fa-f]+', hex_to_dec, enum_content)
+            # 统一分隔符和去除空格
+            enum_content = re.sub(r'\s*[,，]\s*', ', ', enum_content)
+            # 保留枚举值格式
+            return f'{{{enum_content}}}'
+
+        # 检查是否是 0x1701:供电 0x1702:断电 格式的枚举值
+        hex_pattern = r'0x[0-9A-Fa-f]+'
+        if re.search(hex_pattern, s):
+            # 提取所有16进制值
+            hex_values = re.findall(hex_pattern, s)
+            if len(hex_values) >= 2:
+                # 转换为十进制并构建枚举值格式
+                enum_values = []
+                for hex_val in hex_values:
+                    try:
+                        dec_val = int(hex_val, 16)
+                        enum_values.append(str(dec_val))
+                    except ValueError:
+                        pass
+                if enum_values:
+                    return '{'+', '.join(enum_values)+'}'
+
         # 1. 移除包围括号
-        s = re.sub(r'^[\[\(\{]', '', s)
-        s = re.sub(r'[\]\)\}]$', '', s)
+        s = re.sub(r'^[\[\(]', '', s)
+        s = re.sub(r'[\]\)]$', '', s)
         s = s.strip()
 
         # 2. 16进制转十进制（只转换纯十六进制值，如 0xFF）
@@ -536,12 +568,35 @@ class DataProcessor:
 
         # ── 值域格式化 ─────────────────────────────────────────────────────────
         range_val = ''
+        # 1. 尝试从原有的"值域"列提取
         for k, v in cleaned.items():
             if any(kw in k for kw in ['值域', '取值范围']):
                 range_val = str(v).strip() if v else ''
                 if range_val and range_val not in ('—', '-', ''):
                     break
                 range_val = ''
+        
+        # 2. 如果值域列为空，尝试从备注列提取
+        if not range_val:
+            for k, v in cleaned.items():
+                if any(kw in k for kw in ['备注', '说明']):
+                    txt = str(v).strip() if v else ''
+                    if txt and txt not in ('—', '-', ''):
+                        # 提取枚举值格式
+                        enum_match = re.search(r'\{([^\}]+)\}', txt)
+                        if enum_match:
+                            range_val = enum_match.group(0)
+                            break
+                        # 提取范围格式
+                        range_match = re.search(r'取值范围[：:]*\s*([\dxXa-fA-F]+\s*[~\-]\s*[\dxXa-fA-F]+)', txt)
+                        if range_match:
+                            range_val = range_match.group(1)
+                            break
+                        # 提取 0x1701:供电 格式的枚举值
+                        enum_match = re.search(r'((?:0x[0-9A-Fa-f]+:?[^\s]+\s*)+)', txt)
+                        if enum_match:
+                            range_val = enum_match.group(1)
+                            break
 
         if range_val:
             result['formatted']['值域'] = self.range_formatter.format_range(range_val)
@@ -637,15 +692,22 @@ class DataProcessor:
                     remark_texts.append(t)
         combined_remark = ' '.join(remark_texts)
 
+        def _is_enum_value_description(txt: str) -> bool:
+            """判断是否是枚举值描述（如 '0x1701:供电 0x1702:断电'）"""
+            # 枚举值特征：多个 16 进制数 + 冒号 + 描述的格式
+            enum_pattern = r'(?:0x[0-9A-Fa-f]+|\d+)\s*:\s*[^\s:]+'
+            matches = re.findall(enum_pattern, txt)
+            return len(matches) >= 2
+                
         def _is_simple_multiply_description(txt: str) -> bool:
             """
-            判断是否是"乘以N / 除以N"这样的简短处理描述（而非真正的量化公式）。
+            判断是否是"乘以 N / 除以 N"这样的简短处理描述（而非真正的量化公式）。
             当同行备注/说明有更详细内容时，这类描述应该被忽略。
             """
             return bool(combined_remark and len(txt) <= 5
                         and re.fullmatch(r'[乘除×÷]\s*[以]?\s*[\d.]+', txt))
 
-        # 优先级2：数据转换相关列（数据转换、数据转换方法、转换公式）
+        # 优先级 2：数据转换相关列（数据转换、数据转换方法、转换公式）
         # 注意：'数据转换' 会匹配到 '数据转换方法' 这类列
         if not formula_val:
             for k, v in cleaned.items():
@@ -655,15 +717,18 @@ class DataProcessor:
                         continue
                     if not _has_formula_content(txt):
                         continue
-                    # 同样需要过滤：当该列只是简短的"乘以N"且同行有详细备注说明时，忽略
+                    # 过滤枚举值描述
+                    if _is_enum_value_description(txt):
+                        continue
+                    # 同样需要过滤：当该列只是简短的"乘以 N"且同行有详细备注说明时，忽略
                     if _is_simple_multiply_description(txt):
                         continue
                     formula_val = txt
                     formula_source = k
                     break
-
-        # 优先级3：数据处理/数据处理方法列（中文描述，如"乘以10"）
-        # 只提取明确含有转换公式的内容，避免把描述性文本（如"32位整型数..."）误识别
+        
+        # 优先级 3：数据处理/数据处理方法列（中文描述，如"乘以 10"）
+        # 只提取明确含有转换公式的内容，避免把描述性文本（如"32 位整型数..."）误识别
         if not formula_val:
             for k, v in cleaned.items():
                 if any(kw in k for kw in ['数据处理方法', '数据处理', '数据转换方法']):
@@ -672,25 +737,32 @@ class DataProcessor:
                         continue
                     if not _has_formula_content(txt):
                         continue
+                    # 过滤枚举值描述
+                    if _is_enum_value_description(txt):
+                        continue
                     if _is_simple_multiply_description(txt):
                         continue
                     formula_val = txt
                     formula_source = k
                     break
-
-        # 优先级4：备注/说明列（只提取明显像公式/转换描述的内容）
+        
+        # 优先级 4：备注/说明列（只提取明显像公式/转换描述的内容）
         if not formula_val:
             for k, v in cleaned.items():
                 if any(kw in k for kw in ['备注', '说明']):
                     txt = str(v).strip() if v else ''
                     if txt and txt not in ('—', '-', ''):
+                        # 先检查是否是枚举值描述，如果是则跳过
+                        if _is_enum_value_description(txt):
+                            continue
+                                
                         # 剥离值域部分（如"0~0xFFFF，"或"[0,65535]，"等）
                         # 值域通常在文本开头，以逗号或中文句号分隔
                         cleaned_txt = txt
                         # 移除开头的值域表达式（如 "0~0xFFFF，" 或 "[0,65535]，" 或 "0~65535，"）
-                        # 支持16进制、10进制、括号包裹等多种格式
+                        # 支持 16 进制、10 进制、括号包裹等多种格式
                         cleaned_txt = re.sub(r'^[\[\(]?[0-9xXa-fA-F]+\s*[~\-,，]\s*[0-9xXa-fA-F]+[\]\)]?\s*[，,]\s*', '', cleaned_txt)
-                        
+                                
                         if cleaned_txt and _has_formula_content(cleaned_txt):
                             formula_val = cleaned_txt
                             formula_source = k

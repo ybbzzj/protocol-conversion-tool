@@ -15,7 +15,7 @@ def test_value_domain_mapping():
     print("\n[测试] 值域到判读公式映射\n")
     
     # 使用您的测试协议文档
-    docx_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'word/测试协议20251216.docx')
+    docx_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'word/测试协议20260331.docx')
     output_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backend/outputs')
     
     if not os.path.exists(docx_path):

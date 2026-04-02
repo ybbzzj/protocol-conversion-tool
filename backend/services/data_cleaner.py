@@ -158,39 +158,49 @@ class RangeValueFormatter:
         # 检查是否是 0x1701:供电 0x1702:断电 格式的枚举值
         hex_pattern = r'0x[0-9A-Fa-f]+'
         if re.search(hex_pattern, s):
-            # 提取所有16进制值
-            hex_values = re.findall(hex_pattern, s)
-            if len(hex_values) >= 2:
-                # 转换为十进制并构建枚举值格式
-                enum_values = []
-                for hex_val in hex_values:
-                    try:
-                        dec_val = int(hex_val, 16)
-                        enum_values.append(str(dec_val))
-                    except ValueError:
-                        pass
-                if enum_values:
-                    return '{'+', '.join(enum_values)+'}'
-
+            # 先检查是否包含范围分隔符（~ 或 -），如果有则不是枚举
+            if '~' in s or (re.search(r'\d\s*-\s*\d', s) and not re.search(r'-\d', s)):
+                # 是范围格式，跳过枚举处理
+                pass
+            else:
+                # 提取所有 16 进制值（保持原样，不转换）
+                hex_values = re.findall(hex_pattern, s)
+                if len(hex_values) >= 2:
+                    # 构建枚举值格式（保持十六进制）
+                    return '{' + ', '.join(hex_values) + '}'
+        
         # 1. 移除包围括号
         s = re.sub(r'^[\[\(]', '', s)
         s = re.sub(r'[\]\)]$', '', s)
         s = s.strip()
-
-        # 2. 16进制转十进制（只转换纯十六进制值，如 0xFF）
+        
+        # 1b. 保护负数：将所有负数标记为特殊符号，避免被误判为范围分隔符
+        # 例如：-40~125 → __NEG__40~125，-10~-5 → __NEG__10~__NEG__5
+        s = re.sub(r'-(\d+(?:\.\d+)?)', r'__NEG__\1', s)
+        
+        # 2. 16 进制转十进制（只转换纯十六进制值，如 0xFF）
         def hex_to_dec(m):
             return str(int(m.group(0), 16))
-
+        
         s = re.sub(r'0[xX][0-9A-Fa-f]+', hex_to_dec, s)
-
+        
         # 3. 统一分隔符：~ - → ,（用逗号作为范围分隔符）
-        s = re.sub(r'\s*[~\-]\s*', ',', s)
-        s = re.sub(r'\s*[,，]\s*', ',', s)
-
-        # 4. 移除多余空格
-        s = re.sub(r'\s+', '', s)
-
-        # 5. 用方括号包裹（输出格式：[min,max]）
+        # 注意：此时负数已经被保护为 __NEG__，不会被替换
+        # 关键修复：确保 - 作为分隔符时被替换，但不影响负数
+        s = re.sub(r'\s*~\s*', ',', s)  # 先替换 ~
+        s = re.sub(r'(?<!__NEG__)\s*-\s*(?!\d*__NEG__)', ',', s)  # 再替换 -（但不是负数部分）
+        s = re.sub(r'\s*[,，]\s*', ',', s)  # 统一中文逗号
+        
+        # 4. 恢复负数标记：__NEG__ → -
+        s = re.sub(r'__NEG__', '-', s)
+        
+        # 5. 清理多余逗号和空格
+        s = re.sub(r',+', ',', s)  # 多个逗号变成一个
+        s = re.sub(r'^,', '', s)   # 移除开头逗号
+        s = re.sub(r',$', '', s)   # 移除结尾逗号
+        s = re.sub(r'\s+', '', s)  # 移除空格
+        
+        # 6. 用方括号包裹（输出格式：[min,max]）
         return f'[{s}]'
 
 
@@ -410,8 +420,16 @@ class UnitExtractor:
         if not text or len(text) > 200: # 备注太长可能包含干扰，限制长度
             return None
         
+        # 先检查是否包含"分辨率"、"量化单位"等关键字，如果包含则不提取 % 作为单位
+        # 因为这些场景下 % 是转换公式的一部分，不是物理单位
+        if re.search(r'(?:分辨率 | 量化单位|LSB)', text, re.IGNORECASE):
+            # 过滤掉 % 单位，只尝试其他单位
+            patterns_to_try = [p for p in self.UNIT_PATTERNS if p != r'%']
+        else:
+            patterns_to_try = self.UNIT_PATTERNS
+        
         # 匹配模式：(数字或空格后紧跟单位) 或者 (括号包裹的单位)
-        for pattern in self.UNIT_PATTERNS:
+        for pattern in patterns_to_try:
             # 搜索模式：匹配单位本身，且前后不应有中文字符（除非是"度"这种中文单位）
             # 这里的正则比较保守，优先匹配独立出现的单位
             full_pattern = r'(?i)(?<![\u4e00-\u9fff])\b' + pattern + r'\b(?![\u4e00-\u9fff])'
@@ -587,15 +605,15 @@ class DataProcessor:
                         if enum_match:
                             range_val = enum_match.group(0)
                             break
-                        # 提取范围格式
-                        range_match = re.search(r'取值范围[：:]*\s*([\dxXa-fA-F]+\s*[~\-]\s*[\dxXa-fA-F]+)', txt)
+                        # 提取范围格式（要求明确标注"取值范围"或"值域"关键词）
+                        range_match = re.search(r'(?:取值范围 | 值域)[：:\s]*((?:\d+|0[xX][0-9A-Fa-f]+)\s*[~\-]\s*(?:\d+|0[xX][0-9A-Fa-f]+))', txt, re.IGNORECASE)
                         if range_match:
                             range_val = range_match.group(1)
                             break
-                        # 提取 0x1701:供电 格式的枚举值
-                        enum_match = re.search(r'((?:0x[0-9A-Fa-f]+:?[^\s]+\s*)+)', txt)
-                        if enum_match:
-                            range_val = enum_match.group(1)
+                        # 提取 0x1701:供电 格式的枚举值（要求至少 2 个这样的格式）
+                        enum_matches = re.findall(r'(0x[0-9A-Fa-f]+\s*:\s*[^\s,;,.]+)', txt, re.IGNORECASE)
+                        if len(enum_matches) >= 2:
+                            range_val = ' '.join(enum_matches)
                             break
 
         if range_val:
@@ -691,14 +709,189 @@ class DataProcessor:
                 if t and t not in ('—', '-', ''):
                     remark_texts.append(t)
         combined_remark = ' '.join(remark_texts)
+
+        def _classify_remark_content(txt: str) -> Dict[str, str]:
+            """
+            智能分类备注内容，返回 {目标字段：内容}
+            支持的分类：值域、单位、转换公式、保留备注
+            
+            提取顺序和优先级：
+            1. 值域（范围、枚举）- 最高优先级
+            2. 单位 - 次优先级
+            3. 转换公式 - 第三优先级
+            4. 剩余内容作为备注
+            """
+            if not txt or len(txt) < 2:
+                return {'备注': txt}
+            
+            result = {}
+            remaining_txt = txt
+            
+            # ========== 步骤 1：提取值域（优先级最高）==========
+            # 1.1 明确标注"值域"、"取值范围" + 范围格式（使用分组只捕获数值部分）
+            range_match = re.search(r'(?:值域 | 取值范围)[：:\s]*([\[\(]?\s*-?(?:\d+|0[xX][0-9A-Fa-f]+)(?:\.\d+)?\s*[~\-]\s*-?(?:\d+|0[xX][0-9A-Fa-f]+)(?:\.\d+)?\s*[\]\)]?)', txt, re.IGNORECASE)
+            if not range_match:
+                # 1.2 花括号枚举：{0x1701, 0x1702} 或 {5889, 5890}
+                range_match = re.search(r'(\{[^}]*(?:0x[0-9A-Fa-f]+|\d+)[^}]*\})', txt)
+            if not range_match:
+                # 1.3 纯数字范围（支持负数和十六进制）：-40~125, 0~100, 0~0xFFFF
+                # 关键改进：第二个数字使用 [1-9]\d* 避免匹配到单个 0，从而正确匹配 0~0xFFFF 而不是 0~0
+                range_match = re.search(r'(-?(?:\d+|0[xX][0-9A-Fa-f]+)\s*[~\-]\s*-?(?:[1-9]\d*|0[xX][0-9A-Fa-f]+))', txt)
+                # 验证不是单个数字（必须包含分隔符）
+                if range_match and '~' not in txt and '-' not in txt:
+                    range_match = None
+            
+            if range_match:
+                # 如果有分组 1（纯数值），使用分组 1；否则使用整个匹配
+                range_val = range_match.group(1).strip() if range_match.lastindex and range_match.lastindex >= 1 else range_match.group(0).strip()
+                # 排除明显不是范围的（如比例描述 "0%~100%" 中的单独部分）
+                if any(c in range_val for c in ['~', '-', '{', '}', '[', ']', '(', ')']):
+                    result['值域'] = RangeValueFormatter().format_range(range_val)
+                    # 从剩余文本中移除（只移除范围部分，保留其他描述）
+                    remaining_txt = remaining_txt.replace(range_match.group(0), '', 1)
+            
+            # ========== 步骤 2：提取单位 ==========
+            # 2.1 LSB=N 单位（要求带物理单位）
+            lsb_unit_match = re.search(r'LSB\s*=\s*([\d.]+\s*(?:ms|s|μs|us|min|h|Hz|kHz|MHz|GHz|V|mV|A|mA|mW|W|dB|dBm|℃|°|°C|bit|byte|KB|MB|°/[hmin]|km/h|m/s[²2]?))', txt, re.IGNORECASE)
+            if lsb_unit_match:
+                result['单位'] = lsb_unit_match.group(1).strip()
+                remaining_txt = remaining_txt.replace(lsb_unit_match.group(0), '', 1)
+            else:
+                # 2.2 "单位为 N"、"单位:N"（要求冒号/等号紧邻单位）
+                unit_keyword_match = re.search(r'单位 [为是：:]\s*([A-Za-z/°℃\u00b0\u2103]+)', txt, re.IGNORECASE)
+                if unit_keyword_match:
+                    unit_val = unit_keyword_match.group(1).strip()
+                    if len(unit_val) <= 10 and unit_val not in ['为', '是', '的', '']:
+                        result['单位'] = unit_val
+                        remaining_txt = remaining_txt.replace(unit_keyword_match.group(0), '', 1)
+                else:
+                    # 2.3 括号中的单位 (ms)、[Hz]（要求在行尾或逗号前）
+                    bracket_unit_match = re.search(r'[（\(\[]([A-Za-z/°℃\u00b0\u2103]+)[）\)\]](?:\s*$|\s*[,，])', txt)
+                    if bracket_unit_match:
+                        result['单位'] = bracket_unit_match.group(1).strip()
+                        remaining_txt = remaining_txt.replace(bracket_unit_match.group(0), '', 1)
+            
+            # ========== 步骤 3：提取转换公式 ==========
+            # 3.0 优先匹配复杂表达式：(变量/常数或 2^N)×常数，如 (模拟量采集数据/2^12)×21
+            complex_formula_match = re.search(r'[\(（][^）)]*[/÷][^）)]*[\)）]\s*[×*]\s*[\d.]+', txt)
+            if complex_formula_match:
+                formula_val = complex_formula_match.group(0).strip()
+                result['转换公式'] = FormulaStandardizer().standardize(formula_val)
+                remaining_txt = remaining_txt.replace(complex_formula_match.group(0), '', 1)
+            else:
+                # 3.1 量化单位、分辨率（分开匹配避免 | 的优先级问题）
+                quantize_match = re.search(r'量化单位\s*[\d.]+', txt, re.IGNORECASE)
+                if not quantize_match:
+                    quantize_match = re.search(r'分辨率\s*[\d.]+', txt, re.IGNORECASE)
+                if quantize_match:
+                    formula_val = quantize_match.group(0).strip()
+                    result['转换公式'] = FormulaStandardizer().standardize(formula_val)
+                    remaining_txt = remaining_txt.replace(quantize_match.group(0), '', 1)
+                else:
+                    # 3.2 LSB=X（当 X 带单位时，既是单位也是公式 - 需要同时提取）
+                    lsb_formula_match = re.search(r'LSB\s*=\s*[\d.]+', txt)
+                    if lsb_formula_match:
+                        formula_val = lsb_formula_match.group(0).strip()
+                        result['转换公式'] = FormulaStandardizer().standardize(formula_val)
+                        remaining_txt = remaining_txt.replace(lsb_formula_match.group(0), '', 1)
+                    else:
+                        # 3.3 中文描述：乘以 N、除以 N（要求是主要动词，不是修饰语）
+                        chinese_formula_match = re.search(r'[乘除×÷]\s*[以]?\s*[\d.]+(?:\s*[+\-]\s*[\d.]+)?', txt)
+                        if chinese_formula_match:
+                            # 验证：前面没有汉字（避免"转换为实际电压"中的"为实际"被误判）
+                            # 额外验证：如果匹配的是简单形式（如×21），需要检查是否有更复杂的表达式
+                            simple_match = re.match(r'[乘除×÷]\s*[以]?\s*[\d.]+$', chinese_formula_match.group(0))
+                            if simple_match:
+                                # 检查是否包含在更复杂的上下文中（如前面有括号表达式）
+                                before_text = txt[:chinese_formula_match.start()]
+                                if re.search(r'[\(（].*?[/÷].*?[\)）]$', before_text):
+                                    # 有更复杂的表达式，跳过这个简单匹配
+                                    chinese_formula_match = None
+                            
+                            if chinese_formula_match:
+                                prefix = txt[:chinese_formula_match.start()]
+                                if not prefix or not re.search(r'[\u4e00-\u9fff]$', prefix):
+                                    formula_val = chinese_formula_match.group(0).strip()
+                                    result['转换公式'] = FormulaStandardizer().standardize(formula_val)
+                                    remaining_txt = remaining_txt.replace(chinese_formula_match.group(0), '', 1)
+            
+            # ========== 步骤 4：从剩余文本中智能识别 ==========
+            # 4.1 识别枚举值描述（支持备注中的"0x1701:供电 0x1702:断电"格式）
+            if '值域' not in result:
+                enum_desc = self._extract_enum_from_description(remaining_txt)
+                if enum_desc:
+                    result['值域'] = enum_desc
+                    # 注意：不删除原文本，因为可能需要保留说明
+            
+            # 4.2 识别文字描述中的单位（如"温度 (摄氏度)" → "℃"）
+            if '单位' not in result:
+                text_unit = self._extract_unit_from_text(remaining_txt)
+                if text_unit:
+                    result['单位'] = text_unit
+            
+            # ========== 步骤 5：清理剩余文本 ==========
+            remaining_txt = re.sub(r'\s+', ' ', remaining_txt).strip()
+            # 移除开头和结尾的标点
+            remaining_txt = re.sub(r'^[，,;；:.:\s]+', '', remaining_txt)
+            remaining_txt = re.sub(r'[，,;；:.:\s]+$', '', remaining_txt)
+            
+            if remaining_txt and len(remaining_txt) >= 2:
+                result['备注'] = remaining_txt
+            
+            return result
         
         def _is_enum_value_description(txt: str) -> bool:
-            """判断是否是枚举值描述（如'0x1701:供电 0x1702:断电'）"""
-            # 枚举值特征：多个 16 进制数/数字 + 冒号 + 描述的格式
-            enum_pattern = r'(?:0x[0-9A-Fa-f]+|\d+)\s*:\s*[^\s:]+'
-            matches = re.findall(enum_pattern, txt)
-            return len(matches) >= 2
+            """判断是否是枚举值描述（如 '0x1701:供电 0x1702:断电'）"""
+            if not txt or len(txt) < 5:
+                return False
+            
+            # 特征 1：多个 16 进制数/数字 + 冒号 + 描述的格式
+            hex_enum_pattern = r'(?:0x[0-9A-Fa-f]+|\d+)\s*:\s*[^\s:]+'
+            hex_matches = re.findall(hex_enum_pattern, txt)
+            
+            # 特征 2：包含花括号的枚举格式 {...}
+            brace_enum_pattern = r'\{[^}]*[0-9A-Fa-fxX][^}]*\}'
+            brace_matches = re.findall(brace_enum_pattern, txt)
+            
+            # 特征 3：明确的"枚举"、"值域"等关键词 + 多个数值
+            keyword_pattern = r'(?:枚举 | 值域|取值).*?((?:0x[0-9A-Fa-f]+|\d+)[^\n]{0,50})'
+            keyword_matches = re.findall(keyword_pattern, txt, re.IGNORECASE)
+            
+            # 满足以下任一条件即可判定为枚举值：
+            # 1. 有 2 个以上的冒号分隔枚举项
+            # 2. 有花括号枚举格式
+            # 3. 有枚举关键词且包含多个数值
+            return len(hex_matches) >= 2 or len(brace_matches) >= 1 or (len(keyword_matches) >= 1 and len(re.findall(r'0x[0-9A-Fa-f]+|\d+', keyword_matches[0])) >= 2)
         
+        def _is_math_formula(txt: str) -> bool:
+            """判断是否是数学转换公式（如 '乘以 10'、'0.1x+5'）"""
+            if not txt or len(txt) < 2:
+                return False
+            
+            # 数学公式特征模式
+            formula_patterns = [
+                # 中文描述：乘以 N、除以 N、乘 N、除 N
+                r'[乘除×÷]\s*[以]?\s*[\d.]+',
+                # 代数表达式：aX+b, a*x+b, ax+b
+                r'[\d.]+\s*\*?\s*[xX]\s*[+\-]\s*[\d.]+',
+                # 纯乘法：aX, a*x
+                r'[\d.]+\s*\*?\s*[xX]$',
+                # 分数形式：x/N, X/n
+                r'^[xX]/[\d.]+$',
+                # 复杂表达式：(X/A)×B, (模拟量/100)*50
+                r'[\(（].*?[xX\u4e00-\u9fff].*?[/÷].*?[\)）]\s*[×*]',
+                # 量化单位描述：量化单位 N、分辨率 N
+                r'(?:量化单位 | 分辨率)\s*[\d.]+',
+                # LSB 描述：LSB=N, LSB=1ms
+                r'LSB\s*=\s*[\d.]+',
+            ]
+            
+            for pattern in formula_patterns:
+                if re.search(pattern, txt, re.IGNORECASE):
+                    return True
+            
+            return False
+                
         def _is_simple_multiply_description(txt: str) -> bool:
             """
             判断是否是"乘以 N / 除以 N"这样的简短处理描述（而非真正的量化公式）。
@@ -726,9 +919,9 @@ class DataProcessor:
                     formula_val = txt
                     formula_source = k
                     break
-
-        # 优先级3：数据处理/数据处理方法列（中文描述，如"乘以10"）
-        # 只提取明确含有转换公式的内容，避免把描述性文本（如"32位整型数..."）误识别
+        
+        # 优先级 3：数据处理/数据处理方法列（中文描述，如"乘以 10"）
+        # 只提取明确含有转换公式的内容，避免把描述性文本（如"32 位整型数..."）误识别
         if not formula_val:
             for k, v in cleaned.items():
                 if any(kw in k for kw in ['数据处理方法', '数据处理', '数据转换方法']):
@@ -737,31 +930,157 @@ class DataProcessor:
                         continue
                     if not _has_formula_content(txt):
                         continue
+                    # 过滤枚举值描述
+                    if _is_enum_value_description(txt):
+                        continue
                     if _is_simple_multiply_description(txt):
                         continue
                     formula_val = txt
                     formula_source = k
                     break
-
-        # 优先级4：备注/说明列（只提取明显像公式/转换描述的内容）
+        
+        # 优先级 4：备注/说明列（智能分割和归类）
         if not formula_val:
             for k, v in cleaned.items():
                 if any(kw in k for kw in ['备注', '说明']):
                     txt = str(v).strip() if v else ''
                     if txt and txt not in ('—', '-', ''):
-                        # 剥离值域部分（如"0~0xFFFF，"或"[0,65535]，"等）
-                        # 值域通常在文本开头，以逗号或中文句号分隔
-                        cleaned_txt = txt
-                        # 移除开头的值域表达式（如 "0~0xFFFF，" 或 "[0,65535]，" 或 "0~65535，"）
-                        # 支持16进制、10进制、括号包裹等多种格式
-                        cleaned_txt = re.sub(r'^[\[\(]?[0-9xXa-fA-F]+\s*[~\-,，]\s*[0-9xXa-fA-F]+[\]\)]?\s*[，,]\s*', '', cleaned_txt)
-                        
-                        if cleaned_txt and _has_formula_content(cleaned_txt):
-                            formula_val = cleaned_txt
-                            formula_source = k
+                        # 先检查是否是纯枚举值描述，如果是则只提取值域
+                        if _is_enum_value_description(txt):
+                            # 使用智能分类提取值域
+                            classified = _classify_remark_content(txt)
+                            if '值域' in classified:
+                                result['formatted']['值域'] = classified['值域']
+                            # 保留原始备注
+                            result['cleaned']['备注'] = txt
                             break
+                        
+                        # 对混合内容进行智能分割和归类
+                        classified = _classify_remark_content(txt)
+                        
+                        # 应用分类结果
+                        if '值域' in classified and '值域' not in result['formatted']:
+                            result['formatted']['值域'] = classified['值域']
+                        
+                        if '单位' in classified and '单位' not in result['formatted']:
+                            result['formatted']['单位'] = classified['单位']
+                        
+                        if '转换公式' in classified:
+                            # 直接设置到结果中，而不是只设置 formula_val
+                            result['formatted']['转换公式'] = classified['转换公式']
+                            formula_val = classified['转换公式']
+                        
+                        # 保留原始备注内容（用户要求原模原样保留）
+                        # 不覆盖 cleaned 中的备注，保持原始文本完整
+                        # result['cleaned']['备注'] = txt  # 保持原始备注不变
+                        
+                        break
 
         if formula_val:
             result['formatted']['转换公式'] = self.formula_std.standardize(formula_val)
 
         return result
+    
+    def _extract_enum_from_description(self, txt: str) -> Optional[str]:
+        """
+        从文字描述中提取枚举值。
+        
+        支持的格式：
+        - "0x1701:供电 0x1702:断电" → {0x1701, 0x1702}（保持十六进制）
+        - "0:停止 1:运行 2:待机" → {0, 1, 2}（保持十进制）
+        - "高电平：1，低电平：0" → {1, 0}
+        
+        保持原样原则：
+        - 原文十六进制 → 保持十六进制
+        - 原文十进制 → 保持十进制
+        
+        Args:
+            txt: 描述文本
+            
+        Returns:
+            枚举值字符串（花括号包裹），如果没有则返回 None
+        """
+        if not txt:
+            return None
+        
+        # 模式 1: 十六进制枚举 0xNNNN:描述（支持括号内的补充说明）
+        # 改进：匹配到逗号、分号或句号为单位，而不是简单的非空白字符
+        hex_pattern = r'0[xX][0-9A-Fa-f]+\s*[:：]\s*[^\s,，;；.。]+'
+        hex_matches = re.findall(hex_pattern, txt, re.IGNORECASE)
+        if len(hex_matches) >= 2:
+            # 提取十六进制值（保持原样，不转换）
+            values = []
+            for m in hex_matches:
+                hex_val = re.search(r'0[xX]([0-9A-Fa-f]+)', m, re.IGNORECASE)
+                if hex_val:
+                    # 保持十六进制格式
+                    values.append('0x' + hex_val.group(1))
+            
+            if values:
+                return '{' + ', '.join(values) + '}'
+        
+        # 模式 2: 十进制枚举 数字：描述（同样支持括号）
+        dec_pattern = r'\d+\s*[:：]\s*[^\s,，;；.。]+'
+        dec_matches = re.findall(dec_pattern, txt)
+        if len(dec_matches) >= 2:
+            values = []
+            for m in dec_matches:
+                num_match = re.match(r'(\d+)', m)
+                if num_match:
+                    values.append(num_match.group(1))
+            
+            if values:
+                return '{' + ', '.join(values) + '}'
+        
+        return None
+    
+    def _extract_unit_from_text(self, txt: str) -> Optional[str]:
+        """
+        从纯文字描述中提取单位。
+        
+        支持的格式：
+        - "温度 (摄氏度)" → "℃"
+        - "电压 [伏特]" → "V"
+        - "时间（毫秒）" → "ms"
+        
+        Args:
+            txt: 描述文本
+            
+        Returns:
+            单位字符串，如果没有则返回 None
+        """
+        if not txt:
+            return None
+        
+        # 常见中文单位映射
+        unit_mapping = {
+            '摄氏度': '℃',
+            '华氏度': '℉',
+            '伏特': 'V',
+            '安培': 'A',
+            '瓦特': 'W',
+            '欧姆': 'Ω',
+            '赫兹': 'Hz',
+            '秒': 's',
+            '毫秒': 'ms',
+            '微秒': 'us',
+            '分钟': 'min',
+            '小时': 'h',
+            '米': 'm',
+            '千米': 'km',
+            '厘米': 'cm',
+            '毫米': 'mm',
+        }
+        
+        # 尝试从括号中提取
+        bracket_match = re.search(r'[（\(]([^）)]+)[）\)]', txt)
+        if bracket_match:
+            content = bracket_match.group(1).strip()
+            # 检查是否是单位
+            if content in unit_mapping:
+                return unit_mapping[content]
+            # 如果是英文单位直接返回
+            if re.match(r'^[A-Za-z/°℃\u00b0\u2103]+$', content):
+                return content
+        
+        return None

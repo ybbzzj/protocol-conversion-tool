@@ -69,16 +69,13 @@ class ExcelExporter:
     META_TO_EXCEL: Dict[str, str] = {
         '消息ID':     'ID',
         '信息标识':   'ID',
-        '信息ID':     'ID',
+        '信息 ID':     'ID',
         '信源系统码': '信源系统码',
         '信源机器码': '信源机器码',
         '信宿系统码': '信宿系统码',
         '信宿机器码': '信宿机器码',
         '子地址':     '子地址',
     }
-
-    # 需要追加到备注的元数据键
-    APPEND_TO_REMARK: frozenset = frozenset({'传输周期', '发起时机', '错误处理', '其他'})
 
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
@@ -264,8 +261,8 @@ class ExcelExporter:
                 if first_row:
                     # 直接使用原始消息名称，不添加序号
                     fill_data['名称'] = msg_name
-
-                    # 注入元数据（来自端口表/ID表等）
+                
+                    # 注入元数据（来自端口表/ID 表等）
                     for mk, mv in meta.items():
                         if not mv:
                             continue
@@ -275,11 +272,8 @@ class ExcelExporter:
                             fill_data[excel_col] = mv
                             if src == 'linked':
                                 color_map[excel_col] = COLOR_BLUE
-                        elif mk in self.APPEND_TO_REMARK:
-                            # 追加到备注列
-                            existing = fill_data.get('备注', '')
-                            fill_data['备注'] = (existing + ' ' + f'[{mk}:{mv}]').strip()
-
+                        # 不再将元数据追加到备注列，保持备注内容的原始性和完整性
+                
                     first_row = False
                 else:
                     # 子行：名称为空

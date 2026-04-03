@@ -123,38 +123,34 @@ class RangeValueFormatter:
 
     def format_range(self, range_str: str) -> str:
         """
-        标准化值域字符串。
-
+        标准化值域字符串，保持原始进制格式。
+    
         示例：
-          '0x00~0xFF'   → '[0,255]'
-          '[0, 255]'    → '[0,255]'
-          '0-400'       → '[0,400]'
-          '{0x1701, 0x1702}' → '{5889, 5890}'
-          '0x1701:供电 0x1702:断电' → '{5889, 5890}'
-          '乘以10'      → （由 FormulaStandardizer 处理）
+          '0x00~0xFF'   → '[0x00, 0xFF]'    ← 保持十六进制
+          '[0, 255]'    → '[0, 255]'         ← 保持十进制
+          '0-400'       → '[0, 400]'         ← 保持十进制
+          '{0x1701, 0x1702}' → '{0x1701, 0x1702}'  ← 保持十六进制
+          '0x1701:供电 0x1702:断电' → '{0x1701, 0x1702}'  ← 保持十六进制
+          '乘以 10'      → （由 FormulaStandardizer 处理）
         """
         if not range_str:
             return ''
-
+    
         s = range_str.strip()
-
+    
         # 跳过空格或特殊表示
         if s in ('—', '-', '', 'N/A', 'n/a'):
             return s
-
+    
         # 检查是否是枚举值格式（{...}）
         if s.startswith('{') and s.endswith('}'):
             # 提取枚举值内容
             enum_content = s[1:-1].strip()
-            # 处理枚举值中的16进制
-            def hex_to_dec(m):
-                return str(int(m.group(0), 16))
-            enum_content = re.sub(r'0[xX][0-9A-Fa-f]+', hex_to_dec, enum_content)
-            # 统一分隔符和去除空格
+            # 统一分隔符和去除空格，保持原始进制
             enum_content = re.sub(r'\s*[,，]\s*', ', ', enum_content)
             # 保留枚举值格式
             return f'{{{enum_content}}}'
-
+    
         # 检查是否是 0x1701:供电 0x1702:断电 格式的枚举值
         hex_pattern = r'0x[0-9A-Fa-f]+'
         if re.search(hex_pattern, s):
@@ -168,38 +164,40 @@ class RangeValueFormatter:
                 if len(hex_values) >= 2:
                     # 构建枚举值格式（保持十六进制）
                     return '{' + ', '.join(hex_values) + '}'
-        
+            
         # 1. 移除包围括号
         s = re.sub(r'^[\[\(]', '', s)
         s = re.sub(r'[\]\)]$', '', s)
         s = s.strip()
-        
+            
         # 1b. 保护负数：将所有负数标记为特殊符号，避免被误判为范围分隔符
         # 例如：-40~125 → __NEG__40~125，-10~-5 → __NEG__10~__NEG__5
         s = re.sub(r'-(\d+(?:\.\d+)?)', r'__NEG__\1', s)
-        
-        # 2. 16 进制转十进制（只转换纯十六进制值，如 0xFF）
-        def hex_to_dec(m):
-            return str(int(m.group(0), 16))
-        
-        s = re.sub(r'0[xX][0-9A-Fa-f]+', hex_to_dec, s)
-        
+            
+        # Deleted:# 2. 16 进制转十进制（只转换纯十六进制值，如 0xFF）
+        # Deleted:def hex_to_dec(m):
+        # Deleted:    return str(int(m.group(0), 16))
+        # Deleted:
+        # Deleted:s = re.sub(r'0[xX][0-9A-Fa-f]+', hex_to_dec, s)
+        # Deleted:
+        # 2. 保持原始进制，不进行转换
+            
         # 3. 统一分隔符：~ - → ,（用逗号作为范围分隔符）
         # 注意：此时负数已经被保护为 __NEG__，不会被替换
         # 关键修复：确保 - 作为分隔符时被替换，但不影响负数
         s = re.sub(r'\s*~\s*', ',', s)  # 先替换 ~
         s = re.sub(r'(?<!__NEG__)\s*-\s*(?!\d*__NEG__)', ',', s)  # 再替换 -（但不是负数部分）
         s = re.sub(r'\s*[,，]\s*', ',', s)  # 统一中文逗号
-        
+            
         # 4. 恢复负数标记：__NEG__ → -
         s = re.sub(r'__NEG__', '-', s)
-        
+            
         # 5. 清理多余逗号和空格
         s = re.sub(r',+', ',', s)  # 多个逗号变成一个
         s = re.sub(r'^,', '', s)   # 移除开头逗号
         s = re.sub(r',$', '', s)   # 移除结尾逗号
-        s = re.sub(r'\s+', '', s)  # 移除空格
-        
+        s = re.sub(r'\s+', ' ', s)  # 移除多余空格，保留一个空格
+                
         # 6. 用方括号包裹（输出格式：[min,max]）
         return f'[{s}]'
 
@@ -728,7 +726,7 @@ class DataProcessor:
             remaining_txt = txt
             
             # ========== 步骤 1：提取值域（优先级最高）==========
-            # 1.1 明确标注"值域"、"取值范围" + 范围格式（使用分组只捕获数值部分）
+            # 1.1 明确标注“值域”、“取值范围” + 范围格式（使用分组只捕获数值部分）
             range_match = re.search(r'(?:值域 | 取值范围)[：:\s]*([\[\(]?\s*-?(?:\d+|0[xX][0-9A-Fa-f]+)(?:\.\d+)?\s*[~\-]\s*-?(?:\d+|0[xX][0-9A-Fa-f]+)(?:\.\d+)?\s*[\]\)]?)', txt, re.IGNORECASE)
             if not range_match:
                 # 1.2 花括号枚举：{0x1701, 0x1702} 或 {5889, 5890}
@@ -772,6 +770,12 @@ class DataProcessor:
                         remaining_txt = remaining_txt.replace(bracket_unit_match.group(0), '', 1)
             
             # ========== 步骤 3：提取转换公式 ==========
+            # 只提取两种格式：
+            # 1. 复杂表达式：(变量/常数或 2^N)×常数，如 (模拟量采集数据/2^12)×21
+            # 2. 中文描述：乘以/除以 A±B（支持中文"加""减"和符号"+""-"）
+            
+            # 其他类型（LSB、量化单位、分辨率等）都不提取为转换公式
+            
             # 3.0 优先匹配复杂表达式：(变量/常数或 2^N)×常数，如 (模拟量采集数据/2^12)×21
             complex_formula_match = re.search(r'[\(（][^）)]*[/÷][^）)]*[\)）]\s*[×*]\s*[\d.]+', txt)
             if complex_formula_match:
@@ -779,41 +783,34 @@ class DataProcessor:
                 result['转换公式'] = FormulaStandardizer().standardize(formula_val)
                 remaining_txt = remaining_txt.replace(complex_formula_match.group(0), '', 1)
             else:
-                # 3.1 量化单位、分辨率（分开匹配避免 | 的优先级问题）
-                quantize_match = re.search(r'量化单位\s*[\d.]+', txt, re.IGNORECASE)
-                if not quantize_match:
-                    quantize_match = re.search(r'分辨率\s*[\d.]+', txt, re.IGNORECASE)
-                if quantize_match:
-                    formula_val = quantize_match.group(0).strip()
-                    result['转换公式'] = FormulaStandardizer().standardize(formula_val)
-                    remaining_txt = remaining_txt.replace(quantize_match.group(0), '', 1)
-                else:
-                    # 3.2 LSB=X（当 X 带单位时，既是单位也是公式 - 需要同时提取）
-                    lsb_formula_match = re.search(r'LSB\s*=\s*[\d.]+', txt)
-                    if lsb_formula_match:
-                        formula_val = lsb_formula_match.group(0).strip()
-                        result['转换公式'] = FormulaStandardizer().standardize(formula_val)
-                        remaining_txt = remaining_txt.replace(lsb_formula_match.group(0), '', 1)
+                # 3.1 中文描述：乘以/除以 N±M（支持中文"加""减"和符号"+""-"）
+                chinese_formula_with_offset = re.search(r'[乘除×÷]\s*[以]?\s*([\d.]+)\s*(?:[+\-]|加减 | 减去 | 减 | 加上 | 加)\s*([\d.]+)', txt)
+                if chinese_formula_with_offset:
+                    a = chinese_formula_with_offset.group(1)
+                    op = '×' if '乘' in txt or '×' in txt else '÷'
+                    # 判断是加还是减
+                    sign_str = chinese_formula_with_offset.group(0)
+                    if any(c in sign_str for c in ['-', '减', '减去']):
+                        sign = '-'
                     else:
-                        # 3.3 中文描述：乘以 N、除以 N（要求是主要动词，不是修饰语）
-                        chinese_formula_match = re.search(r'[乘除×÷]\s*[以]?\s*[\d.]+(?:\s*[+\-]\s*[\d.]+)?', txt)
-                        if chinese_formula_match:
-                            # 验证：前面没有汉字（避免"转换为实际电压"中的"为实际"被误判）
-                            # 额外验证：如果匹配的是简单形式（如×21），需要检查是否有更复杂的表达式
-                            simple_match = re.match(r'[乘除×÷]\s*[以]?\s*[\d.]+$', chinese_formula_match.group(0))
-                            if simple_match:
-                                # 检查是否包含在更复杂的上下文中（如前面有括号表达式）
-                                before_text = txt[:chinese_formula_match.start()]
-                                if re.search(r'[\(（].*?[/÷].*?[\)）]$', before_text):
-                                    # 有更复杂的表达式，跳过这个简单匹配
-                                    chinese_formula_match = None
-                            
-                            if chinese_formula_match:
-                                prefix = txt[:chinese_formula_match.start()]
-                                if not prefix or not re.search(r'[\u4e00-\u9fff]$', prefix):
-                                    formula_val = chinese_formula_match.group(0).strip()
-                                    result['转换公式'] = FormulaStandardizer().standardize(formula_val)
-                                    remaining_txt = remaining_txt.replace(chinese_formula_match.group(0), '', 1)
+                        sign = '+'
+                    b = chinese_formula_with_offset.group(2)
+                    if op == '÷':
+                        result['转换公式'] = f'{1/float(a):.6g}x{sign}{b}'
+                    else:
+                        result['转换公式'] = f'{a}x{sign}{b}'
+                    remaining_txt = remaining_txt.replace(chinese_formula_with_offset.group(0), '', 1)
+                else:
+                    # 3.2 简单中文描述：乘以/除以 N
+                    chinese_formula_simple = re.search(r'[乘除×÷]\s*[以]?\s*([\d.]+)', txt)
+                    if chinese_formula_simple:
+                        a = chinese_formula_simple.group(1)
+                        op = '×' if '乘' in txt or '×' in txt else '÷'
+                        if op == '÷':
+                            result['转换公式'] = f'{1/float(a):.6g}x+0'
+                        else:
+                            result['转换公式'] = f'{a}x+0'
+                        remaining_txt = remaining_txt.replace(chinese_formula_simple.group(0), '', 1)
             
             # ========== 步骤 4：从剩余文本中智能识别 ==========
             # 4.1 识别枚举值描述（支持备注中的"0x1701:供电 0x1702:断电"格式）
@@ -821,7 +818,7 @@ class DataProcessor:
                 enum_desc = self._extract_enum_from_description(remaining_txt)
                 if enum_desc:
                     result['值域'] = enum_desc
-                    # 注意：不删除原文本，因为可能需要保留说明
+                    # 注意：不删除原文本，保持备注内容完整
             
             # 4.2 识别文字描述中的单位（如"温度 (摄氏度)" → "℃"）
             if '单位' not in result:

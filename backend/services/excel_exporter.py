@@ -432,47 +432,47 @@ class ExcelExporter:
             # 提取枚举值格式（如 "0x1701:供电 0x1702:断电"）
             enum_patterns = [
                 # 枚举值格式：0x1701:供电 0x1702:断电
-                r'((?:0x[0-9A-Fa-f]+:?[^\s]+\s*)+)',
+                # 支持多种冒号：英文冒号 : (U+003A)、中文冒号：(U+FF1A)、全角冒号：(U+FE55)、特殊冒号︓(U+FE3A)
+                # 不要求空格，多个枚举项之间可以有或没有分隔符
+                r'0x[0-9A-Fa-f]+\s*[:：︓︓]\s*[^\s,，;；.。]+',
                 # 枚举值格式：{0x1701, 0x1702}
                 r'\{([^\}]+)\}',
             ]
             for pattern in enum_patterns:
-                m = re.search(pattern, remark.strip())
-                if m:
-                    extracted = m.group(1).strip()
-                    # 处理枚举值
-                    if extracted:
-                        # 转换为 {} 格式
-                        enum_values = []
-                        # 处理 0x1701:供电 格式
-                        if ':' in extracted:
-                            items = extracted.split()
-                            for item in items:
-                                if ':' in item:
-                                    hex_val = item.split(':')[0]
-                                    if hex_val.startswith('0x'):
-                                        try:
-                                            dec_val = int(hex_val, 16)
-                                            enum_values.append(str(dec_val))
-                                        except ValueError:
-                                            pass
-                        # 处理逗号分隔格式
-                        elif ',' in extracted:
-                            items = extracted.split(',')
-                            for item in items:
-                                val = item.strip()
-                                if val.startswith('0x'):
-                                    try:
-                                        dec_val = int(val, 16)
-                                        enum_values.append(str(dec_val))
-                                    except ValueError:
-                                        enum_values.append(val)
-                                else:
-                                    enum_values.append(val)
-                        # 如果有枚举值，返回 {} 格式
-                        if enum_values:
-                            enum_str = '{'+', '.join(enum_values)+'}'
+                if pattern.startswith(r'0x'):
+                    # 对于 0xNNN:描述 格式，使用 findall 获取所有匹配项
+                    matches = re.findall(pattern, remark.strip())
+                    if len(matches) >= 2:
+                        # 提取所有十六进制值（保持原样）
+                        hex_values = []
+                        for match in matches:
+                            hex_match = re.search(r'0x([0-9A-Fa-f]+)', match, re.IGNORECASE)
+                            if hex_match:
+                                hex_values.append('0x' + hex_match.group(1))
+                        
+                        if len(hex_values) >= 2:
+                            enum_str = '{' + ', '.join(hex_values) + '}'
                             return enum_str, 'extracted'
+                else:
+                    # 对于 {} 格式，使用 search
+                    m = re.search(pattern, remark.strip())
+                    if m:
+                        extracted = m.group(0).strip()
+                        # 处理枚举值
+                        if extracted:
+                            # 转换为 {} 格式
+                            enum_values = []
+                            # 处理逗号分隔格式
+                            if ',' in extracted:
+                                items = extracted.replace('{', '').replace('}', '').split(',')
+                                for item in items:
+                                    val = item.strip()
+                                    # 保持原始进制
+                                    enum_values.append(val)
+                            # 如果有枚举值，返回 {} 格式
+                            if enum_values:
+                                enum_str = '{' + ', '.join(enum_values) + '}'
+                                return enum_str, 'extracted'
 
         return None
 

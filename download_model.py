@@ -1,126 +1,120 @@
-
 # -*- coding: utf-8 -*-
 """
-PaddleNLP 模型下载工具
-用于下载 ernie-3.0-nano-zh 模型到本地
-"""
+语义模型下载工具（ONNX 版本）
 
+默认下载:
+    Xenova/bge-small-zh-v1.5
+到本地目录:
+    ./models/bge-small-zh-v1.5-onnx
+"""
+import argparse
 import os
 import sys
 
-def download_model():
-    """下载 ERNIE 3.0 Nano 中文模型"""
-    model_name = "ernie-3.0-nano-zh"
-    
-    print("=" * 60)
-    print("PaddleNLP 模型下载工具")
-    print("=" * 60)
+
+DEFAULT_REPO = "Xenova/bge-small-zh-v1.5"
+DEFAULT_DIRNAME = "bge-small-zh-v1.5-onnx"
+
+
+def _required_files(onnx_file: str):
+    return [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.txt",
+        onnx_file,
+    ]
+
+
+def _validate_download(target_dir: str, required_files):
+    missing = []
+    for rel_path in required_files:
+        full_path = os.path.join(target_dir, rel_path)
+        if not os.path.exists(full_path):
+            missing.append(rel_path)
+    return missing
+
+
+def download_model(repo_id: str, target_dir: str, onnx_file: str):
+    print("=" * 68)
+    print("语义模型下载工具（ONNX）")
+    print("=" * 68)
+    print(f"模型仓库: {repo_id}")
+    print(f"保存目录: {target_dir}")
+    print(f"ONNX文件: {onnx_file}")
     print()
-    print(f"🎯 目标模型：{model_name}")
-    print(f"📦 模型大小：约 500 MB")
-    print()
-    
-    # 检查是否已安装 paddlenlp
+
     try:
-        import paddlenlp
-        from paddlenlp.transformers import AutoModel, AutoTokenizer
-        print(f"✅ PaddleNLP 版本：{paddlenlp.__version__}")
+        from huggingface_hub import snapshot_download
     except ImportError as e:
-        print("❌ 错误：未检测到 PaddleNLP")
-        print("请先运行：pip install paddlenlp==2.6.1")
-        print(f"详细错误：{e}")
-        return False
-    
-    # 检查是否已安装 paddlepaddle
-    try:
-        import paddle
-        print(f"✅ PaddlePaddle 版本：{paddle.__version__}")
-    except ImportError as e:
-        print("❌ 错误：未检测到 PaddlePaddle")
-        print("请先运行：pip install paddlepaddle==2.6.2")
-        print(f"详细错误：{e}")
-        return False
-    
-    # 确定模型保存路径
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    save_dir = os.path.join(base_dir, 'models', model_name)
-    
-    if os.path.exists(save_dir):
-        print(f"⚠️  模型目录已存在：{save_dir}")
-        # 检查是否完整
-        config_file = os.path.join(save_dir, 'config.json')
-        model_file = os.path.join(save_dir, 'model_state.pdparams')
-        vocab_file = os.path.join(save_dir, 'vocab.txt')
-        
-        if all(os.path.exists(f) for f in [config_file, model_file, vocab_file]):
-            print("✅ 模型文件完整，无需重新下载")
-            return True
-        else:
-            print("⚠️  模型文件不完整，将重新下载")
-    
-    # 创建目录
-    os.makedirs(save_dir, exist_ok=True)
-    
-    print(f"📥 开始下载模型...")
-    print(f"📁 保存位置：{save_dir}")
-    print()
-    print("💡 说明：模型文件较大（约 500MB），请耐心等待...")
-    print()
-    
-    try:
-        # 下载 tokenizer
-        print("1. 下载 Tokenizer...")
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        tokenizer.save_pretrained(save_dir)
-        print("   ✅ Tokenizer 下载完成")
-        
-        # 下载模型
-        print("2. 下载模型权重...")
-        model = AutoModel.from_pretrained(model_name)
-        model.save_pretrained(save_dir)
-        print("   ✅ 模型权重下载完成")
-        
-        print()
-        print("=" * 60)
-        print("✅ 模型下载完成！")
-        print(f"📦 模型位置：{save_dir}")
-        print("=" * 60)
-        print()
-        print("💡 使用说明:")
-        print("   1. 模型文件已保存到 models 目录")
-        print("   2. 打包时，需要将整个 models 文件夹与 exe 一起提供")
-        print("   3. 程序运行时会自动从该目录加载模型")
-        print("   4. 客户部署时，确保 models 目录与 exe 在同一层级")
-        print()
-        print("📂 部署结构:")
-        print("   协议转换工具/")
-        print("   ├── 协议转换工具.exe")
-        print("   └── models/")
-        print("       └── ernie-3.0-nano-zh/")
-        print()
-        
-        return True
-        
-    except Exception as e:
-        print()
-        print("=" * 60)
-        print(f"❌ 模型下载失败：{e}")
-        print("=" * 60)
-        print()
-        print("可能的原因:")
-        print("  1. 网络连接问题")
-        print("  2. 账号未登录或权限不足")
-        print("  3. 磁盘空间不足")
-        print()
-        
-        # 清理未完成的下载
-        if os.path.exists(save_dir):
-            import shutil
-            shutil.rmtree(save_dir)
-            print(f"已清理未完成的下载：{save_dir}")
-        
+        print("❌ 未安装 huggingface-hub")
+        print("请先执行: pip install huggingface-hub==0.17.3")
+        print("详细错误:", e)
         return False
 
+    required_files = _required_files(onnx_file)
+
+    print("将下载以下关键文件:")
+    for rf in required_files:
+        print(f"  - {rf}")
+    print()
+
+    os.makedirs(target_dir, exist_ok=True)
+
+    try:
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=target_dir,
+            local_dir_use_symlinks=False,
+            resume_download=True,
+            allow_patterns=required_files
+        )
+    except Exception as e:
+        print(f"❌ 下载失败: {e}")
+        print("提示: 如在中国大陆网络环境，可设置 HF_ENDPOINT 后重试。")
+        print("例如: set HF_ENDPOINT=https://hf-mirror.com")
+        return False
+
+    missing = _validate_download(target_dir, required_files)
+    if missing:
+        print("❌ 下载不完整，缺少以下文件:")
+        for item in missing:
+            print(f"  - {item}")
+        return False
+
+    onnx_path = os.path.join(target_dir, onnx_file)
+    size_mb = os.path.getsize(onnx_path) / (1024 * 1024)
+
+    print()
+    print("=" * 68)
+    print("✅ 模型下载完成")
+    print(f"目录: {target_dir}")
+    print(f"ONNX大小: {size_mb:.1f} MB")
+    print("=" * 68)
+    print()
+    print("部署结构示例:")
+    print("  协议转换工具/")
+    print("  ├── 协议转换工具.exe")
+    print("  └── models/")
+    print(f"      └── {os.path.basename(target_dir)}/")
+    print(f"          └── {onnx_file}")
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description="下载语义模型（ONNX）")
+    parser.add_argument("--repo", default=DEFAULT_REPO, help=f"模型仓库（默认: {DEFAULT_REPO}）")
+    parser.add_argument("--target", default=None, help="目标目录（默认: ./models/bge-small-zh-v1.5-onnx）")
+    parser.add_argument("--onnx-file", default="onnx/model.onnx", help="ONNX模型相对路径（默认: onnx/model.onnx）")
+    args = parser.parse_args()
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    target_dir = args.target or os.path.join(base_dir, "models", DEFAULT_DIRNAME)
+
+    success = download_model(args.repo, target_dir, args.onnx_file)
+    return 0 if success else 1
+
+
 if __name__ == "__main__":
-    success = download_model()
-    sys.exit(0 if success else 1)
+    sys.exit(main())

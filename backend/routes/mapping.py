@@ -152,7 +152,7 @@ def auto_map():
                 
                 # 检查知识库
                 kb_match = matcher._exact_match(source)
-                if kb_match == target:
+                if kb_match and kb_match.get('target') == target:
                     similarity = max(similarity, 0.95)
                 
                 if similarity > best_score and similarity >= threshold:

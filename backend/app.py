@@ -75,17 +75,21 @@ def create_app(config_name='development'):
     print(f"[App] 静态目录：{static_folder}")
     print(f"[App] index.html: {'✅ 存在' if os.path.exists(os.path.join(static_folder, 'index.html')) else '❌ 不存在'}")
         
-    # 预加载语义模型（已禁用，使用基础匹配算法）
-    # def preload_model():
-    #     try:
-    #         from backend.services.embedding_service import embedding_service
-    #         print("[App] 正在预加载语义模型...")
-    #         embedding_service.get_embedding("初始化")
-    #     except Exception as e:
-    #         print(f"[App] 预加载语义模型失败：{e}")
-    #
-    # import threading
-    # threading.Thread(target=preload_model).start()
+    # 预加载语义模型（后台线程，不阻塞启动）
+    def preload_model():
+        try:
+            from backend.services.embedding_service import embedding_service
+            if embedding_service.is_available():
+                print("[App] 正在预加载语义模型...")
+                embedding_service.warmup(["参数", "时间戳", "单位", "值域", "备注", "信号名称"])
+                print("[App] ✅ 语义模型预加载完成")
+            else:
+                print("[App] ⚠️ 未检测到可用语义模型，已降级为规则匹配")
+        except Exception as e:
+            print(f"[App] 预加载语义模型失败：{e}")
+
+    import threading
+    threading.Thread(target=preload_model, daemon=True).start()
     
     @app.route('/health')
     def health_check():

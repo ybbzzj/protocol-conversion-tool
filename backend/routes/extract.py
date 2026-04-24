@@ -347,6 +347,8 @@ def _calculate_mapping_quality(extracted_fields, expected_fields):
             'score': 0,
             'level': 'unknown',
             'exact_count': 0,
+            'semantic_count': 0,
+            'alias_count': 0,
             'fuzzy_count': 0,
             'unmatched_count': 0,
             'total': 0
@@ -362,13 +364,22 @@ def _calculate_mapping_quality(extracted_fields, expected_fields):
     
     # 统计匹配结果
     exact_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'exact')
-    fuzzy_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'fuzzy')
+    semantic_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'semantic')
+    alias_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'alias')
+    fuzzy_only_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'fuzzy')
+    # 保持兼容：历史字段 fuzzy_count 仍返回“广义模糊”数量
+    fuzzy_count = fuzzy_only_count + semantic_count + alias_count
     unmatched_count = sum(1 for r in mapping_results if isinstance(r, dict) and not r.get('target'))
     total = len(mapping_results)
     
     # 计算加权评分
     if total > 0:
-        score = (exact_count * 1.0 + fuzzy_count * 0.7) / total
+        score = (
+            exact_count * 1.0
+            + semantic_count * 0.85
+            + alias_count * 0.8
+            + fuzzy_only_count * 0.7
+        ) / total
         level = 'excellent' if score > 0.9 else 'good' if score > 0.7 else 'poor'
     else:
         score = 0
@@ -378,6 +389,8 @@ def _calculate_mapping_quality(extracted_fields, expected_fields):
         'score': score,
         'level': level,
         'exact_count': exact_count,
+        'semantic_count': semantic_count,
+        'alias_count': alias_count,
         'fuzzy_count': fuzzy_count,
         'unmatched_count': unmatched_count,
         'total': total

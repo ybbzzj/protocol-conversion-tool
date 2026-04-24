@@ -5,12 +5,10 @@
 """
 import os
 import json
-import re
 from typing import List, Dict, Any, Optional
 from difflib import SequenceMatcher
 from backend.config import Config
-# 暂时移除语义匹配依赖
-# from backend.services.embedding_service import embedding_service
+from backend.services.embedding_service import embedding_service
 
 class EnhancedFieldMatcher:
     """增强字段匹配器"""
@@ -19,12 +17,15 @@ class EnhancedFieldMatcher:
         self.knowledge_base_file = Config.KNOWLEDGE_BASE_PATH
         self.knowledge_base = self._load_knowledge_base()
         self.similarity_threshold = 0.7
-        self.semantic_threshold = 0.8  # 语义匹配阈值
+        self.semantic_threshold = 0.82  # 语义匹配阈值（自动命中）
+        self.semantic_suggestion_threshold = 0.72  # 语义建议阈值
         self.standard_fields = self._get_standard_fields()
-        
-        # 预计算标准字段向量以加速匹配
-        # self._preload_standard_embeddings()
-        
+        self.semantic_enabled = embedding_service.is_available()
+
+        # 预计算标准字段向量以加速匹配（可选）
+        if self.semantic_enabled and self.standard_fields:
+            embedding_service.warmup(self.standard_fields, max_items=300)
+
         # 匹配结果缓存，避免同一字段在多行中重复计算
         self._match_cache = {}
 
@@ -162,7 +163,22 @@ class EnhancedFieldMatcher:
                 results.append(res)
                 continue
 
-            # 3. 模糊匹配（原语义匹配已禁用）
+            # 3. 语义匹配
+            semantic = self._semantic_match(field)
+            if semantic:
+                res = {
+                    'original': field,
+                    'matched': semantic['target'],
+                    'confidence': semantic['confidence'],
+                    'type': 'semantic',
+                    'similarity': semantic['similarity'],
+                    'source': semantic.get('source', 'semantic_model')
+                }
+                self._match_cache[field] = res
+                results.append(res)
+                continue
+
+            # 4. 模糊匹配
             fuzzy = self._fuzzy_match(field)
             if fuzzy:
                 # 如果模糊匹配返回的是 exact_match，则使用 exact 类型
@@ -179,7 +195,7 @@ class EnhancedFieldMatcher:
                 results.append(res)
                 continue
             
-            # 4. 未匹配字段
+            # 5. 未匹配字段
             res = {
                 'original': field,
                 'matched': None,
@@ -205,18 +221,24 @@ class EnhancedFieldMatcher:
         return None
     
     def _semantic_match(self, field: str) -> Optional[Dict]:
-        """语义匹配（已禁用）"""
-        # 暂时禁用语义匹配，避免依赖 PaddlePaddle
-        return None
-        # 下面是原来的实现
-        # best_match = None
-        # best_score = 0
-        # for std_field in self.standard_fields:
-        #     score = embedding_service.calculate_similarity(field, std_field)
-        #     if score > best_score and score >= self.semantic_threshold:
-        #         best_score = score
-        #         best_match = {'target': std_field, 'confidence': score, 'source': 'ernie_3.0_nano'}
-        # return best_match
+        """语义匹配（ONNX embedding）"""
+        if not self.semantic_enabled or not field:
+            return None
+
+        best_match = None
+        best_score = 0.0
+
+        for std_field in self.standard_fields:
+            score = embedding_service.calculate_similarity(field, std_field)
+            if score > best_score and score >= self.semantic_threshold:
+                best_score = score
+                best_match = {
+                    'target': std_field,
+                    'confidence': round(score, 4),
+                    'similarity': round(score, 4),
+                    'source': f"semantic:{embedding_service.model_name}"
+                }
+        return best_match
 
     def _fuzzy_match(self, field: str) -> Optional[Dict]:
         """模糊匹配"""
@@ -308,15 +330,37 @@ class EnhancedFieldMatcher:
                     'confidence': item['confidence'],
                     'source': 'knowledge_base'
                 })
-        
+
+        # 基于语义模型的建议
+        if self.semantic_enabled:
+            for std_field in self.standard_fields:
+                semantic_score = embedding_service.calculate_similarity(field, std_field)
+                if semantic_score >= self.semantic_suggestion_threshold:
+                    suggestions.append({
+                        'field': std_field,
+                        'similarity': round(semantic_score, 4),
+                        'confidence': round(semantic_score, 4),
+                        'source': 'semantic_model'
+                    })
+
+        # 按字段去重（保留最高分）
+        merged = {}
+        for s in suggestions:
+            field_name = s.get('field')
+            if not field_name:
+                continue
+            if field_name not in merged or s.get('similarity', 0) > merged[field_name].get('similarity', 0):
+                merged[field_name] = s
+
         # 按相似度排序并限制数量
-        suggestions.sort(key=lambda x: x['similarity'], reverse=True)
-        return suggestions[:5]
+        final_suggestions = sorted(merged.values(), key=lambda x: x.get('similarity', 0), reverse=True)
+        return final_suggestions[:5]
     
     def get_detailed_suggestions(self, fields: List[str]) -> Dict[str, Any]:
         """获取详细的匹配建议"""
         results = {
             'exact_matches': [],
+            'semantic_matches': [],
             'fuzzy_matches': [],
             'alias_matches': [],
             'unmatched': []
@@ -332,21 +376,30 @@ class EnhancedFieldMatcher:
                 })
                 continue
             
-            fuzzy = self._fuzzy_match(field)
-            if fuzzy:
-                results['fuzzy_matches'].append({
-                    'original': field,
-                    'matched': fuzzy,
-                    'type': 'fuzzy'
-                })
-                continue
-            
             alias = self._alias_match(field)
             if alias:
                 results['alias_matches'].append({
                     'original': field,
                     'matched': alias,
                     'type': 'alias'
+                })
+                continue
+
+            semantic = self._semantic_match(field)
+            if semantic:
+                results['semantic_matches'].append({
+                    'original': field,
+                    'matched': semantic,
+                    'type': 'semantic'
+                })
+                continue
+
+            fuzzy = self._fuzzy_match(field)
+            if fuzzy:
+                results['fuzzy_matches'].append({
+                    'original': field,
+                    'matched': fuzzy,
+                    'type': 'fuzzy'
                 })
                 continue
             
@@ -471,10 +524,12 @@ class EnhancedFieldMatcher:
         for target in targets:
             similarity = self._calculate_similarity(source_field, target)
             if similarity > 0.5:  # 只返回相似度大于0.5的建议
+                semantic_score = embedding_service.calculate_similarity(source_field, target) if self.semantic_enabled else 0.0
+                reason = '语义匹配' if semantic_score > 0.72 else '相似度匹配'
                 suggestions.append({
                     'field': target,
                     'similarity': similarity,
-                    'reason': '相似度匹配'
+                    'reason': reason
                 })
         
         # 按相似度排序
@@ -502,12 +557,16 @@ class EnhancedFieldMatcher:
         if source.lower() == target.lower():
             return 0.95
         
-        # 计算序列相似度
-        similarity = SequenceMatcher(None, source, target).ratio()
-        
+        # 计算字符串相似度
+        lexical_similarity = SequenceMatcher(None, source, target).ratio()
+        semantic_similarity = 0.0
+        if self.semantic_enabled:
+            semantic_similarity = embedding_service.calculate_similarity(source, target)
+
         # 检查知识库
         kb_match = self._exact_match(source)
         if kb_match and kb_match.get('target') == target:
-            return max(similarity, kb_match.get('confidence', 0.9))
-        
-        return similarity
+            return max(lexical_similarity, semantic_similarity, kb_match.get('confidence', 0.9))
+
+        # 语义分优先，其次字符串相似度
+        return max(lexical_similarity, semantic_similarity)

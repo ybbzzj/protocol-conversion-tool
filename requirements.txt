@@ -13,7 +13,8 @@ python-dateutil==2.8.2
 werkzeug==2.0.3
 rapidfuzz==2.13.7
 python-dotenv==0.19.2
-# PaddlePaddle for ERNIE 3.0 Nano (model separated, not bundled in exe)
-paddlepaddle==2.6.2
-paddlenlp==2.6.1
+# 轻量语义匹配依赖（ONNX）
+onnxruntime==1.14.1
+transformers==4.33.3
+huggingface-hub==0.17.3
 pyinstaller==5.1

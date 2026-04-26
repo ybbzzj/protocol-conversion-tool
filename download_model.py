@@ -1,85 +1,200 @@
-
 # -*- coding: utf-8 -*-
 """
-PaddleNLP 模型下载工具
-用于下载 ernie-3.0-nano-zh 模型到本地
+BGE Small 中文模型下载工具
+用于下载 BAAI/bge-small-zh-v1.5 模型到本地
 """
 
 import os
 import sys
+from typing import Dict, List, Optional
+
+
+def _collect_proxies() -> Dict[str, str]:
+    """从环境变量收集代理配置"""
+    proxy_env_keys = [
+        ('http', ['HF_HTTP_PROXY', 'HTTP_PROXY', 'http_proxy']),
+        ('https', ['HF_HTTPS_PROXY', 'HTTPS_PROXY', 'https_proxy']),
+    ]
+    proxies: Dict[str, str] = {}
+
+    for scheme, keys in proxy_env_keys:
+        for key in keys:
+            value = os.environ.get(key, '').strip()
+            if value:
+                # requests 需要带 scheme，若用户只填了 host:port，这里补上
+                if '://' not in value:
+                    value = f'http://{value}'
+                proxies[scheme] = value
+                break
+    return proxies
+
+
+def _attempt_snapshot_download(
+    snapshot_download,
+    repo_id: str,
+    local_dir: str,
+    allow_patterns: List[str],
+    endpoint: Optional[str] = None,
+    proxies: Optional[Dict[str, str]] = None,
+) -> None:
+    """执行一次下载尝试"""
+    kwargs = {
+        'repo_id': repo_id,
+        'local_dir': local_dir,
+        'local_dir_use_symlinks': False,
+        'allow_patterns': allow_patterns,
+        'resume_download': True,
+    }
+    if endpoint:
+        kwargs['endpoint'] = endpoint
+    if proxies:
+        kwargs['proxies'] = proxies
+    snapshot_download(**kwargs)
 
 def download_model():
-    """下载 ERNIE 3.0 Nano 中文模型"""
-    model_name = "ernie-3.0-nano-zh"
-    
+    """下载 BGE Small 中文模型"""
+    hf_repo = "BAAI/bge-small-zh-v1.5"
+    local_model_dir = "bge-small-zh-v1.5"
+
     print("=" * 60)
-    print("PaddleNLP 模型下载工具")
+    print("BGE Small 中文模型下载工具")
     print("=" * 60)
     print()
-    print(f"🎯 目标模型：{model_name}")
-    print(f"📦 模型大小：约 500 MB")
+    print(f"🎯 目标模型：{hf_repo}")
+    print(f"📦 模型大小：约 100 MB")
     print()
-    
-    # 检查是否已安装 paddlenlp
+
+    # 检查是否已安装 huggingface_hub
     try:
-        import paddlenlp
-        from paddlenlp.transformers import AutoModel, AutoTokenizer
-        print(f"✅ PaddleNLP 版本：{paddlenlp.__version__}")
+        import huggingface_hub
+        from huggingface_hub import snapshot_download
+        print(f"✅ huggingface_hub 版本：{huggingface_hub.__version__}")
     except ImportError as e:
-        print("❌ 错误：未检测到 PaddleNLP")
-        print("请先运行：pip install paddlenlp==2.6.1")
+        print("❌ 错误：未检测到 huggingface_hub")
+        print("请先运行：pip install huggingface-hub==0.20.3")
         print(f"详细错误：{e}")
         return False
-    
-    # 检查是否已安装 paddlepaddle
+
+    # 检查是否已安装 transformers（下载后本地加载要用）
     try:
-        import paddle
-        print(f"✅ PaddlePaddle 版本：{paddle.__version__}")
+        import transformers
+        print(f"✅ transformers 版本：{transformers.__version__}")
     except ImportError as e:
-        print("❌ 错误：未检测到 PaddlePaddle")
-        print("请先运行：pip install paddlepaddle==2.6.2")
+        print("❌ 错误：未检测到 transformers")
+        print("请先运行：pip install transformers==4.30.2")
         print(f"详细错误：{e}")
         return False
-    
+
     # 确定模型保存路径
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    save_dir = os.path.join(base_dir, 'models', model_name)
-    
+    save_dir = os.path.join(base_dir, 'models', local_model_dir)
+
+    # 尝试的下载端点（按顺序）
+    env_endpoint = os.environ.get('HF_ENDPOINT', '').strip()
+    endpoints = []
+    if env_endpoint:
+        endpoints.append(env_endpoint)
+    # 官方端点
+    endpoints.append("https://huggingface.co")
+    # 国内常用镜像端点
+    endpoints.append("https://hf-mirror.com")
+    # 去重但保留顺序
+    dedup_endpoints = []
+    for ep in endpoints:
+        if ep and ep not in dedup_endpoints:
+            dedup_endpoints.append(ep)
+    endpoints = dedup_endpoints
+
+    proxies = _collect_proxies()
+
+    required_files = [
+        "config.json",
+        "model.safetensors",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.txt",
+    ]
+
     if os.path.exists(save_dir):
         print(f"⚠️  模型目录已存在：{save_dir}")
-        # 检查是否完整
-        config_file = os.path.join(save_dir, 'config.json')
-        model_file = os.path.join(save_dir, 'model_state.pdparams')
-        vocab_file = os.path.join(save_dir, 'vocab.txt')
-        
-        if all(os.path.exists(f) for f in [config_file, model_file, vocab_file]):
+        if all(os.path.exists(os.path.join(save_dir, f)) for f in required_files):
             print("✅ 模型文件完整，无需重新下载")
             return True
-        else:
-            print("⚠️  模型文件不完整，将重新下载")
+        print("⚠️  模型文件不完整，将重新下载")
     
     # 创建目录
     os.makedirs(save_dir, exist_ok=True)
-    
+
     print(f"📥 开始下载模型...")
     print(f"📁 保存位置：{save_dir}")
     print()
-    print("💡 说明：模型文件较大（约 500MB），请耐心等待...")
+    print("💡 说明：会从 Hugging Face 下载文件，请保持网络稳定...")
+    print(f"🌐 下载端点顺序：{endpoints}")
+    if proxies:
+        print(f"🔌 检测到代理配置：{proxies}")
+    else:
+        print("🔌 未检测到代理配置")
     print()
-    
+
     try:
-        # 下载 tokenizer
-        print("1. 下载 Tokenizer...")
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        tokenizer.save_pretrained(save_dir)
-        print("   ✅ Tokenizer 下载完成")
-        
-        # 下载模型
-        print("2. 下载模型权重...")
-        model = AutoModel.from_pretrained(model_name)
-        model.save_pretrained(save_dir)
-        print("   ✅ 模型权重下载完成")
-        
+        # 仅下载本地推理所需文件，减少体积
+        allow_patterns = [
+            "config.json",
+            "model.safetensors",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "vocab.txt",
+            "tokenizer.json",
+        ]
+
+        download_ok = False
+        last_error = None
+        for endpoint in endpoints:
+            try:
+                print(f"➡️  尝试端点：{endpoint}")
+                _attempt_snapshot_download(
+                    snapshot_download=snapshot_download,
+                    repo_id=hf_repo,
+                    local_dir=save_dir,
+                    allow_patterns=allow_patterns,
+                    endpoint=endpoint,
+                    proxies=proxies if proxies else None,
+                )
+                download_ok = True
+                print(f"✅ 端点下载成功：{endpoint}")
+                break
+            except Exception as e:
+                last_error = e
+                print(f"⚠️ 端点失败：{endpoint}")
+                print(f"   错误：{e}")
+
+                # 如果是代理错误，自动重试一次（不使用代理）
+                if proxies and ('ProxyError' in str(e) or 'proxy' in str(e).lower()):
+                    try:
+                        print("↩️ 检测到代理错误，尝试同端点直连下载...")
+                        _attempt_snapshot_download(
+                            snapshot_download=snapshot_download,
+                            repo_id=hf_repo,
+                            local_dir=save_dir,
+                            allow_patterns=allow_patterns,
+                            endpoint=endpoint,
+                            proxies=None,
+                        )
+                        download_ok = True
+                        print(f"✅ 端点直连下载成功：{endpoint}")
+                        break
+                    except Exception as e2:
+                        last_error = e2
+                        print(f"⚠️ 直连重试失败：{e2}")
+
+        if not download_ok:
+            raise RuntimeError(f"所有端点均下载失败，最后错误：{last_error}")
+
+        missing = [f for f in required_files if not os.path.exists(os.path.join(save_dir, f))]
+        if missing:
+            print(f"❌ 下载后仍缺少关键文件：{missing}")
+            return False
+
         print()
         print("=" * 60)
         print("✅ 模型下载完成！")
@@ -96,11 +211,11 @@ def download_model():
         print("   协议转换工具/")
         print("   ├── 协议转换工具.exe")
         print("   └── models/")
-        print("       └── ernie-3.0-nano-zh/")
+        print("       └── bge-small-zh-v1.5/")
         print()
-        
+
         return True
-        
+
     except Exception as e:
         print()
         print("=" * 60)
@@ -109,8 +224,9 @@ def download_model():
         print()
         print("可能的原因:")
         print("  1. 网络连接问题")
-        print("  2. 账号未登录或权限不足")
+        print("  2. 代理配置不可用（建议先清理 HTTP_PROXY/HTTPS_PROXY）")
         print("  3. 磁盘空间不足")
+        print("  4. 当前网络无法访问 huggingface.co，可尝试 HF_ENDPOINT=https://hf-mirror.com")
         print()
         
         # 清理未完成的下载
@@ -118,7 +234,7 @@ def download_model():
             import shutil
             shutil.rmtree(save_dir)
             print(f"已清理未完成的下载：{save_dir}")
-        
+
         return False
 
 if __name__ == "__main__":

@@ -9,8 +9,7 @@ import re
 from typing import List, Dict, Any, Optional
 from difflib import SequenceMatcher
 from backend.config import Config
-# 暂时移除语义匹配依赖
-# from backend.services.embedding_service import embedding_service
+from backend.services.embedding_service import embedding_service
 
 class EnhancedFieldMatcher:
     """增强字段匹配器"""
@@ -162,7 +161,22 @@ class EnhancedFieldMatcher:
                 results.append(res)
                 continue
 
-            # 3. 模糊匹配（原语义匹配已禁用）
+            # 3. 语义匹配
+            semantic = self._semantic_match(field)
+            if semantic:
+                res = {
+                    'original': field,
+                    'matched': semantic['target'],
+                    'confidence': semantic['confidence'],
+                    'type': 'semantic',
+                    'similarity': semantic['similarity'],
+                    'source': semantic.get('source', 'bge_small_zh_v1_5')
+                }
+                self._match_cache[field] = res
+                results.append(res)
+                continue
+
+            # 4. 模糊匹配
             fuzzy = self._fuzzy_match(field)
             if fuzzy:
                 # 如果模糊匹配返回的是 exact_match，则使用 exact 类型
@@ -179,7 +193,7 @@ class EnhancedFieldMatcher:
                 results.append(res)
                 continue
             
-            # 4. 未匹配字段
+            # 5. 未匹配字段
             res = {
                 'original': field,
                 'matched': None,
@@ -205,18 +219,25 @@ class EnhancedFieldMatcher:
         return None
     
     def _semantic_match(self, field: str) -> Optional[Dict]:
-        """语义匹配（已禁用）"""
-        # 暂时禁用语义匹配，避免依赖 PaddlePaddle
-        return None
-        # 下面是原来的实现
-        # best_match = None
-        # best_score = 0
-        # for std_field in self.standard_fields:
-        #     score = embedding_service.calculate_similarity(field, std_field)
-        #     if score > best_score and score >= self.semantic_threshold:
-        #         best_score = score
-        #         best_match = {'target': std_field, 'confidence': score, 'source': 'ernie_3.0_nano'}
-        # return best_match
+        """语义匹配（BGE Small）"""
+        if not embedding_service.is_available():
+            return None
+
+        best_match = None
+        best_score = 0.0
+
+        for std_field in self.standard_fields:
+            score = embedding_service.calculate_similarity(field, std_field)
+            if score > best_score and score >= self.semantic_threshold:
+                best_score = score
+                best_match = {
+                    'target': std_field,
+                    'confidence': score,
+                    'similarity': score,
+                    'source': 'bge_small_zh_v1_5'
+                }
+
+        return best_match
 
     def _fuzzy_match(self, field: str) -> Optional[Dict]:
         """模糊匹配"""
@@ -503,11 +524,16 @@ class EnhancedFieldMatcher:
             return 0.95
         
         # 计算序列相似度
-        similarity = SequenceMatcher(None, source, target).ratio()
+        char_similarity = SequenceMatcher(None, source, target).ratio()
         
         # 检查知识库
         kb_match = self._exact_match(source)
         if kb_match and kb_match.get('target') == target:
-            return max(similarity, kb_match.get('confidence', 0.9))
-        
-        return similarity
+            char_similarity = max(char_similarity, kb_match.get('confidence', 0.9))
+
+        # 尝试语义相似度，失败则回退字符相似度
+        semantic_similarity = 0.0
+        if embedding_service.is_available():
+            semantic_similarity = embedding_service.calculate_similarity(source, target)
+
+        return max(char_similarity, semantic_similarity)

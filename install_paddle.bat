@@ -1,89 +1,63 @@
 @echo off
-chcp 65001 >nul
-setlocal enabledelayedexpansion
+setlocal
 
 echo ============================================================
-echo 协议转换工具 - PaddlePaddle 依赖安装
+echo Protocol Conversion Tool - Semantic Dependency Installer
+echo Legacy filename: install_paddle.bat
 echo ============================================================
 echo.
 
-REM 检查 Python 是否安装
 python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo ❌ 错误：未检测到 Python 环境
-    echo.
-    echo 请先安装 Python 3.8
-    pause
-    exit /b 1
-)
-
-echo ✅ 检测到 Python 环境
+if errorlevel 1 goto :NO_PYTHON
+echo Python detected:
 python --version
 echo.
 
-REM 检查是否已安装 paddlepaddle
-python -c "import paddle; print('✅ PaddlePaddle 版本:', paddle.__version__)" >nul 2>&1
-if %errorlevel% equ 0 (
-    echo ✅ PaddlePaddle 已安装
-) else (
-    echo ⚠️  未检测到 PaddlePaddle
-    echo.
-    echo 📥 正在安装 PaddlePaddle...
-    echo.
-    
-    REM 使用清华镜像源安装
-    python -m pip install paddlepaddle==2.6.2 -i https://pypi.tuna.tsinghua.edu.cn/simple
-    
-    if %errorlevel% neq 0 (
-        echo.
-        echo ❌ PaddlePaddle 安装失败
-        echo.
-        echo 请尝试手动安装:
-        echo   python -m pip install paddlepaddle==2.6.2
-        echo.
-        pause
-        exit /b 1
-    )
-    
-    echo.
-    echo ✅ PaddlePaddle 安装完成
-)
-
+python -m pip install --upgrade pip
+if errorlevel 1 echo WARNING: pip upgrade failed, continue...
 echo.
 
-REM 检查是否已安装 paddlenlp
-python -c "import paddlenlp; print('✅ PaddleNLP 版本:', paddlenlp.__version__)" >nul 2>&1
-if %errorlevel% equ 0 (
-    echo ✅ PaddleNLP 已安装
-) else (
-    echo ⚠️  未检测到 PaddleNLP
-    echo.
-    echo 📥 正在安装 PaddleNLP...
-    echo.
-    
-    REM 使用清华镜像源安装
-    python -m pip install paddlenlp==2.6.1 -i https://pypi.tuna.tsinghua.edu.cn/simple
-    
-    if %errorlevel% neq 0 (
-        echo.
-        echo ❌ PaddleNLP 安装失败
-        echo.
-        echo 请尝试手动安装:
-        echo   python -m pip install paddlenlp==2.6.1
-        echo.
-        pause
-        exit /b 1
-    )
-    
-    echo.
-    echo ✅ PaddleNLP 安装完成
-)
+python -c "import torch" >nul 2>&1
+if not errorlevel 1 goto :TORCH_OK
+echo Installing PyTorch CPU build...
+python -m pip install torch==1.13.1+cpu --index-url https://download.pytorch.org/whl/cpu
+if not errorlevel 1 goto :TORCH_OK
+echo First attempt failed, trying PyPI torch 1.13.1 ...
+python -m pip install torch==1.13.1
+if errorlevel 1 goto :TORCH_FAIL
+:TORCH_OK
+echo PyTorch ready.
+echo.
 
+python -c "import transformers, tokenizers, safetensors, huggingface_hub, regex" >nul 2>&1
+if not errorlevel 1 goto :TRANS_OK
+echo Installing transformers stack...
+python -m pip install transformers==4.30.2 tokenizers==0.13.3 safetensors==0.4.5 huggingface-hub==0.20.3 regex==2023.12.25
+if errorlevel 1 goto :TRANS_FAIL
+:TRANS_OK
+echo Transformers stack ready.
 echo.
 echo ============================================================
-echo ✅ 所有依赖安装完成！
+echo Dependencies installed successfully.
 echo ============================================================
-echo.
-echo 💡 现在可以运行：协议转换工具.exe
+goto :DONE
+
+:NO_PYTHON
+echo ERROR: Python not found. Please install Python 3.8 first.
+goto :DONE
+
+:TORCH_FAIL
+echo ERROR: Failed to install torch.
+echo Try this manually:
+echo python -m pip install torch==1.13.1+cpu --index-url https://download.pytorch.org/whl/cpu
+goto :DONE
+
+:TRANS_FAIL
+echo ERROR: Failed to install transformers stack.
+echo Try this manually:
+echo python -m pip install transformers==4.30.2 tokenizers==0.13.3 safetensors==0.4.5 huggingface-hub==0.20.3 regex==2023.12.25
+
+:DONE
 echo.
 pause
+exit /b 0

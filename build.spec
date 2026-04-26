@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 # --- 收集第三方库的依赖 ---
-# 注意：不包含 paddlepaddle 和 paddlenlp，使用基础匹配算法
+# 语义匹配使用 BGE + Transformers + PyTorch（模型目录分离，不打进 exe）
 print("Collecting openpyxl dependencies...")
 datas_openpyxl, binaries_openpyxl, hiddenimports_openpyxl = collect_all('openpyxl')
 
@@ -33,6 +33,17 @@ datas = datas_openpyxl
 binaries = binaries_openpyxl
 hiddenimports = hiddenimports_openpyxl
 
+# 收集 BGE 语义匹配相关依赖
+for module_name in ['torch', 'transformers', 'tokenizers', 'safetensors', 'regex']:
+    try:
+        print(f"Collecting {module_name} dependencies...")
+        d, b, h = collect_all(module_name)
+        datas.extend(d)
+        binaries.extend(b)
+        hiddenimports.extend(h)
+    except Exception as e:
+        print(f"Warning: Could not collect {module_name}: {e}")
+
 # 添加更多的隐藏导入
 hiddenimports += [
     'flask',
@@ -40,6 +51,11 @@ hiddenimports += [
     'docx2python',
     'python_docx',
     'rapidfuzz',
+    'torch',
+    'transformers',
+    'tokenizers',
+    'safetensors',
+    'regex',
 ]
 
 # --- 添加本项目自定义的资源文件 (格式：(源路径，目标目录)) ---
@@ -48,6 +64,9 @@ if hasattr(SPEC, 'parent'):
     base_dir = str(SPEC.parent)
 else:
     base_dir = os.path.dirname(os.path.abspath(SPEC)) if isinstance(SPEC, str) else os.getcwd()
+
+# 自定义 hooks 目录（用于覆盖有问题的三方 hooks）
+custom_hook_dir = os.path.join(base_dir, 'hooks')
     
 added_datas = [
     (os.path.join(base_dir, 'public', 'dist'), 'public/dist'),
@@ -69,10 +88,10 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
+    hookspath=[custom_hook_dir],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['paddle', 'paddlenlp'],  # 排除 paddle，避免自动打包
+    excludes=['paddle', 'paddlenlp'],  # 显式排除旧的 paddle 方案
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,

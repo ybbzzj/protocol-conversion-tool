@@ -11,6 +11,7 @@ from backend.services.table_linker import TableLinker
 from backend.services.excel_exporter import ExcelExporter
 from backend.services.data_cleaner import DataProcessor
 from backend.services.field_matcher import EnhancedFieldMatcher as FieldMatcher
+from backend.services.output_postprocessor import apply_output_controls, normalize_output_options
 
 extract_bp = Blueprint('extract', __name__)
 
@@ -77,9 +78,11 @@ def start_extraction():
         return error_response(40001, f"不支持的文件格式，请上传 {', '.join(allowed_extensions)} 格式的文件")
     
     field_ids = request.form.getlist('field_ids')
+    field_names = request.form.getlist('field_names')
+    output_options = _load_output_options(request.form)
     
     # 加载用户选择的期望字段
-    expected_fields = _load_expected_fields(field_ids)
+    expected_fields = field_names or _load_expected_fields(field_ids)
     
     task_id = str(uuid.uuid4())
     upload_path = os.path.join('backend', 'uploads', f"{task_id}_{file.filename}")
@@ -97,6 +100,8 @@ def start_extraction():
         'output_path': None,
         'message': '',
         'field_ids': field_ids,
+        'field_names': field_names,
+        'output_options': output_options,
         'expected_fields': expected_fields,  # 期望字段
         'mapping_quality': None  # 映射质量评分
     }
@@ -115,15 +120,11 @@ def start_extraction():
         linker = TableLinker()
         linked_tables = linker.link_tables(result['tables'])
         
-        processor = DataProcessor()
-        matcher = FieldMatcher()
-        
         # 使用原始表格数据而不是处理后的数据
         # 保存原始提取的表格数据用于预览
         tasks_status[task_id]['raw_tables'] = result['tables']
+        tasks_status[task_id]['linked_tables'] = linked_tables
         
-        # 保存处理后的表格数据用于导出
-        processed_tables = []
         table_count = len(linked_tables)
         tasks_status[task_id]['table_count'] = table_count
         
@@ -132,58 +133,9 @@ def start_extraction():
             tasks_status[task_id]['msg_name'] = linked_tables[0].get('msg_name', '')
             tasks_status[task_id]['table_count'] = table_count
         
-        for idx, table in enumerate(linked_tables):
-            # 只保留 field_def 类型的表格（辅助表已由 table_linker 过滤掉）
-            table_type = table.get('table_type', '')
-            if table_type not in ('field_def', '', None):
-                # 辅助表（端口分配/消息ID/bit定义）不输出到 Excel
-                table_count -= 1
-                continue
-
-            table_rows = []
-            for row in table['data_rows']:
-                # 过滤掉只有名称/内容但没有其他数据的无效行
-                # （如"聚合式的信息流表征示意"、"发起时机"等元数据行）
-                if not row.get('_is_bit_row') and not processor.is_valid_data_row(row):
-                    continue
-                
-                # bit 子行直接透传，不做 field 匹配
-                if row.get('_is_bit_row'):
-                    table_rows.append(row)
-                    continue
-
-                proc_res = processor.process_row(row)
-                matched_row = {}
-                for field, value in proc_res['cleaned'].items():
-                    match_res = matcher.match_field(field)
-                    # 兼容字典和对象格式
-                    target = match_res.get('target') if isinstance(match_res, dict) else (match_res.target if hasattr(match_res, 'target') else field)
-                    target = target if target else field
-                    matched_row[target] = value
-
-                # 保留格式化结果（值域、转换公式）
-                for fkey, fval in proc_res.get('formatted', {}).items():
-                    matched_row[f'_fmt_{fkey}'] = fval
-
-                # 位数对齐
-                if '位数' in proc_res['converted']:
-                    matched_row['类型（bit）'] = proc_res['converted']['位数']
-
-                table_rows.append(matched_row)
-
-            # 构建表格数据，包含元数据（meta）及元数据来源（meta_sources）
-            table_data = {
-                'msg_name': table['msg_name'],
-                'data_rows': table_rows,
-                'meta': table.get('meta', {}),
-                'table_type': table_type,
-                'meta_sources': table.get('meta_sources', {}),
-            }
-            processed_tables.append(table_data)
-            
-            # 更新进度
-            progress = 50 + int((idx + 1) / table_count * 30) if table_count > 0 else 80
-            tasks_status[task_id]['progress'] = progress
+        processed_tables = build_processed_tables(linked_tables, output_options=output_options)
+        tasks_status[task_id]['processed_tables'] = processed_tables
+        tasks_status[task_id]['progress'] = 80
             
         # 导出
         output_dir = os.path.join('backend', 'outputs')
@@ -193,10 +145,7 @@ def start_extraction():
         tasks_status[task_id]['progress'] = 90
         
         # 计算映射质量
-        extracted_field_names = []
-        for table in processed_tables:
-            for row in table['data_rows']:
-                extracted_field_names.extend(row.keys())
+        extracted_field_names = _collect_exported_field_names(processed_tables)
         
         # 去重
         extracted_field_names = list(set(extracted_field_names))
@@ -307,6 +256,151 @@ def download_result(task_id):
         return response
     except Exception as e:
         return error_response(50001, f"下载失败: {str(e)}")
+
+
+def _load_output_options(form):
+    """读取前端输出控制选项。"""
+    raw = {
+        'remove_crc_checksum': form.get('remove_crc_checksum') in ('1', 'true', 'True', 'yes', 'on')
+    }
+    return normalize_output_options(raw)
+
+
+def _normalize_field_mappings(mappings):
+    """将前端映射列表转为 source -> target 字典。"""
+    result = {}
+    for item in mappings or []:
+        if not isinstance(item, dict):
+            continue
+        source = item.get('original') or item.get('source')
+        target = item.get('target')
+        if isinstance(source, list):
+            sources = source
+        else:
+            sources = [source]
+        for src in sources:
+            if src and target:
+                result[str(src)] = str(target)
+    return result
+
+
+def _resolve_target_field(field, matcher, explicit_mapping):
+    """优先使用人工映射，其次使用自动字段匹配。"""
+    if field in explicit_mapping:
+        return explicit_mapping[field]
+
+    match_res = matcher.match_field(field)
+    target = match_res.get('target') if isinstance(match_res, dict) else (
+        match_res.target if hasattr(match_res, 'target') else field
+    )
+    return target if target else field
+
+
+def _is_formula_source_mapped_to_remark(cleaned, explicit_mapping):
+    """用户把数据处理类字段映射到备注时，不再额外生成转换公式列。"""
+    for field in cleaned:
+        target = explicit_mapping.get(field)
+        if target != '备注':
+            continue
+        if any(kw in field for kw in ['数据处理', '数据转换', '转换公式']):
+            return True
+    return False
+
+
+def _put_mapped_value(row, target, value):
+    """写入映射值；多源映射到备注时合并保留。"""
+    if value is None:
+        return
+    text = str(value).strip() if isinstance(value, str) else value
+    if text in ('', '-', '—', None):
+        return
+
+    if target == '备注' and row.get(target):
+        current = str(row[target]).strip()
+        incoming = str(text).strip()
+        parts = [p.strip() for p in current.split('；') if p.strip()]
+        if incoming not in parts:
+            row[target] = current + '；' + incoming
+        return
+
+    row[target] = value
+
+
+def build_processed_tables(linked_tables, field_mappings=None, output_options=None):
+    """
+    将关联后的表格转为 ExcelExporter 可消费的数据。
+    field_mappings 用于人工指定 source -> target，output_options 用于导出前后处理。
+    """
+    processor = DataProcessor()
+    matcher = FieldMatcher()
+    explicit_mapping = _normalize_field_mappings(field_mappings)
+
+    processed_tables = []
+
+    for table in linked_tables:
+        table_type = table.get('table_type', '')
+        if table_type not in ('field_def', '', None):
+            continue
+
+        table_rows = []
+        for row in table.get('data_rows', []):
+            # 过滤掉只有名称/内容但没有其他数据的无效行
+            if not row.get('_is_bit_row') and not processor.is_valid_data_row(row):
+                continue
+
+            # bit 子行直接透传，不做 field 匹配
+            if row.get('_is_bit_row'):
+                table_rows.append(row)
+                continue
+
+            proc_res = processor.process_row(row)
+            matched_row = {}
+            formula_source_mapped_to_remark = False
+            for field, value in proc_res['cleaned'].items():
+                target = _resolve_target_field(field, matcher, explicit_mapping)
+                if target == '备注' and any(kw in field for kw in ['数据处理', '数据转换', '转换公式']):
+                    formula_source_mapped_to_remark = True
+                _put_mapped_value(matched_row, target, value)
+
+            formatted = dict(proc_res.get('formatted', {}))
+            if formula_source_mapped_to_remark or _is_formula_source_mapped_to_remark(proc_res['cleaned'], explicit_mapping):
+                formatted.pop('转换公式', None)
+
+            # 保留格式化结果（值域、转换公式）
+            for fkey, fval in formatted.items():
+                matched_row[f'_fmt_{fkey}'] = fval
+
+            # 位数对齐
+            if '位数' in proc_res['converted']:
+                matched_row['类型（bit）'] = proc_res['converted']['位数']
+
+            table_rows.append(matched_row)
+
+        table_data = {
+            'msg_name': table.get('msg_name', ''),
+            'data_rows': table_rows,
+            'meta': table.get('meta', {}),
+            'table_type': table_type,
+            'meta_sources': table.get('meta_sources', {}),
+        }
+        processed_tables.append(table_data)
+
+    return apply_output_controls(processed_tables, output_options)
+
+
+def _collect_exported_field_names(processed_tables):
+    """收集导出结果中可能出现的字段名，包含表级元数据列。"""
+    extracted = []
+    for table in processed_tables:
+        for key in table.get('meta', {}).keys():
+            extracted.append(ExcelExporter.META_TO_EXCEL.get(key, key))
+        for row in table.get('data_rows', []):
+            for key in row.keys():
+                if str(key).startswith('_fmt_'):
+                    extracted.append(str(key)[5:])
+                elif not str(key).startswith('_'):
+                    extracted.append(key)
+    return list(set(extracted))
 
 
 def _load_expected_fields(field_ids):

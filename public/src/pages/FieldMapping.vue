@@ -579,7 +579,7 @@ async function applyMappings() {
       }))
     })
     
-    if (response.data.success) {
+    if (response.data?.code === 0 || response.data?.data?.success) {
       const historyItem = {
         id: Date.now().toString(),
         message: `成功应用 ${mappings.length} 个字段映射`,

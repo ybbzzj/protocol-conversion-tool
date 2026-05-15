@@ -48,6 +48,15 @@
     </section>
 
     <section class="card">
+      <h3>提取结果输出控制</h3>
+      <label class="option-item">
+        <input type="checkbox" v-model="outputControls.removeCrcChecksum" />
+        删除末尾 CRC 校验字
+      </label>
+      <p class="hint">勾选后，若某字段内容包含“CRC校验”且其下一行无有效数据，则输出结果中删除该行。</p>
+    </section>
+
+    <section class="card">
       <div class="flex">
         <button class="btn" @click="startExtract">开始提取</button>
         <span v-if="taskStatus" class="status">状态：{{ taskStatus.status }}（进度：{{ taskStatus.progress }}%）</span>
@@ -83,6 +92,9 @@ const selectedFieldIds = ref<string[]>([])
 const selectedTemplateId = ref<string>('')
 const templateName = ref('')
 const fieldSearch = ref('')
+const outputControls = ref({
+  removeCrcChecksum: false
+})
 
 const fileObj = ref<File | null>(null)
 const currentTaskId = ref<string>('')
@@ -220,7 +232,10 @@ async function startExtract(){
     // 正确方式: 为每个 field_id 添加独立的表单字段，后端用 request.form.getlist() 获取
     for(const fieldId of selectedFieldIds.value){
       fd.append('field_ids', fieldId)
+      const fieldName = protocolFields.value.find(f => f.id === fieldId)?.name
+      if(fieldName){ fd.append('field_names', fieldName) }
     }
+    fd.append('remove_crc_checksum', outputControls.value.removeCrcChecksum ? '1' : '0')
     const { data } = await api.post(endpoints.extractStart, fd, { headers:{ 'Content-Type':'multipart/form-data' } })
     currentTaskId.value = data?.data?.task_id || ''
     if(!currentTaskId.value){ toast.show('未返回任务ID'); return }
@@ -344,4 +359,5 @@ onMounted(()=>{ reloadProtocolFields(); reloadTemplates() })
 .template-row{ display:flex; gap:8px; align-items:center; margin-bottom: 12px; }
 .template-save{ display:flex; gap:8px; align-items:center; margin-bottom: 12px; }
 .template-backup{ display:flex; gap:8px; align-items:center; }
+.option-item{ display:flex; align-items:center; gap:8px; font-size:14px; cursor:pointer; }
 </style>

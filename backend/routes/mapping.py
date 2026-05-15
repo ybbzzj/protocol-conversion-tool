@@ -236,11 +236,48 @@ def apply_mapping():
                     mapping['target'],
                     confidence=mapping.get('confidence', 0.8)
                 )
+
+        # 重新生成该任务的下载文件，保证人工映射会反映到最终 Excel。
+        regenerated_output = None
+        try:
+            from backend.routes.extract import tasks_status, build_processed_tables
+            from backend.services.excel_exporter import ExcelExporter
+
+            status = tasks_status.get(task_id)
+            if status:
+                linked_tables = status.get('linked_tables') or status.get('raw_tables') or []
+                output_options = status.get('output_options', {})
+                processed_tables = build_processed_tables(
+                    linked_tables,
+                    field_mappings=mappings,
+                    output_options=output_options
+                )
+
+                old_output = status.get('output_path')
+                output_dir = os.path.join('backend', 'outputs')
+                os.makedirs(output_dir, exist_ok=True)
+                exporter = ExcelExporter(output_dir)
+                regenerated_output = exporter.export_with_template(processed_tables, task_id)
+
+                if old_output and old_output != regenerated_output and os.path.exists(old_output):
+                    try:
+                        os.remove(old_output)
+                    except Exception as remove_error:
+                        print(f"[应用映射] 删除旧输出失败: {remove_error}")
+
+                status['processed_tables'] = processed_tables
+                status['output_path'] = regenerated_output
+                status['message'] = '字段映射已应用并重新生成结果'
+        except Exception as regen_error:
+            import traceback
+            print(f"[应用映射] 重新生成输出失败: {traceback.format_exc()}")
+            return error_response(50001, f"映射已保存，但重新生成结果失败: {str(regen_error)}")
         
         return success_response({
             'success': True,
             'applied_count': applied_count,
-            'task_id': task_id
+            'task_id': task_id,
+            'output_path': regenerated_output
         })
         
     except Exception as e:

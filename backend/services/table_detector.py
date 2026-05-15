@@ -54,6 +54,14 @@ COL_VALUE_CANDIDATES = ['值']
 
 # ─── 辅助函数 ─────────────────────────────────────────────────────────────────
 
+EMPTY_CELL_MARKERS = {'', '—', '-', 'N/A', 'n/a', '无'}
+
+
+def _is_effective_cell(value: Any) -> bool:
+    text = str(value).strip() if value is not None else ''
+    return bool(text and text not in EMPTY_CELL_MARKERS)
+
+
 def _get_para_text(para_elem) -> str:
     """从段落 XML 元素中提取纯文本"""
     text = ''
@@ -199,6 +207,43 @@ def _dedup_headers(header_row: List[str]) -> Tuple[List[str], List[int]]:
             prev = h_clean if h_clean else None
         # 相同的相邻值跳过（水平合并重复列）
     return unique_headers, kept_indices
+
+
+def _first_non_empty_cell_text(row_dict: Dict[str, str]) -> str:
+    for value in row_dict.values():
+        if _is_effective_cell(value):
+            return str(value).strip()
+    return ''
+
+
+def _is_note_row(row_dict: Dict[str, str]) -> bool:
+    """识别表格末尾或中间单独成行的注释行。"""
+    first_text = _first_non_empty_cell_text(row_dict)
+    return first_text.startswith(('注：', '注:', '说明：', '说明:'))
+
+
+def _merge_continuation_row(prev_row: Dict[str, str], row_dict: Dict[str, str]) -> None:
+    """将垂直合并单元格的续行信息合并到上一条数据项。"""
+    append_fields = ('备注', '说明', '数据来源', '取值说明')
+
+    for key, value in row_dict.items():
+        if not _is_effective_cell(value):
+            continue
+
+        current = str(prev_row.get(key, '')).strip()
+        incoming = str(value).strip()
+
+        if not current or current in EMPTY_CELL_MARKERS:
+            prev_row[key] = incoming
+            continue
+
+        if incoming == current:
+            continue
+
+        if any(field in key for field in append_fields):
+            parts = [p.strip() for p in re.split(r'[;；]', current) if p.strip()]
+            if incoming not in parts:
+                prev_row[key] = current + '；' + incoming
 
 
 def _extract_msg_name_from_info_row(row_unique: List[str]) -> str:
@@ -699,9 +744,14 @@ class TableDetector:
             row = grid[r_idx]
 
             row_dict = {}
+            content_vmerge_cont = False
             for h_idx, (h, col_idx) in enumerate(zip(headers, kept_indices)):
                 val = row[col_idx] if col_idx < len(row) else ''
                 row_dict[h] = val.strip()
+                if (is_vmerge_cont and col_idx < len(is_vmerge_cont[r_idx])
+                        and is_vmerge_cont[r_idx][col_idx]
+                        and h in content_field_names):
+                    content_vmerge_cont = True
 
             # 过滤纯空行
             row_all = ''.join(row_dict.values())
@@ -709,7 +759,7 @@ class TableDetector:
                 continue
 
             # 过滤注释行
-            if any(row_all.startswith(p) for p in ['注：', '注:', '说明：', '说明:']):
+            if _is_note_row(row_dict):
                 continue
 
             # 过滤噪声（参见附录等）
@@ -761,6 +811,11 @@ class TableDetector:
             if not has_non_content_data:
                 continue
 
+            # 垂直合并的数据项名称续行表示内部拆分，不应输出为重复数据项。
+            if content_vmerge_cont and data_rows:
+                _merge_continuation_row(data_rows[-1], row_dict)
+                continue
+
             data_rows.append(row_dict)
 
         return data_rows
@@ -801,7 +856,12 @@ class DocumentParser:
         from datetime import datetime
         
         # 仅保留一份结果
-        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(doc_path))), 'table_recognition_results')
+        try:
+            from backend.config import Config
+            base_dir = Config.BASE_DIR
+        except Exception:
+            base_dir = os.getcwd()
+        output_dir = os.path.join(base_dir, 'table_recognition_results')
         os.makedirs(output_dir, exist_ok=True)
         output_file = os.path.join(output_dir, 'latest_recognition.json')
         

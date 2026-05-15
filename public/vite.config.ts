@@ -5,7 +5,20 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: 5173,
-    // 如需代理后端：
-    // proxy: { '/api': { target: 'http://localhost:8000', changeOrigin: true } }
+    // ✅ 代理后端 API 请求到 http://localhost:5001
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5001',
+        changeOrigin: true,
+        // ✅ 重写路径: /api/* 直接发送到后端 /api/*（不做路径转换）
+        rewrite: (path) => path
+      },
+      // ✅ 代理 /extract 路由到后端，并添加 /api 前缀
+      '/extract': {
+        target: 'http://localhost:5001',
+        changeOrigin: true,
+        rewrite: (path) => `/api${path}`
+      }
+    }
   }
 })

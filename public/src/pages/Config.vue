@@ -87,7 +87,11 @@ function refreshProtocolFields(){ protocolFields.value = loadFromLS(LS_PROTOCOL_
 function refreshTargetFields(){ targetFields.value = loadFromLS(LS_TARGET_FIELDS) }
 
 function addProtocolField(){
-  const name = pfName.value.trim(); if(!name){ toast.show('请输入字段名'); return }
+  const name = pfName.value.trim()
+  if(!name){
+    toast.show('请输入字段名')
+    return
+  }
   const items = loadFromLS(LS_PROTOCOL_FIELDS)
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
   items.push({ id, name })
@@ -110,7 +114,11 @@ function deleteProtocolField(item: FieldItem){
 }
 
 function addTargetField(){
-  const name = tfName.value.trim(); if(!name){ toast.show('请输入字段名'); return }
+  const name = tfName.value.trim()
+  if(!name){
+    toast.show('请输入字段名')
+    return
+  }
   const items = loadFromLS(LS_TARGET_FIELDS)
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`
   items.push({ id, name })
@@ -150,7 +158,7 @@ async function onImportFileChange(ev: Event){
     const json = JSON.parse(text)
     const incomingProtocol: FieldItem[] = Array.isArray(json?.protocolFields) ? json.protocolFields : []
     const incomingTarget: FieldItem[] = Array.isArray(json?.targetFields) ? json.targetFields : []
-    // 以名称去重合并，保留现有字段
+    // 以名称去重合并，保留现有字段code
     const mergedProtocol = mergeByName(loadFromLS(LS_PROTOCOL_FIELDS), incomingProtocol)
     const mergedTarget = mergeByName(loadFromLS(LS_TARGET_FIELDS), incomingTarget)
     saveToLS(LS_PROTOCOL_FIELDS, mergedProtocol)

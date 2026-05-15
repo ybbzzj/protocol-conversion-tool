@@ -1,0 +1,716 @@
+{
+  "timestamp": "2026-02-28T14:59:00.014230",
+  "source_document": "测试协议20260227.docx",
+  "statistics": {
+    "total_protocol_fields": 28,
+    "total_target_fields": 28,
+    "total_mappings": 28,
+    "auto_matched_count": 28
+  },
+  "protocol_fields": [
+    {
+      "id": "pf_1",
+      "name": "计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "",
+      "table": "检查结果",
+      "row": 1
+    },
+    {
+      "id": "pf_2",
+      "name": "计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "",
+      "table": "检查结果",
+      "row": 1
+    },
+    {
+      "id": "pf_3",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。",
+      "table": "某设备装置测量数据1",
+      "row": 1
+    },
+    {
+      "id": "pf_4",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10",
+      "table": "某设备装置测量数据1",
+      "row": 2
+    },
+    {
+      "id": "pf_5",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。",
+      "table": "某设备装置测量数据2",
+      "row": 1
+    },
+    {
+      "id": "pf_6",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10",
+      "table": "某设备装置测量数据2",
+      "row": 2
+    },
+    {
+      "id": "pf_7",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。",
+      "table": "某设备装置测量数据3",
+      "row": 1
+    },
+    {
+      "id": "pf_8",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10",
+      "table": "某设备装置测量数据3",
+      "row": 2
+    },
+    {
+      "id": "pf_9",
+      "name": "平均角速度wx",
+      "type": "UINTEGER-32",
+      "unit": "",
+      "remark": "惯性测量系°/h",
+      "table": "某设备装置测量数据3",
+      "row": 3
+    },
+    {
+      "id": "pf_10",
+      "name": "电压",
+      "type": "USHORT",
+      "unit": "ms",
+      "remark": "0~0xFFFF，实际电压/v = （模拟量采集数据/212）×21",
+      "table": "某设备装置测量数据3",
+      "row": 4
+    },
+    {
+      "id": "pf_11",
+      "name": "某设备计时时间",
+      "type": "USHORT",
+      "unit": "ms",
+      "remark": "取值范围0~400",
+      "table": "某设备装置测量数据3",
+      "row": 5
+    },
+    {
+      "id": "pf_12",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。",
+      "table": "某设备装置测量数据3",
+      "row": 6
+    },
+    {
+      "id": "pf_13",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。",
+      "table": "某设备装置测量数据4",
+      "row": 1
+    },
+    {
+      "id": "pf_14",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10",
+      "table": "某设备装置测量数据4",
+      "row": 2
+    },
+    {
+      "id": "pf_15",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。",
+      "table": "某设备装置测量数据5",
+      "row": 1
+    },
+    {
+      "id": "pf_16",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "",
+      "remark": "乘以10",
+      "table": "某设备装置测量数据5",
+      "row": 2
+    },
+    {
+      "id": "pf_17",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。",
+      "table": "某状态信息",
+      "row": 1
+    },
+    {
+      "id": "pf_18",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "",
+      "remark": "乘以10",
+      "table": "某状态信息",
+      "row": 2
+    },
+    {
+      "id": "pf_19",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。",
+      "table": "某状态信息2",
+      "row": 1
+    },
+    {
+      "id": "pf_20",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10",
+      "table": "某状态信息2",
+      "row": 2
+    },
+    {
+      "id": "pf_21",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。",
+      "table": "某设备装置测量数据7",
+      "row": 1
+    },
+    {
+      "id": "pf_22",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10",
+      "table": "某设备装置测量数据7",
+      "row": 2
+    },
+    {
+      "id": "pf_23",
+      "name": "总信息",
+      "type": "USHORT",
+      "unit": "",
+      "remark": "",
+      "table": "某状态信息2",
+      "row": 1
+    },
+    {
+      "id": "pf_24",
+      "name": "总信息",
+      "type": "FLOAT",
+      "unit": "",
+      "remark": "",
+      "table": "某状态信息2",
+      "row": 2
+    },
+    {
+      "id": "pf_25",
+      "name": "位置信息",
+      "type": "FLOAT",
+      "unit": "",
+      "remark": "",
+      "table": "某状态信息2",
+      "row": 3
+    },
+    {
+      "id": "pf_26",
+      "name": "电压",
+      "type": "UINT8",
+      "unit": "",
+      "remark": "",
+      "table": "综合状态数据",
+      "row": 1
+    },
+    {
+      "id": "pf_27",
+      "name": "电流",
+      "type": "UINT8",
+      "unit": "",
+      "remark": "",
+      "table": "综合状态数据",
+      "row": 2
+    },
+    {
+      "id": "pf_28",
+      "name": "信道状态",
+      "type": "见表B.1某信道状态",
+      "unit": "",
+      "remark": "",
+      "table": "综合状态数据",
+      "row": 3
+    }
+  ],
+  "target_fields": [
+    {
+      "id": "tf_1",
+      "name": "计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": ""
+    },
+    {
+      "id": "tf_2",
+      "name": "计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": ""
+    },
+    {
+      "id": "tf_3",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。"
+    },
+    {
+      "id": "tf_4",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10"
+    },
+    {
+      "id": "tf_5",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。"
+    },
+    {
+      "id": "tf_6",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10"
+    },
+    {
+      "id": "tf_7",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。"
+    },
+    {
+      "id": "tf_8",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10"
+    },
+    {
+      "id": "tf_9",
+      "name": "平均角速度wx",
+      "type": "UINTEGER-32",
+      "unit": "",
+      "remark": "惯性测量系°/h"
+    },
+    {
+      "id": "tf_10",
+      "name": "电压",
+      "type": "USHORT",
+      "unit": "ms",
+      "remark": "0~0xFFFF，实际电压/v = （模拟量采集数据/212）×21"
+    },
+    {
+      "id": "tf_11",
+      "name": "某设备计时时间",
+      "type": "USHORT",
+      "unit": "ms",
+      "remark": "取值范围0~400"
+    },
+    {
+      "id": "tf_12",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。"
+    },
+    {
+      "id": "tf_13",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。"
+    },
+    {
+      "id": "tf_14",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10"
+    },
+    {
+      "id": "tf_15",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。"
+    },
+    {
+      "id": "tf_16",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "",
+      "remark": "乘以10"
+    },
+    {
+      "id": "tf_17",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。"
+    },
+    {
+      "id": "tf_18",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "",
+      "remark": "乘以10"
+    },
+    {
+      "id": "tf_19",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。"
+    },
+    {
+      "id": "tf_20",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10"
+    },
+    {
+      "id": "tf_21",
+      "name": "某设备计时时间",
+      "type": "UINTEGER-32",
+      "unit": "ms",
+      "remark": "32位整型数，LSB=1ms，以上电为零点，软件开算时刻清零。"
+    },
+    {
+      "id": "tf_22",
+      "name": "帧计数",
+      "type": "UINTEGER-32",
+      "unit": "—",
+      "remark": "乘以10"
+    },
+    {
+      "id": "tf_23",
+      "name": "总信息",
+      "type": "USHORT",
+      "unit": "",
+      "remark": ""
+    },
+    {
+      "id": "tf_24",
+      "name": "总信息",
+      "type": "FLOAT",
+      "unit": "",
+      "remark": ""
+    },
+    {
+      "id": "tf_25",
+      "name": "位置信息",
+      "type": "FLOAT",
+      "unit": "",
+      "remark": ""
+    },
+    {
+      "id": "tf_26",
+      "name": "电压",
+      "type": "UINT8",
+      "unit": "",
+      "remark": ""
+    },
+    {
+      "id": "tf_27",
+      "name": "电流",
+      "type": "UINT8",
+      "unit": "",
+      "remark": ""
+    },
+    {
+      "id": "tf_28",
+      "name": "信道状态",
+      "type": "见表B.1某信道状态",
+      "unit": "",
+      "remark": ""
+    }
+  ],
+  "field_mappings": [
+    {
+      "id": "map_1",
+      "protocol_field_id": "pf_1",
+      "protocol_field_name": "计时时间",
+      "target_field_id": "tf_1",
+      "target_field_name": "计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_2",
+      "protocol_field_id": "pf_2",
+      "protocol_field_name": "计时时间",
+      "target_field_id": "tf_2",
+      "target_field_name": "计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_3",
+      "protocol_field_id": "pf_3",
+      "protocol_field_name": "某设备计时时间",
+      "target_field_id": "tf_3",
+      "target_field_name": "某设备计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_4",
+      "protocol_field_id": "pf_4",
+      "protocol_field_name": "帧计数",
+      "target_field_id": "tf_4",
+      "target_field_name": "帧计数",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_5",
+      "protocol_field_id": "pf_5",
+      "protocol_field_name": "某设备计时时间",
+      "target_field_id": "tf_5",
+      "target_field_name": "某设备计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_6",
+      "protocol_field_id": "pf_6",
+      "protocol_field_name": "帧计数",
+      "target_field_id": "tf_6",
+      "target_field_name": "帧计数",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_7",
+      "protocol_field_id": "pf_7",
+      "protocol_field_name": "某设备计时时间",
+      "target_field_id": "tf_7",
+      "target_field_name": "某设备计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_8",
+      "protocol_field_id": "pf_8",
+      "protocol_field_name": "帧计数",
+      "target_field_id": "tf_8",
+      "target_field_name": "帧计数",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_9",
+      "protocol_field_id": "pf_9",
+      "protocol_field_name": "平均角速度wx",
+      "target_field_id": "tf_9",
+      "target_field_name": "平均角速度wx",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_10",
+      "protocol_field_id": "pf_10",
+      "protocol_field_name": "电压",
+      "target_field_id": "tf_10",
+      "target_field_name": "电压",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_11",
+      "protocol_field_id": "pf_11",
+      "protocol_field_name": "某设备计时时间",
+      "target_field_id": "tf_11",
+      "target_field_name": "某设备计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_12",
+      "protocol_field_id": "pf_12",
+      "protocol_field_name": "某设备计时时间",
+      "target_field_id": "tf_12",
+      "target_field_name": "某设备计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_13",
+      "protocol_field_id": "pf_13",
+      "protocol_field_name": "某设备计时时间",
+      "target_field_id": "tf_13",
+      "target_field_name": "某设备计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_14",
+      "protocol_field_id": "pf_14",
+      "protocol_field_name": "帧计数",
+      "target_field_id": "tf_14",
+      "target_field_name": "帧计数",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_15",
+      "protocol_field_id": "pf_15",
+      "protocol_field_name": "某设备计时时间",
+      "target_field_id": "tf_15",
+      "target_field_name": "某设备计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_16",
+      "protocol_field_id": "pf_16",
+      "protocol_field_name": "帧计数",
+      "target_field_id": "tf_16",
+      "target_field_name": "帧计数",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_17",
+      "protocol_field_id": "pf_17",
+      "protocol_field_name": "某设备计时时间",
+      "target_field_id": "tf_17",
+      "target_field_name": "某设备计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_18",
+      "protocol_field_id": "pf_18",
+      "protocol_field_name": "帧计数",
+      "target_field_id": "tf_18",
+      "target_field_name": "帧计数",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_19",
+      "protocol_field_id": "pf_19",
+      "protocol_field_name": "某设备计时时间",
+      "target_field_id": "tf_19",
+      "target_field_name": "某设备计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_20",
+      "protocol_field_id": "pf_20",
+      "protocol_field_name": "帧计数",
+      "target_field_id": "tf_20",
+      "target_field_name": "帧计数",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_21",
+      "protocol_field_id": "pf_21",
+      "protocol_field_name": "某设备计时时间",
+      "target_field_id": "tf_21",
+      "target_field_name": "某设备计时时间",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_22",
+      "protocol_field_id": "pf_22",
+      "protocol_field_name": "帧计数",
+      "target_field_id": "tf_22",
+      "target_field_name": "帧计数",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_23",
+      "protocol_field_id": "pf_23",
+      "protocol_field_name": "总信息",
+      "target_field_id": "tf_23",
+      "target_field_name": "总信息",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_24",
+      "protocol_field_id": "pf_24",
+      "protocol_field_name": "总信息",
+      "target_field_id": "tf_24",
+      "target_field_name": "总信息",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_25",
+      "protocol_field_id": "pf_25",
+      "protocol_field_name": "位置信息",
+      "target_field_id": "tf_25",
+      "target_field_name": "位置信息",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_26",
+      "protocol_field_id": "pf_26",
+      "protocol_field_name": "电压",
+      "target_field_id": "tf_26",
+      "target_field_name": "电压",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_27",
+      "protocol_field_id": "pf_27",
+      "protocol_field_name": "电流",
+      "target_field_id": "tf_27",
+      "target_field_name": "电流",
+      "confidence": 1.0,
+      "auto_matched": true
+    },
+    {
+      "id": "map_28",
+      "protocol_field_id": "pf_28",
+      "protocol_field_name": "信道状态",
+      "target_field_id": "tf_28",
+      "target_field_name": "信道状态",
+      "confidence": 1.0,
+      "auto_matched": true
+    }
+  ]
+}

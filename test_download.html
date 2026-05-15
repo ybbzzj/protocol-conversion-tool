@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Excel下载测试</title>
+</head>
+<body>
+    <h1>Excel文件下载测试</h1>
+    
+    <button onclick="testDownload()">测试下载API文件</button>
+    <button onclick="testDirectDownload()">测试直接下载</button>
+    
+    <div id="result"></div>
+
+    <script>
+        async function testDownload() {
+            try {
+                const response = await fetch('http://localhost:5001/api/extract/download/01f0eb35-531f-4e00-ae40-9800c92f5104');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const contentDisposition = response.headers.get('content-disposition');
+                let filename = 'test_download.xlsx';
+                if (contentDisposition) {
+                    const matches = contentDisposition.match(/filename[^;=\n]*=((["'])*.*?\2|[^;\n]*)/);
+                    if (matches && matches[1]) {
+                        filename = matches[1].replace(/["']/g, '');
+                    }
+                }
+                
+                const blob = await response.blob();
+                console.log('Blob类型:', blob.type);
+                console.log('Blob大小:', blob.size);
+                
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+                
+                document.getElementById('result').innerHTML = '<p style="color: green;">✅ 下载完成: ' + filename + '</p>';
+                
+            } catch (error) {
+                console.error('下载失败:', error);
+                document.getElementById('result').innerHTML = '<p style="color: red;">❌ 下载失败: ' + error.message + '</p>';
+            }
+        }
+        
+        async function testDirectDownload() {
+            // 直接跳转到下载链接
+            window.open('http://localhost:5001/api/extract/download/01f0eb35-531f-4e00-ae40-9800c92f5104', '_blank');
+            document.getElementById('result').innerHTML = '<p style="color: blue;">🔗 已打开下载链接</p>';
+        }
+    </script>
+</body>
+</html>

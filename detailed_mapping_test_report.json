@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-02-18 14:29:32",
+  "summary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "pass_rate": "100.0%"
+  },
+  "details": [
+    {
+      "test": "表格检测测试",
+      "success": true,
+      "details": "检测到3个表格: 协议字段表2个, 元数据表1个, 未知类型0个"
+    },
+    {
+      "test": "字段匹配测试",
+      "success": true,
+      "details": "匹配率: 50.0% (9/18)"
+    },
+    {
+      "test": "API端点测试",
+      "success": true,
+      "details": "通过率: 100.0% (4/4)"
+    }
+  ]
+}

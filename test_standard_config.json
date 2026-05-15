@@ -1,0 +1,46 @@
+{
+  "protocolFields": [
+    {
+      "id": "std_pf_1",
+      "name": "序号"
+    },
+    {
+      "id": "std_pf_2",
+      "name": "参数名称"
+    },
+    {
+      "id": "std_pf_3",
+      "name": "数据类型说明"
+    },
+    {
+      "id": "std_pf_4",
+      "name": "单位"
+    },
+    {
+      "id": "std_pf_5",
+      "name": "备注"
+    }
+  ],
+  "targetFields": [
+    {
+      "id": "std_tf_1",
+      "name": "ID"
+    },
+    {
+      "id": "std_tf_2",
+      "name": "参数"
+    },
+    {
+      "id": "std_tf_3",
+      "name": "数据类型"
+    },
+    {
+      "id": "std_tf_4",
+      "name": "单位"
+    },
+    {
+      "id": "std_tf_5",
+      "name": "备注"
+    }
+  ]
+}

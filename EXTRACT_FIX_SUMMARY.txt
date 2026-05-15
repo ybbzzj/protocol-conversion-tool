@@ -1,0 +1,202 @@
+================================================================================
+                🔧 前端提取界面"创建任务失败"问题修复总结
+================================================================================
+
+【问题描述】
+  ❌ 前端"文档提取"页面点击"开始提取"时，显示"创建任务失败"提示
+  ❌ 任务未被创建
+  ❌ 后端 API 日志无错误记录
+
+【根本原因】
+  📌 FormData 格式不匹配 - 前后端约定冲突
+  
+  前端代码 (错误):
+    fd.append('field_ids', JSON.stringify(selectedFieldIds.value))
+    // 发送: field_ids = "[\"id1\",\"id2\"]" (单个 JSON 字符串)
+  
+  后端期望:
+    request.form.getlist('field_ids')
+    // 期望: field_ids=id1&field_ids=id2 (多个表单字段)
+  
+  结果:
+    ❌ 格式不匹配导致任务创建失败
+
+【修复内容】
+  ✅ 已修改: public/src/pages/Extract.vue (第 188-203 行)
+  
+  修改前:
+    fd.append('field_ids', JSON.stringify(selectedFieldIds.value))
+    catch(e:any){ toast.show('创建任务失败') }
+  
+  修改后:
+    for(const fieldId of selectedFieldIds.value){
+      fd.append('field_ids', fieldId)  // ✅ 为每个字段添加独立的表单字段
+    }
+    catch(e:any){ 
+      console.error('创建任务失败:', e)
+      toast.show('创建任务失败: ' + (e.response?.data?.message || e.message || '未知错误'))
+    }
+  
+  改进:
+    ✅ 修正 FormData 格式 - 前后端约定一致
+    ✅ 改进错误提示 - 显示具体错误信息
+    ✅ 添加调试日志 - console.error() 便于诊断
+
+【使用前置条件】
+  ⚠️  必须先添加协议字段！否则仍会出现 "请选择协议字段" 提示
+  
+  步骤:
+    1. 打开 http://localhost:5173/
+    2. 左侧菜单 → "字段配置" 页面
+    3. 在"协议字段"部分新增字段：
+       - 序号
+       - 信源
+       - 信宿
+       - 信息内容
+       - ... (根据实际需要)
+    4. 返回 "文档提取" 页面
+
+【测试验证】
+
+方式 1: 后端 API 直接测试 (验证 API 是否正常)
+  cd /Users/yuanyuqing/Documents/code/schoolProject
+  curl -s -X POST http://localhost:5001/api/extract/start \
+    -F "file=@word/测试协议20251216.docx" \
+    -F "field_ids=field1" \
+    -F "field_ids=field2" | python3 -m json.tool
+  
+  预期输出:
+  {
+    "code": 0,
+    "data": {
+      "task_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    },
+    "message": "成功"
+  }
+
+方式 2: Python 自动化测试脚本 (推荐)
+  cd /Users/yuanyuqing/Documents/code/schoolProject
+  python3 test_extract_fix.py
+  
+  功能:
+    ✓ 检查后端是否运行
+    ✓ 创建提取任务
+    ✓ 轮询任务状态
+    ✓ 下载结果文件
+    ✓ 保存测试结果到本地
+  
+  成功标志: 所有 4 个步骤都显示 ✅
+
+方式 3: 前端 UI 测试 (最终用户体验)
+  1. 打开 http://localhost:5173/
+  2. 左侧菜单 → "字段配置"
+  3. 新增几个协议字段（如 "序号", "信源" 等）
+  4. 左侧菜单 → "文档提取"
+  5. 点击"刷新"按钮，确保字段列表出现
+  6. 勾选几个字段
+  7. 上传 word/测试协议20251216.docx
+  8. 点击"开始提取"按钮
+  
+  预期:
+    ✅ 显示 "任务已创建，开始查询进度"
+    ✅ 进度条从 0% 增长到 100%
+    ✅ 显示 "提取完成，可下载结果"
+    ✅ 可以点击下载 Excel 文件
+
+【浏览器控制台诊断】
+  打开浏览器 F12 → Console 标签页
+  
+  成功时应该看到:
+    - POST /api/extract/start 请求 (状态 200)
+    - 多个 GET /api/extract/status/{taskId} 请求 (状态 200)
+    - GET /api/extract/download/{taskId} 请求 (状态 200)
+  
+  失败时应该看到:
+    - console.error('创建任务失败:', {...错误信息...})
+    - 网络请求显示红色 (状态 ≠ 200)
+
+【修改文件清单】
+  ✅ public/src/pages/Extract.vue (已修改)
+  📄 EXTRACT_ISSUE_DIAGNOSIS_AND_FIX.md (诊断报告)
+  🧪 test_extract_fix.py (自动化测试脚本)
+
+【已测试环境】
+  ✅ 后端 API 直接调用: 成功
+  ✅ 后端任务处理: 成功
+  ✅ Excel 导出: 成功
+  ⏳ 前端 UI: 等待热重载确认
+
+【热重载说明】
+  由于前端使用 Vite 开发服务器，修改代码后会自动热重载：
+  
+  方式 1: 自动热重载 (推荐)
+    - 代码已修改
+    - 检查前端终端是否显示 "[vite] hot update"
+    - 浏览器页面会自动刷新
+  
+  方式 2: 手动刷新
+    - 打开 http://localhost:5173/
+    - 按 Ctrl+Shift+R (强制刷新，清除缓存)
+    - 或 F5 刷新
+
+【常见问题】
+
+Q: 修改代码后前端没有更新?
+A: 1. 检查前端终端日志是否有 "hot update" 提示
+   2. 如无，手动刷新: Ctrl+Shift+R
+   3. 如仍无，检查前端服务是否正常运行
+
+Q: 创建任务时仍显示 "请选择协议字段"?
+A: 1. 确保已在"字段配置"页面添加了协议字段
+   2. 点击"文档提取"页面的"刷新"按钮
+   3. 检查字段列表是否显示
+
+Q: 上传文件后仍然失败?
+A: 1. 打开浏览器 F12 → Console 查看具体错误
+   2. 确保上传的是 .doc 或 .docx 文件
+   3. 检查文件大小是否过大 (通常支持 100MB 以内)
+   4. 运行 python3 test_extract_fix.py 进行 API 测试
+
+Q: 下载结果按钮无法点击?
+A: 1. 等待提取完成（进度条 100%）
+   2. 查看浏览器控制台是否有错误
+   3. 检查文件是否已成功生成到 backend/outputs/
+
+【后续改进】
+  💡 为首次使用者提供初始化字段
+  💡 支持从后端 API 获取字段定义
+  💡 添加批量导入字段功能
+  💡 优化大文件处理性能
+
+【相关文档】
+  📖 doc/前后端快速启动指南.txt - 完整启动说明
+  📖 doc/前后端接口对应关系及功能文档.md - API 详细文档
+  📄 EXTRACT_ISSUE_DIAGNOSIS_AND_FIX.md - 详细诊断报告
+  🧪 test_extract_fix.py - 自动化测试脚本
+
+【确认清单】
+  ✅ 代码已修改 (public/src/pages/Extract.vue)
+  ✅ 后端 API 验证通过
+  ✅ 测试脚本已创建
+  ⏳ 等待用户进行 UI 测试验证
+
+【下一步操作】
+  1. 前端热重载或刷新浏览器
+  2. 按照 "使用前置条件" 添加协议字段
+  3. 按照 "方式 3: 前端 UI 测试" 进行测试
+  4. 如有问题，运行 python3 test_extract_fix.py 诊断
+
+【更新时间】
+  修复时间: 2026-02-12
+  修复版本: v2.1.0
+  测试状态: ✅ 后端通过, ⏳ 前端待确认
+
+================================================================================
+
+技术细节:
+  • FormData 多值字段: fd.append() 多次相同 key
+  • Flask getlist(): request.form.getlist('key') 获取多值字段
+  • 前后端通信: multipart/form-data 格式
+  • 错误处理: 增强的错误提示和调试日志
+
+================================================================================

@@ -1,0 +1,125 @@
+{
+  "timestamp": "2026-02-18 14:47:04",
+  "summary": {
+    "total_tests": 5,
+    "passed_tests": 5,
+    "failed_tests": 0,
+    "pass_rate": "100.0%"
+  },
+  "workflow_steps": [
+    {
+      "timestamp": "14:47:04",
+      "step": "用户操作",
+      "details": "进入协议提取页面"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "系统响应",
+      "details": "获取到 20 个可用字段"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "用户选择",
+      "details": "选择字段: ['参数', '数据类型', '单位', '备注', '值域']"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "用户操作",
+      "details": "上传测试文档并启动提取任务"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "系统响应",
+      "details": "任务ID: 5b0cba72-a1c5-4dbb-8d1f-b75116391a0e"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "字段传递验证",
+      "details": "期望字段: ['参数', '数据类型', '单位', '备注', '值域']"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "系统处理",
+      "details": "开始文档解析和字段提取"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "处理进度",
+      "details": "进度: 100% -  | 质量评分: 0.583"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "处理完成",
+      "details": "任务成功完成，最终质量评分: 0.583"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "质量评估",
+      "details": "分析字段映射质量"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "评估结果",
+      "details": "评分: 0.583 (poor) | 精确匹配: 0 | 模糊匹配: 5 | 未匹配: 1 | 总字段: 6"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "智能分流",
+      "details": "根据质量评分决定处理策略"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "分流决策",
+      "details": "质量评分 0.583 -> 强制修正 策略"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "执行操作",
+      "details": "执行 强制修正 策略"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "映射修正",
+      "details": "跳转到字段映射页面 (策略: 强制修正)"
+    },
+    {
+      "timestamp": "14:47:04",
+      "step": "流程完成",
+      "details": "智能预映射完整流程执行完毕"
+    }
+  ],
+  "test_results": [
+    {
+      "test": "期望字段传递",
+      "success": true,
+      "details": "正确传递 5 个字段"
+    },
+    {
+      "test": "映射质量评估",
+      "success": true,
+      "details": "评分: 0.583 (poor), 匹配率: 83.3%"
+    },
+    {
+      "test": "智能分流",
+      "success": true,
+      "details": "评分0.583 -> 强制修正策略"
+    },
+    {
+      "test": "映射预览",
+      "success": true,
+      "details": "成功获取映射预览接口"
+    },
+    {
+      "test": "完整流程",
+      "success": true,
+      "details": "耗时约3秒，质量评分0.583，采用强制修正策略"
+    }
+  ],
+  "feature_completeness": {
+    "期望字段传递": true,
+    "映射质量评估": true,
+    "智能流程分流": false,
+    "文件下载": false,
+    "映射预览": true
+  }
+}

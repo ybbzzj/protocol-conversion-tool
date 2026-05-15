@@ -1,0 +1,52 @@
+{
+  "timestamp": "2026-02-18 14:42:40",
+  "summary": {
+    "total": 7,
+    "passed": 6,
+    "failed": 1,
+    "pass_rate": "85.7%"
+  },
+  "feature_coverage": {
+    "期望字段传递": true,
+    "映射质量评估": true,
+    "智能流程分流": true,
+    "端到端集成": false
+  },
+  "details": [
+    {
+      "test": "期望字段传递",
+      "success": true,
+      "details": "正确传递了 3 个字段"
+    },
+    {
+      "test": "映射质量评估",
+      "success": true,
+      "details": "评分: 0.583 (poor), 匹配率: 83.3%"
+    },
+    {
+      "test": "文件下载",
+      "success": true,
+      "details": "文件大小: 5579 bytes"
+    },
+    {
+      "test": "智能分流验证",
+      "success": true,
+      "details": "评分0.583 -> 强制修正策略"
+    },
+    {
+      "test": "完整智能预映射流程",
+      "success": true,
+      "details": "成功完成端到端测试 - 质量评分: 0.583"
+    },
+    {
+      "test": "边界测试 - 空字段选择",
+      "success": false,
+      "details": "应该拒绝但返回: 200"
+    },
+    {
+      "test": "边界测试 - 无效字段ID",
+      "success": true,
+      "details": "正确处理无效字段"
+    }
+  ]
+}

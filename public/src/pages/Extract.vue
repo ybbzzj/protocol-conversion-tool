@@ -7,6 +7,7 @@
       <div class="actions">
         <input class="input" v-model="fieldSearch" placeholder="搜索字段..." style="max-width: 300px;" />
         <button class="btn" @click="doSearch">搜索</button>
+        <button class="btn secondary" @click="toggleSelectAll">{{ isAllSelected ? '取消全选' : '全选' }}</button>
         <button class="btn secondary" @click="reloadProtocolFields">刷新</button>
       </div>
       <div class="field-list">
@@ -61,6 +62,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { api, endpoints } from '../api'
 import { useToastStore, useLoadingStore } from '../stores/ui'
 
@@ -69,6 +71,7 @@ type TemplateItem = { id:string, name:string, field_ids:string[] }
 
 const toast = useToastStore()
 const loading = useLoadingStore()
+const router = useRouter()
 
 // 本地存储 Key
 const LS_PROTOCOL_FIELDS = 'local_protocol_fields'
@@ -83,6 +86,7 @@ const fieldSearch = ref('')
 
 const fileObj = ref<File | null>(null)
 const currentTaskId = ref<string>('')
+const originalFilename = ref<string>('')
 const taskStatus = ref<{ status:string, progress:number, message?:string } | null>(null)
 let pollTimer: any = null
 
@@ -92,6 +96,23 @@ const filteredFields = computed(()=>{
   const q = fieldSearch.value.trim().toLowerCase()
   return q ? protocolFields.value.filter(f=>f.name.toLowerCase().includes(q)) : protocolFields.value
 })
+
+const isAllSelected = computed(() => {
+  return filteredFields.value.length > 0 && filteredFields.value.every(f => selectedFieldIds.value.includes(f.id))
+})
+
+function toggleSelectAll() {
+  if (isAllSelected.value) {
+    // 如果已经全选，则在当前筛选结果中取消选中
+    const filteredIds = filteredFields.value.map(f => f.id)
+    selectedFieldIds.value = selectedFieldIds.value.filter(id => !filteredIds.includes(id))
+  } else {
+    // 如果未全选，则将当前筛选结果全部加入选中列表（去重）
+    const filteredIds = filteredFields.value.map(f => f.id)
+    const newIds = [...new Set([...selectedFieldIds.value, ...filteredIds])]
+    selectedFieldIds.value = newIds
+  }
+}
 
 function saveFieldsToLocal(items: FieldItem[]){ localStorage.setItem(LS_PROTOCOL_FIELDS, JSON.stringify(items)) }
 function loadFieldsFromLocal(): FieldItem[]{ try{ const raw = localStorage.getItem(LS_PROTOCOL_FIELDS); return raw ? JSON.parse(raw) : [] } catch{ return [] } }
@@ -183,6 +204,10 @@ function downloadJSON(data: any, filename: string){
 function onFileChange(ev: Event){
   const input = ev.target as HTMLInputElement
   fileObj.value = input.files && input.files[0] ? input.files[0] : null
+  // 保存原始文件名
+  if(fileObj.value){
+    originalFilename.value = fileObj.value.name
+  }
 }
 
 async function startExtract(){
@@ -192,13 +217,19 @@ async function startExtract(){
     loading.start('创建提取任务...')
     const fd = new FormData()
     fd.append('file', fileObj.value)
-    fd.append('field_ids', JSON.stringify(selectedFieldIds.value))
+    // 正确方式: 为每个 field_id 添加独立的表单字段，后端用 request.form.getlist() 获取
+    for(const fieldId of selectedFieldIds.value){
+      fd.append('field_ids', fieldId)
+    }
     const { data } = await api.post(endpoints.extractStart, fd, { headers:{ 'Content-Type':'multipart/form-data' } })
     currentTaskId.value = data?.data?.task_id || ''
     if(!currentTaskId.value){ toast.show('未返回任务ID'); return }
     toast.show('任务已创建，开始查询进度')
     startPolling()
-  }catch(e:any){ toast.show('创建任务失败') }
+  }catch(e:any){ 
+    console.error('创建任务失败:', e)
+    toast.show('创建任务失败: ' + (e.response?.data?.message || e.message || '未知错误')) 
+  }
   finally{ loading.stop() }
 }
 
@@ -211,16 +242,96 @@ function startPolling(){
       taskStatus.value = st
       if(st.status==='success' || st.status==='failed'){
         stopPolling()
-        if(st.status==='success') toast.show('提取完成，可下载结果')
-        else toast.show('提取失败：'+(st.message||''))
+        if(st.status==='success') {
+          // 智能流程分流
+          handleSmartWorkflow(st)
+        } else {
+          toast.show('提取失败：'+(st.message||''))
+        }
       }
     }catch(e:any){ /* 静默或展示错误 */ }
   }, 2000)
 }
 
+function handleSmartWorkflow(statusData) {
+  const quality = statusData.mapping_quality
+  
+  if (quality && quality.score !== undefined) {
+    const score = quality.score
+    const level = quality.level
+    
+    console.log('[智能分流] 映射质量:', quality)
+    
+    if (score > 0.9) {
+      // 高质量 - 直接下载
+      toast.show(`字段映射质量优秀(${(score*100).toFixed(1)}%)，直接下载结果`)
+      setTimeout(() => {
+        downloadResult()
+      }, 1000)
+    } else if (score > 0.7) {
+      // 中等质量 - 提示可选修正
+      const confirmMsg = `字段映射质量良好(${(score*100).toFixed(1)}%)，是否需要人工修正后再下载？\n\n匹配详情:\n- 精确匹配: ${quality.exact_count}个\n- 模糊匹配: ${quality.fuzzy_count}个\n- 未匹配: ${quality.unmatched_count}个\n\n点击"确定"进入修正页面，"取消"直接下载`
+      
+      if (confirm(confirmMsg)) {
+        // 跳转到字段映射页面
+        router.push({ name: 'mapping', params: { taskId: currentTaskId.value } })
+      } else {
+        downloadResult()
+      }
+    } else {
+      // 低质量 - 强制修正
+      toast.show(`字段映射质量较低(${(score*100).toFixed(1)}%)，需要人工修正`)
+      setTimeout(() => {
+        router.push({ name: 'mapping', params: { taskId: currentTaskId.value } })
+      }, 1500)
+    }
+  } else {
+    // 兼容旧版本或无质量评分的情况
+    toast.show('提取完成，可下载结果')
+    downloadResult()
+  }
+}
+
 function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null } }
 
-function downloadResult(){ if(!currentTaskId.value){ toast.show('任务ID缺失'); return } window.open(endpoints.extractDownload(currentTaskId.value), '_blank') }
+async function downloadResult(){
+  if(!currentTaskId.value){ toast.show('任务ID缺失'); return }
+  try{
+    loading.start('下载中...')
+    // ✅ 使用 fetch 下载文件（比 window.open 更可靠）
+    const response = await fetch(endpoints.extractDownload(currentTaskId.value))
+    if(!response.ok){ throw new Error(`HTTP ${response.status}`) }
+    
+    // 使用原始文件名作为下载文件名
+    let filename = originalFilename.value
+    // 如果原始文件名存在，移除扩展名并添加.xlsx
+    if(filename){
+      const nameWithoutExt = filename.replace(/\.[^\.]*$/, '')
+      filename = `${nameWithoutExt}.xlsx`
+    } else {
+      // 回退到默认命名
+      filename = `result_${currentTaskId.value.slice(0, 8)}.xlsx`
+    }
+    
+    // 创建 blob 并下载
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    toast.show('下载完成')
+  }catch(e:any){
+    console.error('下载失败:', e)
+    toast.show('下载失败: ' + (e.message || '未知错误'))
+  }finally{
+    loading.stop()
+  }
+}
 
 onMounted(()=>{ reloadProtocolFields(); reloadTemplates() })
 </script>

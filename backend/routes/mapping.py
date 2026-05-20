@@ -421,18 +421,31 @@ def _extract_fields_and_data_from_raw_tables(raw_tables: List[Dict]) -> Tuple[Li
         if not raw_tables:
             return [], []
         
-        # 使用第一个表格的字段作为标准字段
-        first_table = raw_tables[0]
-        if not first_table.get('data_rows'):
+        # 提取所有字段定义表的字段名。不能只看第一个表：同一份协议里常见
+        # “数据处理/数据处理方法”等字段只出现在后续表，用户仍需要手动映射。
+        fields = []
+        seen_fields = set()
+        for table in raw_tables:
+            if table.get('table_type') not in ('field_def', '', None):
+                continue
+            for header in table.get('headers', []):
+                if header and not str(header).startswith('_') and header not in seen_fields:
+                    fields.append(header)
+                    seen_fields.add(header)
+            for row in table.get('data_rows', []):
+                for field in row.keys():
+                    if field and not str(field).startswith('_') and field not in seen_fields:
+                        fields.append(field)
+                        seen_fields.add(field)
+
+        if not fields:
             return [], []
-        
-        # 提取字段名（从第一行数据的键）
-        first_row = first_table['data_rows'][0]
-        fields = list(first_row.keys())
-        
-        # 提取所有表格的数据，每表只取第一行
+
+        # 提取所有表格的数据，每表只取第一行，用于前端预览示例。
         all_table_data = []
         for table in raw_tables:
+            if table.get('table_type') not in ('field_def', '', None):
+                continue
             table_name = table.get('msg_name', 'Unknown')
             data_rows = table.get('data_rows', [])
             if data_rows:

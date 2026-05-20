@@ -295,9 +295,11 @@ const fieldSuggestions = reactive<Record<string, FieldSuggestion[]>>({})
 
 // 标准目标字段
 const standardTargetFields = [
-  'ID', '参数', '内容', '信号名称', '数据类型', '类型', 
-  '长度', '字节', '单位', '备注', '值域', '信源', '信宿', 
-  '信息内容', '消息ID', '接口名称', '时间戳', '转换类型'
+  '名称', '信源系统码', '信源机器码', '信宿系统码', '信宿机器码',
+  '子地址', '数据段长度', 'ID', '内容', '子内容', '类型（bit）',
+  '转换类型', '判读公式', '转换公式', '单位', '备注', '参数',
+  '信号名称', '数据类型', '类型', '长度', '字节', '值域', '信源',
+  '信宿', '信息内容', '消息ID', '接口名称', '时间戳'
 ]
 
 // 拖拽状态
@@ -320,8 +322,7 @@ const unmappedSourceFields = computed(() => {
 
 // 计算属性：未映射的目标字段
 const unmappedTargetFields = computed(() => {
-  const mappedTargets = new Set(mappings.map(m => m.target))
-  return standardTargetFields.filter(field => !mappedTargets.has(field))
+  return standardTargetFields
 })
 
 // 方法定义

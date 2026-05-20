@@ -222,30 +222,6 @@ def _is_note_row(row_dict: Dict[str, str]) -> bool:
     return first_text.startswith(('注：', '注:', '说明：', '说明:'))
 
 
-def _merge_continuation_row(prev_row: Dict[str, str], row_dict: Dict[str, str]) -> None:
-    """将垂直合并单元格的续行信息合并到上一条数据项。"""
-    append_fields = ('备注', '说明', '数据来源', '取值说明')
-
-    for key, value in row_dict.items():
-        if not _is_effective_cell(value):
-            continue
-
-        current = str(prev_row.get(key, '')).strip()
-        incoming = str(value).strip()
-
-        if not current or current in EMPTY_CELL_MARKERS:
-            prev_row[key] = incoming
-            continue
-
-        if incoming == current:
-            continue
-
-        if any(field in key for field in append_fields):
-            parts = [p.strip() for p in re.split(r'[;；]', current) if p.strip()]
-            if incoming not in parts:
-                prev_row[key] = current + '；' + incoming
-
-
 def _extract_msg_name_from_info_row(row_unique: List[str]) -> str:
     """
     从"信息名称行"（行0）的去重单元格列表中提取消息名称。
@@ -257,6 +233,34 @@ def _extract_msg_name_from_info_row(row_unique: List[str]) -> str:
             if len(cell_clean) >= 2 and not cell_clean.isdigit():
                 return cell_clean
     return ''
+
+
+def _extract_meta_pairs_from_row(row_unique: List[str]) -> Dict[str, str]:
+    """从横向键值行提取表级元数据，如 信息标识/消息ID。"""
+    meta = {}
+    key_aliases = {
+        '信息标识': '信息标识',
+        '消息ID': '消息ID',
+        '消息标识': '消息ID',
+        '信源、信宿': '信源、信宿',
+        '信源、信目': '信源、信宿',
+        '发起时机': '发起时机',
+        '发送周期': '发送周期',
+        '传输周期': '发送周期',
+        '错误处理': '错误处理',
+        '备注': '备注',
+    }
+
+    for col_idx in range(0, len(row_unique) - 1, 2):
+        key_cell = row_unique[col_idx].strip()
+        val_cell = row_unique[col_idx + 1].strip()
+        if not key_cell or not _is_effective_cell(val_cell):
+            continue
+        for alias, meta_key in key_aliases.items():
+            if alias in key_cell:
+                meta[meta_key] = val_cell
+                break
+    return meta
 
 
 def _extract_name_from_para(para_text: str) -> str:
@@ -568,6 +572,7 @@ class TableDetector:
             # 类型A / 聚合式：行0 是信息名称行 或 前置段落标记为聚合式
             if has_info_name_row:
                 msg_name = _extract_msg_name_from_info_row(row0_unique)
+                meta.update(_extract_meta_pairs_from_row(row0_unique))
             else:
                 # 来自聚合式前置段落，消息名称从前置段落提取
                 msg_name = _extract_name_from_para(preceding_para)
@@ -651,6 +656,7 @@ class TableDetector:
                 for r_idx in range(1, header_row_idx):
                     row = _dedup_row(grid[r_idx])
                     row_text = ' '.join(row)
+                    meta.update(_extract_meta_pairs_from_row(row))
                     
                     # ◄ 新增：横向元数据提取（键值对横向排列）
                     # 特别处理这一行，假设列0=键1，列1=值1，列2=键2，列3=值2...
@@ -745,6 +751,7 @@ class TableDetector:
 
             row_dict = {}
             content_vmerge_cont = False
+            vmerge_content_headers = set()
             for h_idx, (h, col_idx) in enumerate(zip(headers, kept_indices)):
                 val = row[col_idx] if col_idx < len(row) else ''
                 row_dict[h] = val.strip()
@@ -752,6 +759,7 @@ class TableDetector:
                         and is_vmerge_cont[r_idx][col_idx]
                         and h in content_field_names):
                     content_vmerge_cont = True
+                    vmerge_content_headers.add(h)
 
             # 过滤纯空行
             row_all = ''.join(row_dict.values())
@@ -811,10 +819,11 @@ class TableDetector:
             if not has_non_content_data:
                 continue
 
-            # 垂直合并的数据项名称续行表示内部拆分，不应输出为重复数据项。
+            # 垂直合并的数据项名称续行表示内部拆分：保留续行数据，
+            # 但清空由合并单元格带来的父级名称，避免输出重复数据项名称。
             if content_vmerge_cont and data_rows:
-                _merge_continuation_row(data_rows[-1], row_dict)
-                continue
+                for header in vmerge_content_headers:
+                    row_dict[header] = ''
 
             data_rows.append(row_dict)
 

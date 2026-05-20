@@ -128,7 +128,7 @@ class ExcelExporter:
                     if '_inferred_type' in row and row['_inferred_type']:
                         inferred_type = row['_inferred_type']
                         # 将推断出的类型标记为需要标红（因为是推断出来的）
-                        for col_name in ['数据类型', '类型', '数据格式']:
+                        for col_name in ['转换类型', '数据类型', '类型', '数据格式']:
                             if col_name in fill_data and fill_data[col_name] == inferred_type:
                                 color_map[col_name] = COLOR_RED
                                 break
@@ -309,37 +309,37 @@ class ExcelExporter:
         """
         将 bit 子行转换为 fill_data 字典。
         
-        新的子行结构保留了父表的表头，需要正确映射字段值。
-        子行中的推断类型（_inferred_type）会被填充到数据类型列。
+        bit 子行应作为父字段的内部拆分输出：内容列留空，状态参数写入子内容，
+        位宽写入类型（bit），从父字节数推断出的转换类型写入转换类型。
         """
         fill_data = {}
         
         # 主行的"名称"列为空（子行没有独立的名称）
         fill_data['名称'] = ''
-        
-        # 遍历所有字段，将子行的值复制到fill_data中
-        for key, value in bit_row.items():
-            # 跳过内部字段（除了_inferred_type）
-            if key.startswith('_') and key != '_inferred_type':
-                continue
-            
-            # 处理推断出的类型
-            if key == '_inferred_type' and value:
-                # 将推断出的类型填充到数据类型列
-                # 查找合适的类型列
-                for col_name in ['数据类型', '类型', '数据格式']:
-                    if col_name in bit_row and bit_row[col_name] == '':
-                        fill_data[col_name] = value
-                        break
-                continue
-            
-            # 直接复制字段值
-            if value is not None and value != '':
+
+        child_text = (
+            bit_row.get('子内容')
+            or bit_row.get('状态参数')
+            or bit_row.get('数据含义')
+            or bit_row.get('内容')
+            or bit_row.get('参数')
+            or ''
+        )
+        if child_text:
+            fill_data['子内容'] = child_text
+
+        bit_count = bit_row.get('类型（bit）')
+        if bit_count not in (None, ''):
+            fill_data['类型（bit）'] = bit_count
+
+        inferred_type = bit_row.get('_inferred_type')
+        if inferred_type:
+            fill_data['转换类型'] = inferred_type
+
+        for key in ['判读公式', '转换公式', '单位', '备注']:
+            value = bit_row.get(key)
+            if value not in (None, ''):
                 fill_data[key] = value
-        
-        # 兼容旧的"子内容"字段（如果新字段未生成）
-        if '子内容' in bit_row and '内容' not in fill_data and '数据含义' not in fill_data:
-            fill_data['内容'] = bit_row.get('子内容', '')
         
         return fill_data
 

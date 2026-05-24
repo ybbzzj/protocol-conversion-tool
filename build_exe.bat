@@ -52,8 +52,16 @@ if not exist "%~dp0public\dist\index.html" (
     echo.
 )
 
-REM 检查模型文件
-if not exist "%~dp0models\bge-small-zh-v1.5-onnx" (
+REM 检查模型文件（兼容新旧目录名）
+set "MODEL_DIRNAME=bge-small-zh-v1.5"
+set "MODEL_SRC=%~dp0models\%MODEL_DIRNAME%"
+if not exist "%MODEL_SRC%" (
+    if exist "%~dp0models\bge-small-zh-v1.5-onnx" (
+        set "MODEL_DIRNAME=bge-small-zh-v1.5-onnx"
+        set "MODEL_SRC=%~dp0models\bge-small-zh-v1.5-onnx"
+    )
+)
+if not exist "%MODEL_SRC%" (
     echo ⚠️  未检测到语义模型目录
     echo.
     echo 📥 请先下载模型：
@@ -100,8 +108,7 @@ pyinstaller --clean "%~dp0build.spec"
 if %errorlevel% equ 0 (
     echo.
     echo 正在复制语义模型到发布目录...
-    set "MODEL_SRC=%~dp0models\bge-small-zh-v1.5-onnx"
-    set "MODEL_DST=%~dp0dist\协议转换工具\models\bge-small-zh-v1.5-onnx"
+    set "MODEL_DST=%~dp0dist\协议转换工具\models\!MODEL_DIRNAME!"
     
     if exist "!MODEL_SRC!" (
         if not exist "%~dp0dist\协议转换工具\models" (
@@ -137,13 +144,14 @@ if %errorlevel% equ 0 (
     echo ⚠️  注意事项:
     echo    - 模型文件较大（约 100MB），首次启动可能需要几秒钟
     echo    - models 目录必须与 exe 在同一层级
-    echo    - 语义模型目录：models\bge-small-zh-v1.5-onnx
+    echo    - 语义模型目录：models\bge-small-zh-v1.5
+    echo    - 兼容旧目录名：models\bge-small-zh-v1.5-onnx
     echo.
     echo 📂 部署结构:
     echo    协议转换工具/
     echo    ├── 协议转换工具.exe
     echo    └── models/
-    echo        └── bge-small-zh-v1.5-onnx/
+    echo        └── bge-small-zh-v1.5/
     echo.
 ) else (
     echo.

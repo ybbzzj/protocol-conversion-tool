@@ -54,6 +54,10 @@
       </div>
       
       <div v-if="taskStatus?.status==='success'" class="result" style="margin-top: 16px;">
+        <label class="hint" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <input type="checkbox" v-model="downloadRemoveCrc" />
+          下载时删除 CRC 校验字行（仅当该行为末行或其下一行无有效数据）
+        </label>
         <button class="btn" @click="downloadResult">下载结果</button>
       </div>
     </section>
@@ -88,6 +92,7 @@ const fileObj = ref<File | null>(null)
 const currentTaskId = ref<string>('')
 const originalFilename = ref<string>('')
 const taskStatus = ref<{ status:string, progress:number, message?:string } | null>(null)
+const downloadRemoveCrc = ref<boolean>(false)
 let pollTimer: any = null
 
 const tplImportInputRef = ref<HTMLInputElement | null>(null)
@@ -263,11 +268,8 @@ function handleSmartWorkflow(statusData) {
     console.log('[智能分流] 映射质量:', quality)
     
     if (score > 0.9) {
-      // 高质量 - 直接下载
-      toast.show(`字段映射质量优秀(${(score*100).toFixed(1)}%)，直接下载结果`)
-      setTimeout(() => {
-        downloadResult()
-      }, 1000)
+      // 高质量 - 等待用户确认输出控制后下载
+      toast.show(`字段映射质量优秀(${(score*100).toFixed(1)}%)，可下载结果`)
     } else if (score > 0.7) {
       // 中等质量 - 提示可选修正
       const confirmMsg = `字段映射质量良好(${(score*100).toFixed(1)}%)，是否需要人工修正后再下载？\n\n匹配详情:\n- 精确匹配: ${quality.exact_count}个\n- 模糊匹配: ${quality.fuzzy_count}个\n- 未匹配: ${quality.unmatched_count}个\n\n点击"确定"进入修正页面，"取消"直接下载`
@@ -288,7 +290,6 @@ function handleSmartWorkflow(statusData) {
   } else {
     // 兼容旧版本或无质量评分的情况
     toast.show('提取完成，可下载结果')
-    downloadResult()
   }
 }
 
@@ -299,7 +300,12 @@ async function downloadResult(){
   try{
     loading.start('下载中...')
     // ✅ 使用 fetch 下载文件（比 window.open 更可靠）
-    const response = await fetch(endpoints.extractDownload(currentTaskId.value))
+    const params = new URLSearchParams()
+    if (downloadRemoveCrc.value) {
+      params.set('remove_crc', 'true')
+    }
+    const downloadUrl = `${endpoints.extractDownload(currentTaskId.value)}${params.toString() ? `?${params.toString()}` : ''}`
+    const response = await fetch(downloadUrl)
     if(!response.ok){ throw new Error(`HTTP ${response.status}`) }
     
     // 使用原始文件名作为下载文件名

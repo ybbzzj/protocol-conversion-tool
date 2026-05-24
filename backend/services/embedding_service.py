@@ -3,7 +3,7 @@
 语义模型服务类（ONNX 轻量方案）
 
 默认模型目录:
-    models/bge-small-zh-v1.5-onnx/
+    models/bge-small-zh-v1.5/
         tokenizer.json
         vocab.txt
         config.json
@@ -40,8 +40,9 @@ class EmbeddingService:
         if self._initialized:
             return
 
-        self.model_name = "bge-small-zh-v1.5-onnx"
+        self.model_name = "bge-small-zh-v1.5"
         self.model_repo = "Xenova/bge-small-zh-v1.5"
+        self.model_dirnames = ("bge-small-zh-v1.5", "bge-small-zh-v1.5-onnx")
         self.max_length = 64
         self._cache_max_size = 3000
         self._embedding_cache = OrderedDict()
@@ -49,11 +50,11 @@ class EmbeddingService:
 
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if getattr(sys, 'frozen', False):
-            default_model_path = os.path.join(os.path.dirname(sys.executable), 'models', self.model_name)
+            models_root = os.path.join(os.path.dirname(sys.executable), 'models')
         else:
-            default_model_path = os.path.join(base_dir, 'models', self.model_name)
+            models_root = os.path.join(base_dir, 'models')
 
-        self.model_path = os.environ.get("SEMANTIC_MODEL_DIR", default_model_path)
+        self.model_path = os.environ.get("SEMANTIC_MODEL_DIR") or self._find_model_dir(models_root)
         self.onnx_model_path = self._resolve_onnx_model_path(self.model_path)
 
         print(f"[EmbeddingService] 模型目录：{self.model_path}")
@@ -100,6 +101,14 @@ class EmbeddingService:
             import traceback
             traceback.print_exc()
             self._set_unavailable()
+
+    @staticmethod
+    def _find_model_dir(models_root: str) -> str:
+        for dirname in ("bge-small-zh-v1.5", "bge-small-zh-v1.5-onnx"):
+            model_dir = os.path.join(models_root, dirname)
+            if os.path.isdir(model_dir):
+                return model_dir
+        return os.path.join(models_root, "bge-small-zh-v1.5")
 
     @staticmethod
     def _resolve_onnx_model_path(model_dir: str) -> Optional[str]:

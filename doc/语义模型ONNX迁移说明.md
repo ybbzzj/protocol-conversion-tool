@@ -6,7 +6,8 @@
 
 ## 2. 推荐模型
 - 默认仓库：`Xenova/bge-small-zh-v1.5`
-- 默认目录：`models/bge-small-zh-v1.5-onnx`
+- 默认目录：`models/bge-small-zh-v1.5`
+- 兼容目录：`models/bge-small-zh-v1.5-onnx`
 - 关键文件：
   - `config.json`
   - `tokenizer.json`
@@ -33,7 +34,7 @@ build_exe.bat
 协议转换工具/
 ├── 协议转换工具.exe
 └── models/
-    └── bge-small-zh-v1.5-onnx/
+    └── bge-small-zh-v1.5/
 ```
 
 ## 5. 匹配策略优先级

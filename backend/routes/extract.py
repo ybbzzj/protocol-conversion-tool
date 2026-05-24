@@ -3,6 +3,8 @@ from flask import Blueprint, request, send_file
 import os
 import uuid
 import json
+import copy
+import re
 from datetime import datetime
 from backend.utils import success_response, error_response
 from backend.config import Config
@@ -195,6 +197,10 @@ def start_extraction():
         # 计算映射质量
         extracted_field_names = []
         for table in processed_tables:
+            # 表级元数据（如消息ID）也参与映射质量统计
+            for mk, mv in (table.get('meta') or {}).items():
+                if mv and str(mv).strip() not in ('—', '-', ''):
+                    extracted_field_names.append(mk)
             for row in table['data_rows']:
                 extracted_field_names.extend(row.keys())
         
@@ -214,7 +220,8 @@ def start_extraction():
             'status': 'success',
             'progress': 100,
             'output_path': output_file,
-            'mapping_quality': mapping_quality
+            'mapping_quality': mapping_quality,
+            'processed_tables': processed_tables
         })
         
         # ✅ 保存到磁盘
@@ -262,10 +269,24 @@ def download_result(task_id):
         status = tasks_status.get(task_id)
         if not status or status['status'] != 'success':
             return error_response(40401, "结果文件不存在或任务未完成")
-        
-        output_path = status['output_path']
+
+        remove_crc = _parse_bool(request.args.get('remove_crc', 'false'))
+
+        output_path = status.get('output_path')
         if not output_path or not os.path.exists(output_path):
             return error_response(40401, "文件已过期或被删除")
+
+        generated_temp = None
+        if remove_crc:
+            processed_tables = status.get('processed_tables') or []
+            if processed_tables:
+                output_dir = os.path.join('backend', 'outputs')
+                os.makedirs(output_dir, exist_ok=True)
+                exporter = ExcelExporter(output_dir)
+                controlled_tables = _apply_output_controls(processed_tables, remove_crc=True)
+                generated_temp = exporter.export_with_template(controlled_tables, f"{task_id}_crc_filtered")
+                if generated_temp and os.path.exists(generated_temp):
+                    output_path = generated_temp
         
         # ✅ 使用原始上传文件名作为下载文件名
         original_filename = status.get('filename', f"result_{task_id[:8]}")
@@ -294,19 +315,79 @@ def download_result(task_id):
         
         # 文件传输完成后删除源文件，确保结果只保留一份
         try:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-                print(f"[下载完成] 已删除文件: {output_path}")
-                # 更新任务状态，标记文件已被下载
-                status['output_path'] = None
-                status['message'] = '文件已下载并删除'
-                _save_tasks_to_disk()
+            if generated_temp and os.path.exists(generated_temp):
+                os.remove(generated_temp)
+                print(f"[下载完成] 已删除临时文件: {generated_temp}")
+
+            # 保留原有“下载后删除主输出文件”的行为
+            original_output = status.get('output_path')
+            if original_output and os.path.exists(original_output):
+                os.remove(original_output)
+                print(f"[下载完成] 已删除文件: {original_output}")
+            # 更新任务状态，标记文件已被下载
+            status['output_path'] = None
+            status['message'] = '文件已下载并删除'
+            _save_tasks_to_disk()
         except Exception as e:
             print(f"[警告] 删除文件失败: {e}")
         
         return response
     except Exception as e:
         return error_response(50001, f"下载失败: {str(e)}")
+
+
+def _parse_bool(v: str) -> bool:
+    return str(v).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _row_has_effective_data(row: Dict) -> bool:
+    if not isinstance(row, dict):
+        return False
+    for k, v in row.items():
+        if str(k).startswith('_'):
+            continue
+        txt = str(v).strip() if v is not None else ''
+        if txt and txt not in ('—', '-', ''):
+            return True
+    return False
+
+
+def _is_crc_row(row: Dict) -> bool:
+    if not isinstance(row, dict):
+        return False
+    for k, v in row.items():
+        if str(k).startswith('_') or v is None:
+            continue
+        txt = str(v)
+        if re.search(r'CRC\s*校验', txt, re.IGNORECASE):
+            return True
+    return False
+
+
+def _apply_output_controls(processed_tables: List[Dict], remove_crc: bool = False) -> List[Dict]:
+    """
+    对提取后的结果进行可选清洗（下载阶段执行，不影响提取主流程）
+    目前支持：
+    - 删除 CRC 校验字行：当行内容含“CRC校验”字样，且下一行无有效数据（或不存在）时删除
+    """
+    tables = copy.deepcopy(processed_tables or [])
+    if not remove_crc:
+        return tables
+
+    for table in tables:
+        rows = table.get('data_rows') or []
+        if not rows:
+            continue
+        kept = []
+        n = len(rows)
+        for i, row in enumerate(rows):
+            if _is_crc_row(row):
+                next_row = rows[i + 1] if i + 1 < n else None
+                if next_row is None or not _row_has_effective_data(next_row):
+                    continue
+            kept.append(row)
+        table['data_rows'] = kept
+    return tables
 
 
 def _load_expected_fields(field_ids):

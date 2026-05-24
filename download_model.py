@@ -5,7 +5,7 @@
 默认下载:
     Xenova/bge-small-zh-v1.5
 到本地目录:
-    ./models/bge-small-zh-v1.5-onnx
+    ./models/bge-small-zh-v1.5
 """
 import argparse
 import os
@@ -13,7 +13,7 @@ import sys
 
 
 DEFAULT_REPO = "Xenova/bge-small-zh-v1.5"
-DEFAULT_DIRNAME = "bge-small-zh-v1.5-onnx"
+DEFAULT_DIRNAME = "bge-small-zh-v1.5"
 
 
 def _required_files(onnx_file: str):
@@ -105,7 +105,7 @@ def download_model(repo_id: str, target_dir: str, onnx_file: str):
 def main():
     parser = argparse.ArgumentParser(description="下载语义模型（ONNX）")
     parser.add_argument("--repo", default=DEFAULT_REPO, help=f"模型仓库（默认: {DEFAULT_REPO}）")
-    parser.add_argument("--target", default=None, help="目标目录（默认: ./models/bge-small-zh-v1.5-onnx）")
+    parser.add_argument("--target", default=None, help="目标目录（默认: ./models/bge-small-zh-v1.5）")
     parser.add_argument("--onnx-file", default="onnx/model.onnx", help="ONNX模型相对路径（默认: onnx/model.onnx）")
     args = parser.parse_args()
 

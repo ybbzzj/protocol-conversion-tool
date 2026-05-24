@@ -15,6 +15,8 @@ class EnhancedFieldMatcher:
     
     def __init__(self):
         self.knowledge_base_file = Config.KNOWLEDGE_BASE_PATH
+        self.user_mappings_file = os.path.join(Config.DATA_DIR, 'user_mappings.json')
+        self.user_mappings = self._load_user_mappings()
         self.knowledge_base = self._load_knowledge_base()
         self.similarity_threshold = 0.7
         self.semantic_threshold = 0.82  # 语义匹配阈值（自动命中）
@@ -28,6 +30,18 @@ class EnhancedFieldMatcher:
 
         # 匹配结果缓存，避免同一字段在多行中重复计算
         self._match_cache = {}
+
+    def _load_user_mappings(self) -> Dict[str, Dict]:
+        """加载用户自定义映射（优先级高于知识库）"""
+        try:
+            if os.path.exists(self.user_mappings_file):
+                with open(self.user_mappings_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data if isinstance(data, dict) else {}
+            return {}
+        except Exception as e:
+            print(f"[用户映射加载] 错误: {e}")
+            return {}
 
     # def _preload_standard_embeddings(self):
     #     """预先计算所有标准字段的向量"""
@@ -210,14 +224,29 @@ class EnhancedFieldMatcher:
     
     def _exact_match(self, field: str) -> Optional[Dict]:
         """精确匹配"""
+        # 1) 用户映射优先（允许覆盖知识库历史结果）
+        user_item = self.user_mappings.get(field)
+        if isinstance(user_item, dict):
+            target = user_item.get('target')
+            if target:
+                return {
+                    'target': target,
+                    'confidence': float(user_item.get('confidence', 0.99)),
+                    'source': 'user_mapping'
+                }
+
         # 在知识库中查找
+        best_item = None
         for item in self.knowledge_base:
             if item.get('source') == field and item.get('confidence', 0) >= 0.9:
-                return {
-                    'target': item['target'],
-                    'confidence': item['confidence'],
-                    'source': 'knowledge_base'
-                }
+                if best_item is None or item.get('confidence', 0) > best_item.get('confidence', 0):
+                    best_item = item
+        if best_item:
+            return {
+                'target': best_item['target'],
+                'confidence': best_item['confidence'],
+                'source': 'knowledge_base'
+            }
         return None
     
     def _semantic_match(self, field: str) -> Optional[Dict]:

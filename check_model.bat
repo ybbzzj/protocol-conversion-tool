@@ -18,8 +18,14 @@ if not exist "%~dp0models" (
     exit /b 1
 )
 
-REM 检查 ONNX 模型目录
-if not exist "%~dp0models\bge-small-zh-v1.5-onnx" (
+REM 检查 ONNX 模型目录（兼容新旧目录名）
+set "model_dir=%~dp0models\bge-small-zh-v1.5"
+if not exist "%model_dir%" (
+    if exist "%~dp0models\bge-small-zh-v1.5-onnx" (
+        set "model_dir=%~dp0models\bge-small-zh-v1.5-onnx"
+    )
+)
+if not exist "%model_dir%" (
     echo ❌ 错误：未找到 ONNX 语义模型目录
     echo.
     echo 📥 请运行以下命令下载模型:
@@ -30,7 +36,6 @@ if not exist "%~dp0models\bge-small-zh-v1.5-onnx" (
 )
 
 REM 检查关键文件
-set "model_dir=%~dp0models\bge-small-zh-v1.5-onnx"
 set "onnx_file=%model_dir%\onnx\model.onnx"
 if not exist "%onnx_file%" (
     set "onnx_file=%model_dir%\onnx\model_int8.onnx"

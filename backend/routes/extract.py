@@ -6,6 +6,7 @@ import json
 import copy
 import re
 from datetime import datetime
+from typing import Dict, List
 from backend.utils import success_response, error_response
 from backend.config import Config
 from backend.services.table_detector import DocumentParser

@@ -36,6 +36,28 @@ echo ✅ PyInstaller 已安装
 python -c "import PyInstaller; print('PyInstaller version:', PyInstaller.__version__)"
 echo.
 
+REM 检查语义模型运行依赖。缺失时必须在打包前解决，否则 exe 会启动失败。
+python -c "import onnxruntime, tokenizers; print('onnxruntime:', onnxruntime.__version__); print('tokenizers: ok')" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ⚠️  未检测到 onnxruntime/tokenizers，正在安装语义模型运行依赖...
+    python -m pip install onnxruntime==1.14.1 tokenizers==0.13.3
+    if %errorlevel% neq 0 (
+        echo ❌ 语义模型运行依赖安装失败
+        echo    请手动执行：
+        echo    python -m pip install onnxruntime==1.14.1 tokenizers==0.13.3
+        pause
+        exit /b 1
+    )
+)
+
+python -c "import onnxruntime, tokenizers; print('✅ onnxruntime:', onnxruntime.__version__); print('✅ tokenizers: ok')"
+if %errorlevel% neq 0 (
+    echo ❌ onnxruntime/tokenizers 仍不可用，停止打包
+    pause
+    exit /b 1
+)
+echo.
+
 REM 检查前端是否构建
 if not exist "%~dp0public\dist\index.html" (
     echo ⚠️  前端未构建，请先执行以下命令:

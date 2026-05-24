@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs, collect_submodules
 import os
 import sys
 from pathlib import Path
@@ -51,6 +51,8 @@ for pkg in ['onnxruntime', 'tokenizers']:
         datas.extend(d)
         binaries.extend(b)
         hiddenimports.extend(h)
+        hiddenimports.extend(collect_submodules(pkg))
+        binaries.extend(collect_dynamic_libs(pkg))
     except Exception as e:
         print(f"Warning: Could not collect {pkg}: {e}")
 
@@ -62,6 +64,8 @@ hiddenimports += [
     'python_docx',
     'rapidfuzz',
     'onnxruntime',
+    'onnxruntime.capi',
+    'onnxruntime.capi.onnxruntime_pybind11_state',
     'tokenizers',
 ]
 

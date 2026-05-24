@@ -63,11 +63,31 @@ python -c "import importlib.util; print('ℹ️ transformers installed:', import
 echo.
 
 REM 构建并校验前端资源，避免 index.html 引用不存在的 hash 文件导致白屏
+set "HAS_NPM=0"
 if exist "%~dp0public\package.json" (
     where npm >nul 2>&1
     if %errorlevel% neq 0 (
         echo ⚠️  未检测到 npm，无法自动构建前端
+        where node >nul 2>&1
+        if !errorlevel! equ 0 (
+            if exist "%~dp0public\node_modules\vite\bin\vite.js" (
+                echo 检测到 node 和本地 vite，使用 node 直接构建前端...
+                set "HAS_NPM=1"
+                pushd "%~dp0public"
+                node node_modules\vite\bin\vite.js build
+                if !errorlevel! neq 0 (
+                    popd
+                    echo ❌ 前端构建失败
+                    pause
+                    exit /b 1
+                )
+                popd
+                echo ✅ 前端构建完成
+                echo.
+            )
+        )
     ) else (
+        set "HAS_NPM=1"
         echo ============================================================
         echo 构建前端资源...
         echo ============================================================
@@ -101,9 +121,15 @@ if not exist "%~dp0public\dist\index.html" (
     exit /b 1
 )
 
-python -c "import os,re,sys; root=r'%~dp0public\dist'; html=open(os.path.join(root,'index.html'),encoding='utf-8').read(); refs=re.findall(r'''(?:src|href)=['\"]\/([^'\"]+)['\"]''', html); missing=[p for p in refs if p.startswith('assets/') and not os.path.exists(os.path.join(root,p))]; print('前端资源引用:', len(refs)); [print('缺失:', m) for m in missing]; sys.exit(1 if missing else 0)"
+python "%~dp0verify_frontend_dist.py" "%~dp0public\dist"
 if %errorlevel% neq 0 (
-    echo ❌ 前端 dist 资源不完整，请先在 public 目录执行 npm run build
+    echo ❌ 前端 dist 资源不完整
+    if "!HAS_NPM!"=="0" (
+        echo    当前机器未检测到 npm，无法自动修复 dist
+        echo    请安装 Node.js 后重新运行 build_exe.bat，或在 public 目录执行 npm install && npm run build
+    ) else (
+        echo    请检查上方 npm run build 输出
+    )
     pause
     exit /b 1
 )

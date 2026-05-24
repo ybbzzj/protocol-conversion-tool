@@ -62,6 +62,8 @@ def create_app(config_name='development'):
             full_path = os.path.join(static_folder, path)
             if os.path.exists(full_path) and os.path.isfile(full_path):
                 return send_from_directory(static_folder, path)
+            if path.startswith('assets/'):
+                return {"error": f"Static asset '{path}' not found"}, 404
         
         # D. 兜底返回 index.html (支持 Vue Router History 模式)
         index_file = os.path.join(static_folder, 'index.html')

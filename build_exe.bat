@@ -62,21 +62,53 @@ REM transformers 不再参与运行时打包；如果环境中安装了它，bui
 python -c "import importlib.util; print('ℹ️ transformers installed:', importlib.util.find_spec('transformers') is not None)"
 echo.
 
-REM 检查前端是否构建
-if not exist "%~dp0public\dist\index.html" (
-    echo ⚠️  前端未构建，请先执行以下命令:
-    echo    cd public
-    echo    npm install
-    echo    npm run build
-    echo.
-    set /p CONTINUE="是否继续打包？(前端资源可能不完整) (y/N): "
-    if /i not "!CONTINUE!"=="y" (
-        echo 取消打包
-        pause
-        exit /b 1
+REM 构建并校验前端资源，避免 index.html 引用不存在的 hash 文件导致白屏
+if exist "%~dp0public\package.json" (
+    where npm >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo ⚠️  未检测到 npm，无法自动构建前端
+    ) else (
+        echo ============================================================
+        echo 构建前端资源...
+        echo ============================================================
+        pushd "%~dp0public"
+        if not exist "node_modules" (
+            echo 安装前端依赖...
+            call npm install
+            if !errorlevel! neq 0 (
+                popd
+                echo ❌ 前端依赖安装失败
+                pause
+                exit /b 1
+            )
+        )
+        call npm run build
+        if !errorlevel! neq 0 (
+            popd
+            echo ❌ 前端构建失败
+            pause
+            exit /b 1
+        )
+        popd
+        echo ✅ 前端构建完成
+        echo.
     )
-    echo.
 )
+
+if not exist "%~dp0public\dist\index.html" (
+    echo ❌ 前端 dist 不存在：%~dp0public\dist\index.html
+    pause
+    exit /b 1
+)
+
+python -c "import os,re,sys; root=r'%~dp0public\dist'; html=open(os.path.join(root,'index.html'),encoding='utf-8').read(); refs=re.findall(r'''(?:src|href)=['\"]\/([^'\"]+)['\"]''', html); missing=[p for p in refs if p.startswith('assets/') and not os.path.exists(os.path.join(root,p))]; print('前端资源引用:', len(refs)); [print('缺失:', m) for m in missing]; sys.exit(1 if missing else 0)"
+if %errorlevel% neq 0 (
+    echo ❌ 前端 dist 资源不完整，请先在 public 目录执行 npm run build
+    pause
+    exit /b 1
+)
+echo ✅ 前端资源校验通过
+echo.
 
 REM 检查模型文件
 set "MODEL_DIRNAME=bge-small-zh-v1.5"

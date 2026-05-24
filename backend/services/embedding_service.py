@@ -70,15 +70,17 @@ class EmbeddingService:
                 self._set_unavailable()
                 return
 
-            from transformers import AutoTokenizer
+            from tokenizers import Tokenizer
             import onnxruntime as ort
 
             print("[EmbeddingService] 正在加载 Tokenizer...")
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                self.model_path,
-                local_files_only=True,
-                use_fast=True
-            )
+            tokenizer_path = os.path.join(self.model_path, "tokenizer.json")
+            if not os.path.exists(tokenizer_path):
+                print(f"[EmbeddingService] ⚠️ 未找到 tokenizer.json：{tokenizer_path}")
+                self._set_unavailable()
+                return
+            self._tokenizer = Tokenizer.from_file(tokenizer_path)
+            self._configure_tokenizer()
 
             print("[EmbeddingService] 正在加载 ONNX 模型...")
             sess_options = ort.SessionOptions()
@@ -93,7 +95,7 @@ class EmbeddingService:
             self._initialized = True
             print("[EmbeddingService] ✅ ONNX 语义模型加载成功")
         except ImportError as e:
-            print("[EmbeddingService] ❌ 缺少依赖，请安装 onnxruntime 和 transformers")
+            print("[EmbeddingService] ❌ 缺少依赖，请安装 onnxruntime 和 tokenizers")
             print("[EmbeddingService] 详细错误:", e)
             self._set_unavailable()
         except Exception as e:
@@ -137,18 +139,30 @@ class EmbeddingService:
             return ""
         return str(text).strip()
 
-    def _build_onnx_inputs(self, text: str):
-        encoded = self._tokenizer(
-            text,
-            return_tensors="np",
-            padding="max_length",
-            truncation=True,
-            max_length=self.max_length
+    def _configure_tokenizer(self):
+        pad_token = "[PAD]"
+        pad_id = self._tokenizer.token_to_id(pad_token)
+        if pad_id is None:
+            pad_id = 0
+        self._tokenizer.enable_truncation(max_length=self.max_length)
+        self._tokenizer.enable_padding(
+            length=self.max_length,
+            pad_id=pad_id,
+            pad_token=pad_token
         )
+
+    def _build_onnx_inputs(self, text: str):
+        encoding = self._tokenizer.encode(text)
+        token_type_ids = encoding.type_ids or [0] * len(encoding.ids)
+        encoded = {
+            "input_ids": np.array([encoding.ids], dtype=np.int64),
+            "attention_mask": np.array([encoding.attention_mask], dtype=np.int64),
+            "token_type_ids": np.array([token_type_ids], dtype=np.int64),
+        }
         onnx_inputs = {}
         for name in self._input_names:
             if name in encoded:
-                onnx_inputs[name] = encoded[name].astype(np.int64)
+                onnx_inputs[name] = encoded[name]
             elif name == "token_type_ids":
                 onnx_inputs[name] = np.zeros_like(encoded["input_ids"], dtype=np.int64)
             elif name == "attention_mask":

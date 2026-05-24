@@ -15,6 +15,6 @@ rapidfuzz==2.13.7
 python-dotenv==0.19.2
 # 轻量语义匹配依赖（ONNX）
 onnxruntime==1.14.1
-transformers==4.33.3
+tokenizers==0.13.3
 huggingface-hub==0.17.3
 pyinstaller==5.1

@@ -42,8 +42,9 @@ datas = datas_openpyxl
 binaries = binaries_openpyxl
 hiddenimports = hiddenimports_openpyxl
 
-# 收集语义模型运行时依赖
-for pkg in ['onnxruntime', 'transformers', 'tokenizers', 'huggingface_hub']:
+# 收集语义模型运行时依赖。运行时直接用 tokenizers 读取 tokenizer.json，
+# 避免触发 transformers 的 PyInstaller hook（Python 3.8 下会误读 dataclasses.__version__）。
+for pkg in ['onnxruntime', 'tokenizers']:
     try:
         print(f"Collecting {pkg} dependencies...")
         d, b, h = collect_all(pkg)
@@ -61,9 +62,7 @@ hiddenimports += [
     'python_docx',
     'rapidfuzz',
     'onnxruntime',
-    'transformers',
     'tokenizers',
-    'huggingface_hub',
 ]
 
 # --- 添加本项目自定义的资源文件 (格式：(源路径，目标目录)) ---

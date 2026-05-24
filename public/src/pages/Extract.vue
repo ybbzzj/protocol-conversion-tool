@@ -59,6 +59,7 @@
           下载时删除 CRC 校验字行（仅当该行为末行或其下一行无有效数据）
         </label>
         <button class="btn" @click="downloadResult">下载结果</button>
+        <button class="btn secondary" style="margin-left:8px;" @click="router.push({ name: 'extract-result' })">查看提取结果</button>
       </div>
     </section>
   </div>
@@ -72,6 +73,7 @@ import { useToastStore, useLoadingStore } from '../stores/ui'
 
 type FieldItem = { id:string, name:string }
 type TemplateItem = { id:string, name:string, field_ids:string[] }
+type TaskStatus = { status:string, progress:number, message?:string, mapping_quality?: any }
 
 const toast = useToastStore()
 const loading = useLoadingStore()
@@ -80,6 +82,7 @@ const router = useRouter()
 // 本地存储 Key
 const LS_PROTOCOL_FIELDS = 'local_protocol_fields'
 const LS_TEMPLATES = 'local_extract_templates'
+const LS_LAST_EXTRACT_RESULT = 'last_extract_result'
 
 const protocolFields = ref<FieldItem[]>([])
 const templates = ref<TemplateItem[]>([])
@@ -91,7 +94,7 @@ const fieldSearch = ref('')
 const fileObj = ref<File | null>(null)
 const currentTaskId = ref<string>('')
 const originalFilename = ref<string>('')
-const taskStatus = ref<{ status:string, progress:number, message?:string } | null>(null)
+const taskStatus = ref<TaskStatus | null>(null)
 const downloadRemoveCrc = ref<boolean>(false)
 let pollTimer: any = null
 
@@ -248,6 +251,7 @@ function startPolling(){
       if(st.status==='success' || st.status==='failed'){
         stopPolling()
         if(st.status==='success') {
+          saveLastExtractResult(st)
           // 智能流程分流
           handleSmartWorkflow(st)
         } else {
@@ -256,6 +260,17 @@ function startPolling(){
       }
     }catch(e:any){ /* 静默或展示错误 */ }
   }, 2000)
+}
+
+function saveLastExtractResult(statusData: TaskStatus) {
+  const payload = {
+    taskId: currentTaskId.value,
+    filename: originalFilename.value,
+    status: statusData.status,
+    completedAt: new Date().toISOString(),
+    mapping_quality: statusData.mapping_quality || null,
+  }
+  localStorage.setItem(LS_LAST_EXTRACT_RESULT, JSON.stringify(payload))
 }
 
 function handleSmartWorkflow(statusData) {
@@ -268,28 +283,15 @@ function handleSmartWorkflow(statusData) {
     console.log('[智能分流] 映射质量:', quality)
     
     if (score > 0.9) {
-      // 高质量 - 等待用户确认输出控制后下载
-      toast.show(`字段映射质量优秀(${(score*100).toFixed(1)}%)，可下载结果`)
+      toast.show(`字段映射质量优秀(${(score*100).toFixed(1)}%)，请到“提取结果”页下载`)
     } else if (score > 0.7) {
-      // 中等质量 - 提示可选修正
-      const confirmMsg = `字段映射质量良好(${(score*100).toFixed(1)}%)，是否需要人工修正后再下载？\n\n匹配详情:\n- 精确匹配: ${quality.exact_count}个\n- 模糊匹配: ${quality.fuzzy_count}个\n- 未匹配: ${quality.unmatched_count}个\n\n点击"确定"进入修正页面，"取消"直接下载`
-      
-      if (confirm(confirmMsg)) {
-        // 跳转到字段映射页面
-        router.push({ name: 'mapping', params: { taskId: currentTaskId.value } })
-      } else {
-        downloadResult()
-      }
+      toast.show(`字段映射质量良好(${(score*100).toFixed(1)}%)，请到“提取结果”页确认`)
     } else {
-      // 低质量 - 强制修正
-      toast.show(`字段映射质量较低(${(score*100).toFixed(1)}%)，需要人工修正`)
-      setTimeout(() => {
-        router.push({ name: 'mapping', params: { taskId: currentTaskId.value } })
-      }, 1500)
+      toast.show(`字段映射质量较低(${(score*100).toFixed(1)}%)，请到“提取结果”页人工处理`)
     }
   } else {
     // 兼容旧版本或无质量评分的情况
-    toast.show('提取完成，可下载结果')
+    toast.show('提取完成，请到“提取结果”页下载')
   }
 }
 

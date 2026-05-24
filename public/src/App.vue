@@ -3,6 +3,7 @@
     <div class="nav container">
       <router-link to="/">首页</router-link>
       <router-link to="/extract">提取</router-link>
+      <router-link to="/extract-result">提取结果</router-link>
       <router-link to="/config">字段配置</router-link>
       <router-link to="/knowledge">知识库</router-link>
       <router-link to="/help">帮助</router-link>

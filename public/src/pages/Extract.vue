@@ -228,6 +228,10 @@ async function startExtract(){
     // 正确方式: 为每个 field_id 添加独立的表单字段，后端用 request.form.getlist() 获取
     for(const fieldId of selectedFieldIds.value){
       fd.append('field_ids', fieldId)
+      const field = protocolFields.value.find(x => x.id === fieldId)
+      if(field?.name){
+        fd.append('field_names', field.name)
+      }
     }
     const { data } = await api.post(endpoints.extractStart, fd, { headers:{ 'Content-Type':'multipart/form-data' } })
     currentTaskId.value = data?.data?.task_id || ''

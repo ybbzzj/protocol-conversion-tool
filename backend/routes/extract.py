@@ -80,9 +80,10 @@ def start_extraction():
         return error_response(40001, f"不支持的文件格式，请上传 {', '.join(allowed_extensions)} 格式的文件")
     
     field_ids = request.form.getlist('field_ids')
+    field_names = request.form.getlist('field_names')
     
     # 加载用户选择的期望字段
-    expected_fields = _load_expected_fields(field_ids)
+    expected_fields = _load_expected_fields(field_ids, field_names)
     
     task_id = str(uuid.uuid4())
     upload_path = os.path.join('backend', 'uploads', f"{task_id}_{file.filename}")
@@ -108,10 +109,14 @@ def start_extraction():
         # 保存文件
         file.save(upload_path)
         tasks_status[task_id]['progress'] = 10
+
+        parse_path = upload_path
+        if file_ext == '.doc':
+            parse_path = _convert_doc_to_docx(upload_path)
         
         # 执行提取
         parser = DocumentParser()
-        result = parser.parse(upload_path)
+        result = parser.parse(parse_path)
         tasks_status[task_id]['progress'] = 50
         
         # 表格关联：注入元数据、过滤辅助表、附加bit子行
@@ -314,21 +319,11 @@ def download_result(task_id):
             }
         )
         
-        # 文件传输完成后删除源文件，确保结果只保留一份
+        # 文件传输完成后只删除临时文件；主结果保留，支持重复下载。
         try:
             if generated_temp and os.path.exists(generated_temp):
                 os.remove(generated_temp)
                 print(f"[下载完成] 已删除临时文件: {generated_temp}")
-
-            # 保留原有“下载后删除主输出文件”的行为
-            original_output = status.get('output_path')
-            if original_output and os.path.exists(original_output):
-                os.remove(original_output)
-                print(f"[下载完成] 已删除文件: {original_output}")
-            # 更新任务状态，标记文件已被下载
-            status['output_path'] = None
-            status['message'] = '文件已下载并删除'
-            _save_tasks_to_disk()
         except Exception as e:
             print(f"[警告] 删除文件失败: {e}")
         
@@ -339,6 +334,44 @@ def download_result(task_id):
 
 def _parse_bool(v: str) -> bool:
     return str(v).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _convert_doc_to_docx(doc_path: str) -> str:
+    """
+    将旧版 .doc 转为 .docx 后再交给 python-docx 解析。
+    依赖 Windows + Microsoft Word + pywin32；不满足时明确报错，避免导出空结果。
+    """
+    if not doc_path.lower().endswith('.doc'):
+        return doc_path
+
+    try:
+        import win32com.client
+    except Exception as e:
+        raise RuntimeError("当前环境不支持 .doc 自动转换，请先将文件另存为 .docx 后再提取") from e
+
+    abs_doc_path = os.path.abspath(doc_path)
+    docx_path = abs_doc_path + 'x'
+    word = None
+    doc = None
+    try:
+        word = win32com.client.DispatchEx("Word.Application")
+        word.Visible = False
+        doc = word.Documents.Open(abs_doc_path)
+        doc.SaveAs(docx_path, FileFormat=12)
+        return docx_path
+    except Exception as e:
+        raise RuntimeError(f".doc 转 .docx 失败，请先手动另存为 .docx 后再提取：{e}") from e
+    finally:
+        try:
+            if doc is not None:
+                doc.Close(False)
+        except Exception:
+            pass
+        try:
+            if word is not None:
+                word.Quit()
+        except Exception:
+            pass
 
 
 def _row_has_effective_data(row: Dict) -> bool:
@@ -391,11 +424,21 @@ def _apply_output_controls(processed_tables: List[Dict], remove_crc: bool = Fals
     return tables
 
 
-def _load_expected_fields(field_ids):
+def _load_expected_fields(field_ids, field_names=None):
     """
     根据用户选择的字段ID加载期望字段名称
     """
     try:
+        # 前端字段配置目前存储在浏览器本地，打包后这些 ID 不一定存在于后端配置文件。
+        # 因此前端会同时提交字段名称，后端优先使用名称，避免期望字段为空。
+        expected_names = []
+        for name in (field_names or []):
+            name = str(name).strip()
+            if name and name not in expected_names:
+                expected_names.append(name)
+        if expected_names:
+            return expected_names
+
         # 从配置文件加载协议字段
         config_path = Config.PROTOCOL_FIELDS_PATH
         if os.path.exists(config_path):
@@ -403,7 +446,6 @@ def _load_expected_fields(field_ids):
                 protocol_fields = json.load(f)
                 
                 # 根据ID查找字段名称
-                expected_names = []
                 for field_id in field_ids:
                     # 处理数组格式的配置文件
                     if isinstance(protocol_fields, list):
@@ -437,12 +479,22 @@ def _calculate_mapping_quality(extracted_fields, expected_fields):
         }
     
     matcher = FieldMatcher()
-    mapping_results = []
+    expected_set = {_quality_field_key(f) for f in expected_fields if str(f).strip()}
+    best_by_expected = {}
     
-    # 对每个提取的字段进行匹配
+    # 对每个提取字段做匹配，并按用户期望字段统计覆盖情况。
     for ext_field in extracted_fields:
         match_result = matcher.match_field(ext_field)
-        mapping_results.append(match_result)
+        if not isinstance(match_result, dict):
+            continue
+        target = _quality_field_key(match_result.get('target'))
+        if target not in expected_set:
+            continue
+        old = best_by_expected.get(target)
+        if old is None or match_result.get('confidence', 0) > old.get('confidence', 0):
+            best_by_expected[target] = match_result
+
+    mapping_results = list(best_by_expected.values())
     
     # 统计匹配结果
     exact_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'exact')
@@ -451,8 +503,8 @@ def _calculate_mapping_quality(extracted_fields, expected_fields):
     fuzzy_only_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'fuzzy')
     # 保持兼容：历史字段 fuzzy_count 仍返回“广义模糊”数量
     fuzzy_count = fuzzy_only_count + semantic_count + alias_count
-    unmatched_count = sum(1 for r in mapping_results if isinstance(r, dict) and not r.get('target'))
-    total = len(mapping_results)
+    total = len(expected_set)
+    unmatched_count = max(total - len(best_by_expected), 0)
     
     # 计算加权评分
     if total > 0:
@@ -477,3 +529,10 @@ def _calculate_mapping_quality(extracted_fields, expected_fields):
         'unmatched_count': unmatched_count,
         'total': total
     }
+
+
+def _quality_field_key(field) -> str:
+    text = str(field or '').strip()
+    if text.upper() == 'ID' or text in ('消息ID', '消息标识', '信息标识'):
+        return '消息ID'
+    return text

@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
 import os
 import sys
 from pathlib import Path
@@ -42,19 +42,22 @@ datas = datas_openpyxl
 binaries = binaries_openpyxl
 hiddenimports = hiddenimports_openpyxl
 
-# 收集语义模型运行时依赖。运行时直接用 tokenizers 读取 tokenizer.json，
-# 避免触发 transformers 的 PyInstaller hook（Python 3.8 下会误读 dataclasses.__version__）。
-for pkg in ['onnxruntime', 'tokenizers']:
-    try:
-        print(f"Collecting {pkg} dependencies...")
-        d, b, h = collect_all(pkg)
-        datas.extend(d)
-        binaries.extend(b)
-        hiddenimports.extend(h)
-        hiddenimports.extend(collect_submodules(pkg))
-        binaries.extend(collect_dynamic_libs(pkg))
-    except Exception as e:
-        print(f"Warning: Could not collect {pkg}: {e}")
+# 收集语义模型运行时依赖。运行时直接用 tokenizers 读取 tokenizer.json。
+try:
+    print("Collecting onnxruntime dependencies...")
+    d, b, h = collect_all('onnxruntime')
+    datas.extend(d)
+    binaries.extend(b)
+    hiddenimports.extend(h)
+    binaries.extend(collect_dynamic_libs('onnxruntime'))
+except Exception as e:
+    print(f"Warning: Could not collect onnxruntime: {e}")
+
+try:
+    print("Collecting tokenizers binaries...")
+    binaries.extend(collect_dynamic_libs('tokenizers'))
+except Exception as e:
+    print(f"Warning: Could not collect tokenizers binaries: {e}")
 
 # 添加更多的隐藏导入
 hiddenimports += [
@@ -67,6 +70,11 @@ hiddenimports += [
     'onnxruntime.capi',
     'onnxruntime.capi.onnxruntime_pybind11_state',
     'tokenizers',
+    'tokenizers.models',
+    'tokenizers.normalizers',
+    'tokenizers.pre_tokenizers',
+    'tokenizers.processors',
+    'tokenizers.decoders',
 ]
 
 # --- 添加本项目自定义的资源文件 (格式：(源路径，目标目录)) ---
@@ -99,7 +107,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['transformers', 'huggingface_hub'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,

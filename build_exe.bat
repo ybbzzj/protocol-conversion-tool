@@ -58,6 +58,10 @@ if %errorlevel% neq 0 (
 )
 echo.
 
+REM transformers 不再参与运行时打包；如果环境中安装了它，build.spec 会显式排除。
+python -c "import importlib.util; print('ℹ️ transformers installed:', importlib.util.find_spec('transformers') is not None)"
+echo.
+
 REM 检查前端是否构建
 if not exist "%~dp0public\dist\index.html" (
     echo ⚠️  前端未构建，请先执行以下命令:

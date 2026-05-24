@@ -58,6 +58,28 @@ if %errorlevel% neq 0 (
 )
 echo.
 
+REM 检查 .doc 转 .docx 依赖。该功能依赖 Windows + Microsoft Word + pywin32。
+python -c "import win32com.client, pythoncom, pywintypes; print('pywin32: ok')" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ⚠️  未检测到 pywin32，正在安装 .doc 转换依赖...
+    python -m pip install pywin32==306
+    if %errorlevel% neq 0 (
+        echo ❌ pywin32 安装失败
+        echo    .doc 自动转换将不可用；请手动执行：
+        echo    python -m pip install pywin32==306
+        pause
+        exit /b 1
+    )
+)
+
+python -c "import win32com.client, pythoncom, pywintypes; print('✅ pywin32: ok')"
+if %errorlevel% neq 0 (
+    echo ❌ pywin32 仍不可用，停止打包
+    pause
+    exit /b 1
+)
+echo.
+
 REM transformers 不再参与运行时打包；如果环境中安装了它，build.spec 会显式排除。
 python -c "import importlib.util; print('ℹ️ transformers installed:', importlib.util.find_spec('transformers') is not None)"
 echo.

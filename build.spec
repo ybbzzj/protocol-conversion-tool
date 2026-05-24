@@ -59,6 +59,29 @@ try:
 except Exception as e:
     print(f"Warning: Could not collect tokenizers binaries: {e}")
 
+# .doc 转 .docx 依赖 Windows COM，仅在 Windows 打包环境收集。
+if sys.platform.startswith('win'):
+    print("Collecting pywin32 dependencies...")
+    hiddenimports += [
+        'win32com',
+        'win32com.client',
+        'win32com.client.gencache',
+        'pythoncom',
+        'pywintypes',
+    ]
+    for pkg in ['win32com', 'pythoncom', 'pywintypes']:
+        try:
+            d, b, h = collect_all(pkg)
+            datas.extend(d)
+            binaries.extend(b)
+            hiddenimports.extend(h)
+        except Exception as e:
+            print(f"Warning: Could not collect {pkg}: {e}")
+    try:
+        binaries.extend(collect_dynamic_libs('pywin32_system32'))
+    except Exception as e:
+        print(f"Warning: Could not collect pywin32_system32 binaries: {e}")
+
 # 添加更多的隐藏导入
 hiddenimports += [
     'flask',

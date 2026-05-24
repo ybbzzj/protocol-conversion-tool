@@ -52,15 +52,9 @@ if not exist "%~dp0public\dist\index.html" (
     echo.
 )
 
-REM 检查模型文件（兼容新旧目录名）
+REM 检查模型文件
 set "MODEL_DIRNAME=bge-small-zh-v1.5"
 set "MODEL_SRC=%~dp0models\%MODEL_DIRNAME%"
-if not exist "%MODEL_SRC%" (
-    if exist "%~dp0models\bge-small-zh-v1.5-onnx" (
-        set "MODEL_DIRNAME=bge-small-zh-v1.5-onnx"
-        set "MODEL_SRC=%~dp0models\bge-small-zh-v1.5-onnx"
-    )
-)
 if not exist "%MODEL_SRC%" (
     echo ⚠️  未检测到语义模型目录
     echo.
@@ -68,8 +62,7 @@ if not exist "%MODEL_SRC%" (
     echo    python download_model.py
     echo.
     echo 💡 模型说明:
-    echo    - 推荐模型：Xenova/bge-small-zh-v1.5 (ONNX)
-    echo    - model.onnx 大小约 95MB
+    echo    - 推荐模型：Xenova/bge-small-zh-v1.5
     echo    - 下载需要联网
     echo    - 如果无法下载，可手动从 HuggingFace 下载后放入 models 目录
     echo.
@@ -145,7 +138,6 @@ if %errorlevel% equ 0 (
     echo    - 模型文件较大（约 100MB），首次启动可能需要几秒钟
     echo    - models 目录必须与 exe 在同一层级
     echo    - 语义模型目录：models\bge-small-zh-v1.5
-    echo    - 兼容旧目录名：models\bge-small-zh-v1.5-onnx
     echo.
     echo 📂 部署结构:
     echo    协议转换工具/

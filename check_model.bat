@@ -18,15 +18,10 @@ if not exist "%~dp0models" (
     exit /b 1
 )
 
-REM 检查 ONNX 模型目录（兼容新旧目录名）
+REM 检查语义模型目录
 set "model_dir=%~dp0models\bge-small-zh-v1.5"
 if not exist "%model_dir%" (
-    if exist "%~dp0models\bge-small-zh-v1.5-onnx" (
-        set "model_dir=%~dp0models\bge-small-zh-v1.5-onnx"
-    )
-)
-if not exist "%model_dir%" (
-    echo ❌ 错误：未找到 ONNX 语义模型目录
+    echo ❌ 错误：未找到语义模型目录
     echo.
     echo 📥 请运行以下命令下载模型:
     echo    python download_model.py

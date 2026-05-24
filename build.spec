@@ -5,6 +5,15 @@ import os
 import sys
 from pathlib import Path
 
+# Python 3.8 的 dataclasses 是标准库模块，部分 PyInstaller/依赖收集逻辑会误读 __version__。
+# 构建期补齐该属性，避免打包时因 AttributeError 中断。
+try:
+    import dataclasses as _dataclasses
+    if not hasattr(_dataclasses, '__version__'):
+        _dataclasses.__version__ = '0.8'
+except Exception:
+    pass
+
 # --- 收集第三方库的依赖 ---
 # 语义模型采用 ONNX，本体模型文件保持与 exe 分离部署
 print("Collecting openpyxl dependencies...")

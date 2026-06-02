@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from flask import Blueprint, request
 from backend.services.field_matcher import EnhancedFieldMatcher as FieldMatcher
+from backend.services.embedding_service import embedding_service
 from backend.utils import success_response, error_response
 import uuid
 from difflib import SequenceMatcher
@@ -127,6 +128,7 @@ def query_knowledge():
         for item in kb_data:
             item_source = item.get('source', '')
             item_target = item.get('target', '')
+            item_hits = item.get('hits', 0)
             
             # 精确匹配
             if item_source.lower() == source.lower():
@@ -134,21 +136,42 @@ def query_knowledge():
                     'target': item_target,
                     'confidence': 1.0,
                     'match_type': 'exact',
-                    'hits': item.get('hits', 0)
+                    'hits': item_hits
                 })
             else:
-                # 模糊匹配（相似度计算）
+                # 语义匹配（ONNX embedding）
+                semantic_score = 0.0
+                if embedding_service.is_available():
+                    semantic_score = embedding_service.calculate_similarity(source, item_source)
+                if semantic_score >= 0.72:
+                    candidates.append({
+                        'target': item_target,
+                        'confidence': round(float(semantic_score), 3),
+                        'match_type': 'semantic',
+                        'hits': item_hits
+                    })
+
+                # 模糊匹配（字符串相似度）
                 similarity = SequenceMatcher(None, source.lower(), item_source.lower()).ratio()
                 if similarity > 0.6:
                     candidates.append({
                         'target': item_target,
                         'confidence': round(similarity * 0.9, 3),  # 模糊匹配置信度降低，四舍五入到小数点后3位
                         'match_type': 'fuzzy',
-                        'hits': item.get('hits', 0)
+                        'hits': item_hits
                     })
-        
+
+        # 去重：同一 target 仅保留最高置信度
+        dedup = {}
+        for c in candidates:
+            tgt = c.get('target')
+            if not tgt:
+                continue
+            if tgt not in dedup or (c['confidence'], c.get('hits', 0)) > (dedup[tgt]['confidence'], dedup[tgt].get('hits', 0)):
+                dedup[tgt] = c
+
         # 按置信度和命中数排序
-        candidates = sorted(candidates, key=lambda x: (x['confidence'], x['hits']), reverse=True)[:10]
+        candidates = sorted(dedup.values(), key=lambda x: (x['confidence'], x['hits']), reverse=True)[:10]
         
         return success_response({'candidates': candidates})
     except Exception as e:

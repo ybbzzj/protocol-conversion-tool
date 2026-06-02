@@ -18,9 +18,10 @@ if not exist "%~dp0models" (
     exit /b 1
 )
 
-REM 检查 ERNIE 模型
-if not exist "%~dp0models\ernie-3.0-nano-zh" (
-    echo ❌ 错误：未找到 ERNIE 模型目录
+REM 检查语义模型目录
+set "model_dir=%~dp0models\bge-small-zh-v1.5"
+if not exist "%model_dir%" (
+    echo ❌ 错误：未找到语义模型目录
     echo.
     echo 📥 请运行以下命令下载模型:
     echo    python download_model.py
@@ -30,20 +31,31 @@ if not exist "%~dp0models\ernie-3.0-nano-zh" (
 )
 
 REM 检查关键文件
-set "model_dir=%~dp0models\ernie-3.0-nano-zh"
+set "onnx_file=%model_dir%\onnx\model.onnx"
+if not exist "%onnx_file%" (
+    set "onnx_file=%model_dir%\onnx\model_int8.onnx"
+)
+if not exist "%onnx_file%" (
+    set "onnx_file=%model_dir%\onnx\model_quantized.onnx"
+)
 
 if not exist "%model_dir%\config.json" (
     echo ❌ 错误：缺少 config.json
     goto :incomplete
 )
 
-if not exist "%model_dir%\model_state.pdparams" (
-    echo ❌ 错误：缺少 model_state.pdparams
+if not exist "%model_dir%\tokenizer.json" (
+    echo ❌ 错误：缺少 tokenizer.json
     goto :incomplete
 )
 
 if not exist "%model_dir%\vocab.txt" (
     echo ❌ 错误：缺少 vocab.txt
+    goto :incomplete
+)
+
+if not exist "%onnx_file%" (
+    echo ❌ 错误：缺少 onnx/model.onnx 或 onnx/model_int8.onnx
     goto :incomplete
 )
 
@@ -53,10 +65,10 @@ echo 📦 模型位置：%model_dir%
 echo.
 
 REM 检查文件大小
-for %%A in ("%model_dir%\model_state.pdparams") do (
+for %%A in ("%onnx_file%") do (
     set "size=%%~zA"
     set /a size_mb=%%~zA/1024/1024
-    echo 📊 模型大小：!size_mb! MB
+    echo 📊 ONNX 大小：!size_mb! MB
 )
 
 echo.

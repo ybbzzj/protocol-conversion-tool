@@ -13,6 +13,7 @@ python-dateutil==2.8.2
 werkzeug==2.0.3
 rapidfuzz==2.13.7
 python-dotenv==0.19.2
-paddlepaddle==2.6.2
-paddlenlp==2.6.1
+onnxruntime==1.14.1
+tokenizers==0.13.3
+huggingface-hub==0.17.3
 pyinstaller==5.1

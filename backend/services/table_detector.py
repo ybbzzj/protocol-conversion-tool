@@ -180,6 +180,24 @@ def _dedup_row(row: List[str]) -> List[str]:
     return result
 
 
+def _normalize_meta_key(key: str) -> str:
+    """标准化元数据键名"""
+    k = (key or '').strip()
+    if not k:
+        return ''
+    if any(x in k for x in ['消息ID', '消息标识', '信息标识']) or k.upper() == 'ID':
+        return '消息ID'
+    if k in ['信源、信目', '信源、信宿']:
+        return '信源、信宿'
+    if '发送周期' in k or '传输周期' in k:
+        return '发送周期'
+    return k
+
+
+def _is_valid_value_text(v: str) -> bool:
+    return bool(v and v.strip() and v.strip() not in ('—', '-', ''))
+
+
 def _dedup_headers(header_row: List[str]) -> Tuple[List[str], List[int]]:
     """
     对表头行去重，返回 (去重后的表头列表, 对应原始列索引列表)。
@@ -308,10 +326,18 @@ def _is_noise_table(grid: List[List[str]], preceding_para: str) -> bool:
     if '帧格式' in preceding_para:
         return True
 
-    # ◄ 【新增】不过滤端口分配表和消息ID表（即使无数据类型关键字）
+    # ◄ 【新增】不过滤端口分配表、消息ID表、bit位定义表（即使无数据类型关键字）
     has_port_allocation_features = ('信源系统码' in row0_text and '信宿系统码' in row0_text and '信息内容' in row0_text)
-    has_message_id_features = ('消息ID' in row0_text and '信息内容' in row0_text)
-    if has_port_allocation_features or has_message_id_features:
+    has_id_header = any(x in row0_text for x in ['消息ID', '消息标识', '信息标识']) or re.search(r'(^|\s)ID($|\s)', row0_text, re.IGNORECASE)
+    has_message_id_features = (
+        has_id_header and
+        any(x in row0_text for x in ['信息内容', '消息内容', '名称'])
+    )
+    has_bit_def_features = (
+        ('位号' in row0_text or 'bit' in row0_text.lower()) and
+        any(x in row0_text for x in ['状态参数', '取值说明', '状态', '说明'])
+    )
+    if has_port_allocation_features or has_message_id_features or has_bit_def_features:
         return False
 
     # 检查整表是否含数据类型关键字
@@ -431,18 +457,23 @@ class TableDetector:
         if '信源系统码' in row0_text and '信宿系统码' in row0_text:
             return self._parse_port_allocation(grid, t_idx, preceding_para)
 
-        # ── 消息ID表识别（含消息ID+信息内容，≤6列） ──────────────────────────
-        if '消息ID' in row0_text and '信息内容' in row0_text:
+        # ── 消息ID表识别（兼容：消息ID/消息标识/信息标识/ID）──────────────────
+        has_id_col = any(x in row0_text for x in ['消息ID', '消息标识', '信息标识']) or re.search(r'(^|\s)ID($|\s)', row0_text, re.IGNORECASE)
+        has_name_col = any(x in row0_text for x in ['信息内容', '消息内容', '名称'])
+        if has_id_col and has_name_col:
             unique_cols, _ = _dedup_headers(grid[0])
             if len(unique_cols) <= 7:
                 return self._parse_message_id_table(grid, t_idx, preceding_para)
 
-        # ── bit位定义表识别（含位号+状态参数） ────────────────────────────────
-        if ('位号' in row0_text or '位号' in ' '.join(_dedup_row(grid[1])) if len(grid) > 1 else False) \
-                and '状态参数' in row0_text:
+        # ── bit位定义表识别（放宽：位号 + 状态/取值说明）───────────────────────
+        row1_text = ' '.join(_dedup_row(grid[1])) if len(grid) > 1 else ''
+        has_bit_col = ('位号' in row0_text) or ('位号' in row1_text) or ('bit' in row0_text.lower())
+        has_bit_desc = any(x in row0_text for x in ['状态参数', '取值说明', '状态', '说明']) or \
+                       any(x in row1_text for x in ['状态参数', '取值说明', '状态', '说明'])
+        if has_bit_col and has_bit_desc:
             return self._parse_bit_def_table(grid, t_idx, preceding_para)
         # 也匹配只有"位号"列的情况
-        if '位号' in row0_text and any(kw in row0_text for kw in ['状态参数', '取值说明']):
+        if '位号' in row0_text and any(kw in row0_text for kw in ['状态参数', '取值说明', '状态']):
             return self._parse_bit_def_table(grid, t_idx, preceding_para)
 
         # ── 字段定义表（A/B/C三种类型） ────────────────────────────────────────
@@ -614,17 +645,10 @@ class TableDetector:
                         val_cell = row[col_idx + 1].strip() if col_idx + 1 < len(row) else ''
                         
                         if key_cell and val_cell and key_cell not in ('—', '-', ''):
-                            # 标准化元数据键
-                            if key_cell in ['信源、信宿', '信源、信目']:
-                                meta['信源、信宿'] = val_cell
-                            elif '发起时机' in key_cell:
-                                meta['发起时机'] = val_cell
-                            elif '发送周期' in key_cell:
-                                meta['发送周期'] = val_cell
-                            elif '错误处理' in key_cell:
-                                meta['错误处理'] = val_cell
-                            elif '备注' in key_cell:
-                                meta['备注'] = val_cell
+                            # 标准化元数据键（支持 ID / 信息标识）
+                            norm_key = _normalize_meta_key(key_cell)
+                            if norm_key:
+                                meta[norm_key] = val_cell
                     
                     # ◄ 原有逻辑：处理特殊格式（BCRT、SA等）
                     if any(kw in row_text for kw in ['BCRT', 'SA', '模式码', '→', 'BC']):
@@ -635,6 +659,11 @@ class TableDetector:
                         for cell in row:
                             if '→' in cell or ':' in cell:
                                 meta['信源、信宿'] = cell
+
+                    # 从元数据文本中提取消息ID（例如：信息标识: 0x1801）
+                    id_match = re.search(r'(?:消息ID|消息标识|信息标识|ID)\s*[：:]\s*([A-Za-z0-9xX]+)', row_text, re.IGNORECASE)
+                    if id_match and _is_valid_value_text(id_match.group(1)):
+                        meta['消息ID'] = id_match.group(1).strip()
         else:
             # 类型B / C：行0 就是列名行
             row0_text = ' '.join(_dedup_row(grid[0]))
@@ -701,6 +730,12 @@ class TableDetector:
             row_dict = {}
             for h_idx, (h, col_idx) in enumerate(zip(headers, kept_indices)):
                 val = row[col_idx] if col_idx < len(row) else ''
+
+                # 对垂直合并续行：内容类字段置空，避免重复显示“数据项名称”
+                if is_vmerge_cont and r_idx < len(is_vmerge_cont) and col_idx < len(is_vmerge_cont[r_idx]):
+                    if is_vmerge_cont[r_idx][col_idx] and h in content_field_names:
+                        val = ''
+
                 row_dict[h] = val.strip()
 
             # 过滤纯空行
@@ -708,8 +743,11 @@ class TableDetector:
             if not row_all.strip():
                 continue
 
-            # 过滤注释行
-            if any(row_all.startswith(p) for p in ['注：', '注:', '说明：', '说明:']):
+            # 过滤注释行（支持首列/任意内容列出现“注：xxx”）
+            content_texts = [str(v).strip() for k, v in row_dict.items() if k in content_field_names and v]
+            if any(re.match(r'^\s*(注|说明)\s*[：:]', t) for t in content_texts):
+                continue
+            if re.match(r'^\s*(注|说明)\s*[：:]', row_all):
                 continue
 
             # 过滤噪声（参见附录等）

@@ -3,7 +3,10 @@ from flask import Blueprint, request, send_file
 import os
 import uuid
 import json
+import copy
+import re
 from datetime import datetime
+from typing import Dict, List
 from backend.utils import success_response, error_response
 from backend.config import Config
 from backend.services.table_detector import DocumentParser
@@ -77,9 +80,10 @@ def start_extraction():
         return error_response(40001, f"不支持的文件格式，请上传 {', '.join(allowed_extensions)} 格式的文件")
     
     field_ids = request.form.getlist('field_ids')
+    field_names = request.form.getlist('field_names')
     
     # 加载用户选择的期望字段
-    expected_fields = _load_expected_fields(field_ids)
+    expected_fields = _load_expected_fields(field_ids, field_names)
     
     task_id = str(uuid.uuid4())
     upload_path = os.path.join('backend', 'uploads', f"{task_id}_{file.filename}")
@@ -105,10 +109,14 @@ def start_extraction():
         # 保存文件
         file.save(upload_path)
         tasks_status[task_id]['progress'] = 10
+
+        parse_path = upload_path
+        if file_ext == '.doc':
+            parse_path = _convert_doc_to_docx(upload_path)
         
         # 执行提取
         parser = DocumentParser()
-        result = parser.parse(upload_path)
+        result = parser.parse(parse_path)
         tasks_status[task_id]['progress'] = 50
         
         # 表格关联：注入元数据、过滤辅助表、附加bit子行
@@ -195,6 +203,10 @@ def start_extraction():
         # 计算映射质量
         extracted_field_names = []
         for table in processed_tables:
+            # 表级元数据（如消息ID）也参与映射质量统计
+            for mk, mv in (table.get('meta') or {}).items():
+                if mv and str(mv).strip() not in ('—', '-', ''):
+                    extracted_field_names.append(mk)
             for row in table['data_rows']:
                 extracted_field_names.extend(row.keys())
         
@@ -214,7 +226,8 @@ def start_extraction():
             'status': 'success',
             'progress': 100,
             'output_path': output_file,
-            'mapping_quality': mapping_quality
+            'mapping_quality': mapping_quality,
+            'processed_tables': processed_tables
         })
         
         # ✅ 保存到磁盘
@@ -262,10 +275,24 @@ def download_result(task_id):
         status = tasks_status.get(task_id)
         if not status or status['status'] != 'success':
             return error_response(40401, "结果文件不存在或任务未完成")
-        
-        output_path = status['output_path']
+
+        remove_crc = _parse_bool(request.args.get('remove_crc', 'false'))
+
+        output_path = status.get('output_path')
         if not output_path or not os.path.exists(output_path):
             return error_response(40401, "文件已过期或被删除")
+
+        generated_temp = None
+        if remove_crc:
+            processed_tables = status.get('processed_tables') or []
+            if processed_tables:
+                output_dir = os.path.join('backend', 'outputs')
+                os.makedirs(output_dir, exist_ok=True)
+                exporter = ExcelExporter(output_dir)
+                controlled_tables = _apply_output_controls(processed_tables, remove_crc=True)
+                generated_temp = exporter.export_with_template(controlled_tables, f"{task_id}_crc_filtered")
+                if generated_temp and os.path.exists(generated_temp):
+                    output_path = generated_temp
         
         # ✅ 使用原始上传文件名作为下载文件名
         original_filename = status.get('filename', f"result_{task_id[:8]}")
@@ -292,15 +319,11 @@ def download_result(task_id):
             }
         )
         
-        # 文件传输完成后删除源文件，确保结果只保留一份
+        # 文件传输完成后只删除临时文件；主结果保留，支持重复下载。
         try:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-                print(f"[下载完成] 已删除文件: {output_path}")
-                # 更新任务状态，标记文件已被下载
-                status['output_path'] = None
-                status['message'] = '文件已下载并删除'
-                _save_tasks_to_disk()
+            if generated_temp and os.path.exists(generated_temp):
+                os.remove(generated_temp)
+                print(f"[下载完成] 已删除临时文件: {generated_temp}")
         except Exception as e:
             print(f"[警告] 删除文件失败: {e}")
         
@@ -309,11 +332,113 @@ def download_result(task_id):
         return error_response(50001, f"下载失败: {str(e)}")
 
 
-def _load_expected_fields(field_ids):
+def _parse_bool(v: str) -> bool:
+    return str(v).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _convert_doc_to_docx(doc_path: str) -> str:
+    """
+    将旧版 .doc 转为 .docx 后再交给 python-docx 解析。
+    依赖 Windows + Microsoft Word + pywin32；不满足时明确报错，避免导出空结果。
+    """
+    if not doc_path.lower().endswith('.doc'):
+        return doc_path
+
+    try:
+        import win32com.client
+    except Exception as e:
+        raise RuntimeError("当前环境不支持 .doc 自动转换，请先将文件另存为 .docx 后再提取") from e
+
+    abs_doc_path = os.path.abspath(doc_path)
+    docx_path = abs_doc_path + 'x'
+    word = None
+    doc = None
+    try:
+        word = win32com.client.DispatchEx("Word.Application")
+        word.Visible = False
+        doc = word.Documents.Open(abs_doc_path)
+        doc.SaveAs(docx_path, FileFormat=12)
+        return docx_path
+    except Exception as e:
+        raise RuntimeError(f".doc 转 .docx 失败，请先手动另存为 .docx 后再提取：{e}") from e
+    finally:
+        try:
+            if doc is not None:
+                doc.Close(False)
+        except Exception:
+            pass
+        try:
+            if word is not None:
+                word.Quit()
+        except Exception:
+            pass
+
+
+def _row_has_effective_data(row: Dict) -> bool:
+    if not isinstance(row, dict):
+        return False
+    for k, v in row.items():
+        if str(k).startswith('_'):
+            continue
+        txt = str(v).strip() if v is not None else ''
+        if txt and txt not in ('—', '-', ''):
+            return True
+    return False
+
+
+def _is_crc_row(row: Dict) -> bool:
+    if not isinstance(row, dict):
+        return False
+    for k, v in row.items():
+        if str(k).startswith('_') or v is None:
+            continue
+        txt = str(v)
+        if re.search(r'CRC\s*校验', txt, re.IGNORECASE):
+            return True
+    return False
+
+
+def _apply_output_controls(processed_tables: List[Dict], remove_crc: bool = False) -> List[Dict]:
+    """
+    对提取后的结果进行可选清洗（下载阶段执行，不影响提取主流程）
+    目前支持：
+    - 删除 CRC 校验字行：当行内容含“CRC校验”字样，且下一行无有效数据（或不存在）时删除
+    """
+    tables = copy.deepcopy(processed_tables or [])
+    if not remove_crc:
+        return tables
+
+    for table in tables:
+        rows = table.get('data_rows') or []
+        if not rows:
+            continue
+        kept = []
+        n = len(rows)
+        for i, row in enumerate(rows):
+            if _is_crc_row(row):
+                next_row = rows[i + 1] if i + 1 < n else None
+                if next_row is None or not _row_has_effective_data(next_row):
+                    continue
+            kept.append(row)
+        table['data_rows'] = kept
+    return tables
+
+
+def _load_expected_fields(field_ids, field_names=None):
     """
     根据用户选择的字段ID加载期望字段名称
     """
     try:
+        # 前端字段配置目前存储在浏览器本地，打包后这些 ID 不一定存在于后端配置文件。
+        # 因此前端会同时提交字段名称，后端优先使用名称，避免期望字段为空。
+        expected_names = []
+        for name in (field_names or []):
+            name = str(name).strip()
+            if name and name not in expected_names:
+                expected_names.append(name)
+        if expected_names:
+            return expected_names
+
         # 从配置文件加载协议字段
         config_path = Config.PROTOCOL_FIELDS_PATH
         if os.path.exists(config_path):
@@ -321,7 +446,6 @@ def _load_expected_fields(field_ids):
                 protocol_fields = json.load(f)
                 
                 # 根据ID查找字段名称
-                expected_names = []
                 for field_id in field_ids:
                     # 处理数组格式的配置文件
                     if isinstance(protocol_fields, list):
@@ -347,28 +471,49 @@ def _calculate_mapping_quality(extracted_fields, expected_fields):
             'score': 0,
             'level': 'unknown',
             'exact_count': 0,
+            'semantic_count': 0,
+            'alias_count': 0,
             'fuzzy_count': 0,
             'unmatched_count': 0,
             'total': 0
         }
     
     matcher = FieldMatcher()
-    mapping_results = []
+    expected_set = {_quality_field_key(f) for f in expected_fields if str(f).strip()}
+    best_by_expected = {}
     
-    # 对每个提取的字段进行匹配
+    # 对每个提取字段做匹配，并按用户期望字段统计覆盖情况。
     for ext_field in extracted_fields:
         match_result = matcher.match_field(ext_field)
-        mapping_results.append(match_result)
+        if not isinstance(match_result, dict):
+            continue
+        target = _quality_field_key(match_result.get('target'))
+        if target not in expected_set:
+            continue
+        old = best_by_expected.get(target)
+        if old is None or match_result.get('confidence', 0) > old.get('confidence', 0):
+            best_by_expected[target] = match_result
+
+    mapping_results = list(best_by_expected.values())
     
     # 统计匹配结果
     exact_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'exact')
-    fuzzy_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'fuzzy')
-    unmatched_count = sum(1 for r in mapping_results if isinstance(r, dict) and not r.get('target'))
-    total = len(mapping_results)
+    semantic_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'semantic')
+    alias_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'alias')
+    fuzzy_only_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'fuzzy')
+    # 保持兼容：历史字段 fuzzy_count 仍返回“广义模糊”数量
+    fuzzy_count = fuzzy_only_count + semantic_count + alias_count
+    total = len(expected_set)
+    unmatched_count = max(total - len(best_by_expected), 0)
     
     # 计算加权评分
     if total > 0:
-        score = (exact_count * 1.0 + fuzzy_count * 0.7) / total
+        score = (
+            exact_count * 1.0
+            + semantic_count * 0.85
+            + alias_count * 0.8
+            + fuzzy_only_count * 0.7
+        ) / total
         level = 'excellent' if score > 0.9 else 'good' if score > 0.7 else 'poor'
     else:
         score = 0
@@ -378,7 +523,16 @@ def _calculate_mapping_quality(extracted_fields, expected_fields):
         'score': score,
         'level': level,
         'exact_count': exact_count,
+        'semantic_count': semantic_count,
+        'alias_count': alias_count,
         'fuzzy_count': fuzzy_count,
         'unmatched_count': unmatched_count,
         'total': total
     }
+
+
+def _quality_field_key(field) -> str:
+    text = str(field or '').strip()
+    if text.upper() == 'ID' or text in ('消息ID', '消息标识', '信息标识'):
+        return '消息ID'
+    return text

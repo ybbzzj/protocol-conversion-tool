@@ -1,12 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
 import os
 import sys
 from pathlib import Path
 
+# Python 3.8 的 dataclasses 是标准库模块，部分 PyInstaller/依赖收集逻辑会误读 __version__。
+# 构建期补齐该属性，避免打包时因 AttributeError 中断。
+try:
+    import dataclasses as _dataclasses
+    if not hasattr(_dataclasses, '__version__'):
+        _dataclasses.__version__ = '0.8'
+except Exception:
+    pass
+
 # --- 收集第三方库的依赖 ---
-# 注意：不包含 paddlepaddle 和 paddlenlp，使用基础匹配算法
+# 语义模型采用 ONNX，本体模型文件保持与 exe 分离部署
 print("Collecting openpyxl dependencies...")
 datas_openpyxl, binaries_openpyxl, hiddenimports_openpyxl = collect_all('openpyxl')
 
@@ -33,6 +42,23 @@ datas = datas_openpyxl
 binaries = binaries_openpyxl
 hiddenimports = hiddenimports_openpyxl
 
+# 收集语义模型运行时依赖。运行时直接用 tokenizers 读取 tokenizer.json。
+try:
+    print("Collecting onnxruntime dependencies...")
+    d, b, h = collect_all('onnxruntime')
+    datas.extend(d)
+    binaries.extend(b)
+    hiddenimports.extend(h)
+    binaries.extend(collect_dynamic_libs('onnxruntime'))
+except Exception as e:
+    print(f"Warning: Could not collect onnxruntime: {e}")
+
+try:
+    print("Collecting tokenizers binaries...")
+    binaries.extend(collect_dynamic_libs('tokenizers'))
+except Exception as e:
+    print(f"Warning: Could not collect tokenizers binaries: {e}")
+
 # 添加更多的隐藏导入
 hiddenimports += [
     'flask',
@@ -40,6 +66,15 @@ hiddenimports += [
     'docx2python',
     'python_docx',
     'rapidfuzz',
+    'onnxruntime',
+    'onnxruntime.capi',
+    'onnxruntime.capi.onnxruntime_pybind11_state',
+    'tokenizers',
+    'tokenizers.models',
+    'tokenizers.normalizers',
+    'tokenizers.pre_tokenizers',
+    'tokenizers.processors',
+    'tokenizers.decoders',
 ]
 
 # --- 添加本项目自定义的资源文件 (格式：(源路径，目标目录)) ---
@@ -72,7 +107,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['paddle', 'paddlenlp'],  # 排除 paddle，避免自动打包
+    excludes=['transformers', 'huggingface_hub'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,

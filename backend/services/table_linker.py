@@ -158,17 +158,18 @@ class TableLinker:
             data_rows = table.get('data_rows', [])
             headers_text = ' '.join(headers)
 
-            # 识别消息ID表：含"消息ID"且含"信息内容"
-            if '消息ID' not in headers_text and '消息标识' not in headers_text:
+            # 识别消息ID表：兼容“消息ID/消息标识/信息标识/ID”
+            has_id_col = ('消息ID' in headers_text or '消息标识' in headers_text or '信息标识' in headers_text or ' ID' in f' {headers_text} ')
+            if not has_id_col:
                 continue
-            if '信息内容' not in headers_text:
+            if '信息内容' not in headers_text and '消息内容' not in headers_text and '名称' not in headers_text:
                 continue
 
             col_content = col_id = None
             for idx, h in enumerate(headers):
-                if '信息内容' in h:
+                if '信息内容' in h or '消息内容' in h or h == '名称':
                     col_content = idx
-                elif '消息ID' in h or '消息标识' in h:
+                elif '消息ID' in h or '消息标识' in h or '信息标识' in h or h.strip().upper() == 'ID':
                     col_id = idx
 
             if col_content is None or col_id is None:
@@ -198,7 +199,7 @@ class TableLinker:
                 # 兼容旧格式：通过表头特征识别
                 headers = table.get('headers', [])
                 headers_text = ' '.join(headers)
-                if '位号' in headers_text and '状态参数' in headers_text:
+                if '位号' in headers_text and any(kw in headers_text for kw in ['状态参数', '取值说明', '状态', '说明']):
                     bit_tables.append(table)
         return bit_tables
 
@@ -261,7 +262,11 @@ class TableLinker:
             if any(kw in k_lower for kw in ['字节数', '字节', '长度']):
                 byte_count_str = str(v).strip() if v else ''
 
-        has_bit_ref = '见表' in type_text or '见表' in remark_text
+        has_bit_ref = (
+            ('见表' in type_text or '见表' in remark_text)
+            or ('bit' in type_text.lower())
+            or ('位' in type_text and any(x in type_text for x in ['位图', '位定义', '位号']))
+        )
 
         if not has_bit_ref:
             return []
@@ -291,7 +296,7 @@ class TableLinker:
         for idx, h in enumerate(headers):
             if '位号' in h or 'bit' in h.lower():
                 col_bit = idx
-            elif '状态参数' in h or '参数' in h:
+            elif '状态参数' in h or '参数' in h or '状态' in h or '说明' in h or '取值说明' in h:
                 col_state = idx
 
         if col_bit is None or col_state is None:

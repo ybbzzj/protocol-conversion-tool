@@ -66,13 +66,6 @@ echo.
 echo ✅ 依赖安装完成
 echo.
 
-REM 修复 paddlenlp 中的 scipy 导入问题
-echo ============================================================
-echo 步骤 1.5/5: 修复 PaddleNLP scipy 导入问题
-echo ============================================================
-echo.
-python patch_paddlenlp.py
-python patch_paddlenlp_datasets.py
 echo.
 
 echo ============================================================

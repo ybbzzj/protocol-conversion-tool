@@ -5,6 +5,23 @@ import os
 import sys
 from pathlib import Path
 
+# --- 兼容性补丁：修复 Python 3.8 上 hook-transformers 崩溃的问题 ---
+# transformers 的依赖元数据含 `dataclasses; python_version < "3.7"`，
+# 旧版 PyInstaller(5.1) 的 is_module_satisfies 未正确评估 environment marker，
+# 会去读标准库 dataclasses 的 __version__（不存在）而抛 AttributeError 中断打包。
+# 这里包一层：检查抛异常时按“不满足”处理（跳过该可选依赖），仅作用于打包期，不影响运行时。
+import PyInstaller.utils.hooks as _pyi_hooks
+
+_orig_is_module_satisfies = _pyi_hooks.is_module_satisfies
+
+def _safe_is_module_satisfies(*args, **kwargs):
+    try:
+        return _orig_is_module_satisfies(*args, **kwargs)
+    except Exception:
+        return False
+
+_pyi_hooks.is_module_satisfies = _safe_is_module_satisfies
+
 # --- 收集第三方库的依赖 ---
 # 语义模型采用 ONNX，本体模型文件保持与 exe 分离部署
 print("Collecting openpyxl dependencies...")

@@ -52,18 +52,29 @@ if not exist "%~dp0public\dist\index.html" (
     echo.
 )
 
-REM 检查模型文件
-if not exist "%~dp0models\bge-small-zh-v1.5-onnx" (
-    echo ⚠️  未检测到语义模型目录
+REM 检查模型文件（校验 onnx 真实大小，防止 Git LFS 指针未还原成真文件）
+set "MODEL_ONNX=%~dp0models\bge-small-zh-v1.5-onnx\onnx\model.onnx"
+set "MODEL_OK=1"
+set "MODEL_SIZE=0"
+if not exist "!MODEL_ONNX!" (
+    set "MODEL_OK=0"
+) else (
+    for %%F in ("!MODEL_ONNX!") do set "MODEL_SIZE=%%~zF"
+    REM 真实模型约 102MB；小于 1MB(1048576 字节)说明是 LFS 指针或文件残缺
+    if !MODEL_SIZE! LSS 1048576 set "MODEL_OK=0"
+)
+if "!MODEL_OK!"=="0" (
+    echo ⚠️  语义模型缺失或不完整 ^(当前 model.onnx 大小: !MODEL_SIZE! 字节^)
     echo.
-    echo 📥 请先下载模型：
-    echo    python download_model.py
+    echo 💡 常见原因与处理:
+    echo    - 若用 git 拉取代码: 模型由 Git LFS 托管，请先安装 git-lfs 再拉取:
+    echo        git lfs install ^&^& git lfs pull
+    echo    - 若需重新下载: python download_model.py ^(需联网^)
     echo.
-    echo 💡 模型说明:
+    echo 📦 模型说明:
     echo    - 推荐模型：Xenova/bge-small-zh-v1.5 (ONNX)
-    echo    - model.onnx 大小约 95MB
-    echo    - 下载需要联网
-    echo    - 如果无法下载，可手动从 HuggingFace 下载后放入 models 目录
+    echo    - model.onnx 真实大小约 102MB
+    echo    - 几百字节的 model.onnx 是 LFS 指针文本，不是真模型
     echo.
     set /p CONTINUE="是否继续打包？（模型将不可用）(y/N): "
     if /i not "!CONTINUE!"=="y" (

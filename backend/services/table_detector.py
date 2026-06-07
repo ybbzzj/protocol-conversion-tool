@@ -329,6 +329,8 @@ class TableDetector:
     """
 
     def __init__(self, config=None):
+        # 输出控制：是否丢弃 data_rows 末尾的 CRC 校验字行（默认开启，保持既有行为）
+        self.remove_crc_tail = True
         # 保留 keywords 等属性以兼容外部调用
         self.keywords = ['序号', '参数', '内容', '信号名称', '信息内容', '数据类型', '类型',
                          '长度', '单位', '备注', '值域', '信源', '信宿', '消息ID']
@@ -763,19 +765,20 @@ class TableDetector:
 
             data_rows.append(row_dict)
 
-        # ◄ 末尾 CRC 校验字过滤：
+        # ◄ 末尾 CRC 校验字过滤（可由输出控制开关关闭）：
         # 若最后一个有效数据行的内容字段包含 CRC校验字/检验字/校验码/检验码（CRC 大小写不敏感），
         # 则丢弃该行（这类校验字段通常不是协议有效数据项）。
         # 仅作用于最后一项：若 CRC 行后面仍有有效数据行，则保留（见 content 居中的情况）。
-        crc_keywords = ('crc校验字', 'crc检验字', 'crc校验码', 'crc检验码')
-        if data_rows:
-            last_row = data_rows[-1]
-            for header, value in last_row.items():
-                if header in content_field_names and value:
-                    v = str(value).strip().lower()
-                    if any(kw in v for kw in crc_keywords):
-                        data_rows.pop()
-                        break
+        if self.remove_crc_tail:
+            crc_keywords = ('crc校验字', 'crc检验字', 'crc校验码', 'crc检验码')
+            if data_rows:
+                last_row = data_rows[-1]
+                for header, value in last_row.items():
+                    if header in content_field_names and value:
+                        v = str(value).strip().lower()
+                        if any(kw in v for kw in crc_keywords):
+                            data_rows.pop()
+                            break
 
         return data_rows
 
@@ -796,10 +799,15 @@ class DocumentParser:
                 from backend.services.table_linker import TableLinker
         self.linker = TableLinker()
 
-    def parse(self, path: str) -> Dict:
+    def parse(self, path: str, options: Dict = None) -> Dict:
         import json
         import os
-        
+
+        # 应用输出控制选项
+        options = options or {}
+        if 'remove_crc_tail' in options:
+            self.detector.remove_crc_tail = bool(options['remove_crc_tail'])
+
         raw_tables = self.detector.extract_tables_from_docx(path)
         linked_tables = self.linker.link_tables(raw_tables)
         

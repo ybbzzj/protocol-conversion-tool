@@ -79,6 +79,9 @@ def start_extraction():
     field_ids = request.form.getlist('field_ids')
     field_names = request.form.getlist('field_names')
 
+    # 输出控制选项：是否删除末尾 CRC 校验字行（默认开启）
+    remove_crc = request.form.get('remove_crc', 'true').lower() != 'false'
+
     # 加载用户选择的期望字段：优先使用前端直接传来的字段名
     # （前端字段 id 为本地随机生成，与后端配置 id 不一致，无法靠 id 反查名称）
     if field_names:
@@ -103,6 +106,7 @@ def start_extraction():
         'message': '',
         'field_ids': field_ids,
         'expected_fields': expected_fields,  # 期望字段
+        'remove_crc': remove_crc,  # 输出控制：是否删除末尾 CRC 校验字行
         'mapping_quality': None  # 映射质量评分
     }
     
@@ -113,7 +117,7 @@ def start_extraction():
         
         # 执行提取
         parser = DocumentParser()
-        result = parser.parse(upload_path)
+        result = parser.parse(upload_path, options={'remove_crc_tail': remove_crc})
         tasks_status[task_id]['progress'] = 50
         
         # 表格关联：注入元数据、过滤辅助表、附加bit子行

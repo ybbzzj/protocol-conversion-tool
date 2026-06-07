@@ -77,9 +77,14 @@ def start_extraction():
         return error_response(40001, f"不支持的文件格式，请上传 {', '.join(allowed_extensions)} 格式的文件")
     
     field_ids = request.form.getlist('field_ids')
-    
-    # 加载用户选择的期望字段
-    expected_fields = _load_expected_fields(field_ids)
+    field_names = request.form.getlist('field_names')
+
+    # 加载用户选择的期望字段：优先使用前端直接传来的字段名
+    # （前端字段 id 为本地随机生成，与后端配置 id 不一致，无法靠 id 反查名称）
+    if field_names:
+        expected_fields = field_names
+    else:
+        expected_fields = _load_expected_fields(field_ids)
     
     task_id = str(uuid.uuid4())
     upload_path = os.path.join('backend', 'uploads', f"{task_id}_{file.filename}")

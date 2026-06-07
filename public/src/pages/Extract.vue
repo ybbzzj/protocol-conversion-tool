@@ -221,6 +221,13 @@ async function startExtract(){
     for(const fieldId of selectedFieldIds.value){
       fd.append('field_ids', fieldId)
     }
+    // 同时传字段名：前端字段 id 是本地随机生成的，与后端配置 id 不一致，
+    // 期望字段以名称为准，后端优先使用 field_names
+    const idToName = new Map(protocolFields.value.map(f => [f.id, f.name]))
+    for(const fieldId of selectedFieldIds.value){
+      const name = idToName.get(fieldId)
+      if(name){ fd.append('field_names', name) }
+    }
     const { data } = await api.post(endpoints.extractStart, fd, { headers:{ 'Content-Type':'multipart/form-data' } })
     currentTaskId.value = data?.data?.task_id || ''
     if(!currentTaskId.value){ toast.show('未返回任务ID'); return }

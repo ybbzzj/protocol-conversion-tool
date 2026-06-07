@@ -48,7 +48,7 @@ def _save_tasks_to_disk():
         for tid in sorted_ids:
             task = tasks_status[tid]
             # 创建副本并删除大字段
-            meta = {k: v for k, v in task.items() if k not in ('raw_tables', 'processed_tables')}
+            meta = {k: v for k, v in task.items() if k not in ('raw_tables', 'processed_tables', 'linked_tables')}
             persist_data[tid] = meta
             
         os.makedirs(os.path.dirname(TASKS_HISTORY_PATH), exist_ok=True)
@@ -115,81 +115,21 @@ def start_extraction():
         linker = TableLinker()
         linked_tables = linker.link_tables(result['tables'])
         
-        processor = DataProcessor()
-        matcher = FieldMatcher()
-        
         # 使用原始表格数据而不是处理后的数据
         # 保存原始提取的表格数据用于预览
         tasks_status[task_id]['raw_tables'] = result['tables']
-        
-        # 保存处理后的表格数据用于导出
-        processed_tables = []
-        table_count = len(linked_tables)
-        tasks_status[task_id]['table_count'] = table_count
-        
+        # 保存关联后的表格数据，供人工修正后重新导出使用（仅内存，不持久化）
+        tasks_status[task_id]['linked_tables'] = linked_tables
+
         # 记录第一个表的名称作为主表名
         if linked_tables:
             tasks_status[task_id]['msg_name'] = linked_tables[0].get('msg_name', '')
-            tasks_status[task_id]['table_count'] = table_count
-        
-        for idx, table in enumerate(linked_tables):
-            # 只保留 field_def 类型的表格（辅助表已由 table_linker 过滤掉）
-            table_type = table.get('table_type', '')
-            if table_type not in ('field_def', '', None):
-                # 辅助表（端口分配/消息ID/bit定义）不输出到 Excel
-                table_count -= 1
-                continue
 
-            table_rows = []
-            for row in table['data_rows']:
-                # 过滤掉只有名称/内容但没有其他数据的无效行
-                # （如"聚合式的信息流表征示意"、"发起时机"等元数据行）
-                if not row.get('_is_bit_row') and not processor.is_valid_data_row(row):
-                    continue
-                
-                # bit 子行直接透传，不做 field 匹配
-                if row.get('_is_bit_row'):
-                    table_rows.append(row)
-                    continue
-
-                proc_res = processor.process_row(row)
-                matched_row = {}
-                for field, value in proc_res['cleaned'].items():
-                    match_res = matcher.match_field(field)
-                    # 兼容字典和对象格式
-                    target = match_res.get('target') if isinstance(match_res, dict) else (match_res.target if hasattr(match_res, 'target') else field)
-                    target = target if target else field
-                    matched_row[target] = value
-
-                # 保留格式化结果（值域、转换公式）
-                for fkey, fval in proc_res.get('formatted', {}).items():
-                    matched_row[f'_fmt_{fkey}'] = fval
-
-                # 位数对齐
-                if '位数' in proc_res['converted']:
-                    matched_row['类型（bit）'] = proc_res['converted']['位数']
-
-                table_rows.append(matched_row)
-
-            # 构建表格数据，包含元数据（meta）及元数据来源（meta_sources）
-            table_data = {
-                'msg_name': table['msg_name'],
-                'data_rows': table_rows,
-                'meta': table.get('meta', {}),
-                'table_type': table_type,
-                'meta_sources': table.get('meta_sources', {}),
-            }
-            processed_tables.append(table_data)
-            
-            # 更新进度
-            progress = 50 + int((idx + 1) / table_count * 30) if table_count > 0 else 80
-            tasks_status[task_id]['progress'] = progress
-            
-        # 导出
-        output_dir = os.path.join('backend', 'outputs')
-        os.makedirs(output_dir, exist_ok=True)
-        exporter = ExcelExporter(output_dir)
-        output_file = exporter.export_with_template(processed_tables, task_id)
+        # 处理表格并导出
+        processed_tables = _build_processed_tables(linked_tables)
+        tasks_status[task_id]['table_count'] = len(processed_tables)
+        tasks_status[task_id]['progress'] = 80
+        output_file = _export_processed_tables(processed_tables, task_id)
         tasks_status[task_id]['progress'] = 90
         
         # 计算映射质量
@@ -307,6 +247,114 @@ def download_result(task_id):
         return response
     except Exception as e:
         return error_response(50001, f"下载失败: {str(e)}")
+
+
+def _build_processed_tables(linked_tables, user_overrides=None):
+    """
+    将关联后的表格处理为可导出的结构。
+
+    Args:
+        linked_tables: TableLinker 关联后的表格列表
+        user_overrides: 可选，用户手动修正映射 {原始字段: 目标字段}，优先级高于自动匹配
+
+    Returns:
+        processed_tables 列表
+    """
+    user_overrides = user_overrides or {}
+    processor = DataProcessor()
+    matcher = FieldMatcher()
+    processed_tables = []
+
+    for table in linked_tables:
+        # 只保留 field_def 类型的表格（辅助表已由 table_linker 过滤掉）
+        table_type = table.get('table_type', '')
+        if table_type not in ('field_def', '', None):
+            # 辅助表（端口分配/消息ID/bit定义）不输出到 Excel
+            continue
+
+        table_rows = []
+        for row in table['data_rows']:
+            # 过滤掉只有名称/内容但没有其他数据的无效行
+            if not row.get('_is_bit_row') and not processor.is_valid_data_row(row):
+                continue
+
+            # bit 子行直接透传，不做 field 匹配
+            if row.get('_is_bit_row'):
+                table_rows.append(row)
+                continue
+
+            proc_res = processor.process_row(row)
+            matched_row = {}
+            for field, value in proc_res['cleaned'].items():
+                # 用户手动修正优先
+                if field in user_overrides:
+                    target = user_overrides[field]
+                else:
+                    match_res = matcher.match_field(field)
+                    target = match_res.get('target') if isinstance(match_res, dict) else (match_res.target if hasattr(match_res, 'target') else field)
+                    target = target if target else field
+                matched_row[target] = value
+
+            # 保留格式化结果（值域、转换公式）
+            for fkey, fval in proc_res.get('formatted', {}).items():
+                matched_row[f'_fmt_{fkey}'] = fval
+
+            # 位数对齐
+            if '位数' in proc_res['converted']:
+                matched_row['类型（bit）'] = proc_res['converted']['位数']
+
+            table_rows.append(matched_row)
+
+        processed_tables.append({
+            'msg_name': table['msg_name'],
+            'data_rows': table_rows,
+            'meta': table.get('meta', {}),
+            'table_type': table_type,
+            'meta_sources': table.get('meta_sources', {}),
+        })
+
+    return processed_tables
+
+
+def _export_processed_tables(processed_tables, task_id):
+    """导出处理后的表格为 Excel 文件，返回文件路径"""
+    output_dir = os.path.join('backend', 'outputs')
+    os.makedirs(output_dir, exist_ok=True)
+    exporter = ExcelExporter(output_dir)
+    return exporter.export_with_template(processed_tables, task_id)
+
+
+def regenerate_output(task_id, user_overrides):
+    """
+    根据用户手动修正的映射，重新生成 Excel 输出文件。
+
+    Args:
+        task_id: 任务ID
+        user_overrides: {原始字段: 目标字段}
+
+    Returns:
+        (success: bool, message: str)
+    """
+    status = tasks_status.get(task_id)
+    if not status:
+        return False, "任务不存在"
+
+    linked_tables = status.get('linked_tables')
+    if not linked_tables:
+        return False, "原始表格数据已过期，无法重新生成（请重新上传文档）"
+
+    try:
+        processed_tables = _build_processed_tables(linked_tables, user_overrides=user_overrides)
+        output_file = _export_processed_tables(processed_tables, task_id)
+        status['output_path'] = output_file
+        status['table_count'] = len(processed_tables)
+        status['message'] = '已根据人工修正重新生成结果'
+        _save_tasks_to_disk()
+        return True, output_file
+    except Exception as e:
+        import traceback
+        print(f"[重新生成 {task_id}] 错误: {traceback.format_exc()}")
+        return False, str(e)
 
 
 def _load_expected_fields(field_ids):

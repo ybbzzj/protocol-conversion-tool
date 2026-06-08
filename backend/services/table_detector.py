@@ -696,7 +696,14 @@ class TableDetector:
             '传输周期', '发起时机', '错误处理', '^序号$',  # 用正则表达式匹配单独的"序号"
             '检查结果', '非周期', '按实际操作流程'
         }
-        
+
+        # 内容字段（数据含义/名称等）所在的 grid 列，用于判断垂直合并续行
+        content_col_idx = None
+        for h, col_idx in zip(headers, kept_indices):
+            if h in content_field_names:
+                content_col_idx = col_idx
+                break
+
         for r_idx in range(start_row, len(grid)):
             row = grid[r_idx]
 
@@ -708,6 +715,29 @@ class TableDetector:
             # 过滤纯空行
             row_all = ''.join(row_dict.values())
             if not row_all.strip():
+                continue
+
+            # ◄ 垂直合并续行合并：
+            # 若内容字段（如“数据含义”）所在单元格是 docx 垂直合并的续行，说明本行与上一
+            # 数据项属于同一个合并单元格（例如“设备状态”跨多行，而“备注”列 D1~D8 各自独立）。
+            # 此时把本行中“与上一行不同的非空值”追加到上一行（换行连接），而非新增数据行。
+            is_continuation = (
+                is_vmerge_cont is not None
+                and content_col_idx is not None
+                and r_idx < len(is_vmerge_cont)
+                and content_col_idx < len(is_vmerge_cont[r_idx])
+                and is_vmerge_cont[r_idx][content_col_idx]
+            )
+            if is_continuation and data_rows:
+                prev = data_rows[-1]
+                for header, value in row_dict.items():
+                    v = (value or '').strip()
+                    if not v or v in ('—', '-'):
+                        continue
+                    prev_v = (prev.get(header) or '').strip()
+                    if v == prev_v:
+                        continue
+                    prev[header] = (prev_v + '\n' + v) if prev_v else v
                 continue
 
             # 过滤注释行

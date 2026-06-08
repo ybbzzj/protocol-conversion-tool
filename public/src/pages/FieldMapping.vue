@@ -308,6 +308,21 @@ const FALLBACK_TARGET_FIELDS = [
 ]
 const targetFields = ref<string[]>([...FALLBACK_TARGET_FIELDS])
 
+// 读取“字段配置”页配置的目标字段（与 Config.vue 的 LS_TARGET_FIELDS 一致）
+const LS_TARGET_FIELDS = 'local_target_fields'
+function loadTargetFieldsFromConfig(): string[] {
+  try {
+    const raw = localStorage.getItem(LS_TARGET_FIELDS)
+    const items = raw ? JSON.parse(raw) : []
+    const names = Array.isArray(items)
+      ? items.map((x: any) => (x?.name || '').trim()).filter((n: string) => n)
+      : []
+    return names.length > 0 ? Array.from(new Set(names)) : [...FALLBACK_TARGET_FIELDS]
+  } catch {
+    return [...FALLBACK_TARGET_FIELDS]
+  }
+}
+
 // 点选映射：当前选中的待映射源字段（拖拽之外的兜底交互）
 const selectedSource = ref<string>('')
 
@@ -347,13 +362,8 @@ async function loadPreview() {
     const response = await api.get(`/mapping/preview/${props.taskId}`)
     previewData.value = response.data?.data || null
 
-    // 目标字段优先使用用户在提取页勾选的字段（expected_fields），否则回退到默认集合
-    const expected = previewData.value?.expected_fields
-    if (Array.isArray(expected) && expected.length > 0) {
-      targetFields.value = [...expected]
-    } else {
-      targetFields.value = [...FALLBACK_TARGET_FIELDS]
-    }
+    // 目标字段使用用户在“字段配置”页配置的目标字段（local_target_fields），否则回退到默认集合
+    targetFields.value = loadTargetFieldsFromConfig()
 
     // 加载字段推荐
     if (previewData.value?.extracted_fields) {
@@ -485,7 +495,15 @@ function ignoreField(field: string) {
 }
 
 // 获取字段的最佳推荐
+// 优先复用后端 preview 时给出的原始匹配结论（与程序自动映射保持一致），
+// 没有则回退到 batch-suggest 的推荐，避免删除映射后悬浮推荐与原映射不一致。
 function getTopSuggestion(field: string): FieldSuggestion | null {
+  const original = (previewData.value?.mapping_suggestions || []).find(
+    (m: any) => m.original === field && m.matched
+  )
+  if (original) {
+    return { target: original.matched, confidence: original.confidence ?? 0.9 }
+  }
   const suggestions = fieldSuggestions[field]
   if (!suggestions || suggestions.length === 0) return null
   return suggestions[0]
@@ -875,6 +893,7 @@ watch(() => props.taskId, (newTaskId) => {
   transform: translateX(4px);
   box-shadow: 0 4px 12px rgba(0,123,255,0.15);
   border-color: #007bff;
+  z-index: 20;
 }
 
 .draggable-field:active {

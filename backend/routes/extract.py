@@ -294,10 +294,13 @@ def _build_processed_tables(linked_tables, user_overrides=None):
 
             proc_res = processor.process_row(row)
             matched_row = {}
+            override_cols = []  # 本行中由用户手动映射决定的目标列（导出时优先于启发式）
             for field, value in proc_res['cleaned'].items():
                 # 用户手动修正优先
                 if field in user_overrides:
                     target = user_overrides[field]
+                    if target:
+                        override_cols.append(target)
                 else:
                     match_res = matcher.match_field(field)
                     target = match_res.get('target') if isinstance(match_res, dict) else (match_res.target if hasattr(match_res, 'target') else field)
@@ -311,6 +314,10 @@ def _build_processed_tables(linked_tables, user_overrides=None):
             # 位数对齐
             if '位数' in proc_res['converted']:
                 matched_row['类型（bit）'] = proc_res['converted']['位数']
+
+            # 记录用户手动映射的目标列，供导出器优先填充
+            if override_cols:
+                matched_row['_override_cols'] = override_cols
 
             table_rows.append(matched_row)
 

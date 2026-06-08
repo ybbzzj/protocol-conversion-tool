@@ -279,6 +279,14 @@ class ExcelExporter:
                     # 子行：名称为空
                     fill_data['名称'] = ''
 
+                # ── 用户手动映射优先 ──────────────────────────────────────────
+                # _override_cols 中列出的目标列由用户在前端手动映射指定，
+                # 其值取自 row[col]，优先级高于上面写死的启发式（直接覆盖 fill_data）。
+                override_cols = row.get('_override_cols') or []
+                for ocol in override_cols:
+                    if ocol in template_headers and row.get(ocol) not in (None, ''):
+                        fill_data[ocol] = row[ocol]
+
                 self._write_row(ws, current_row, template_headers, fill_data, color_map)
                 current_row += 1
 

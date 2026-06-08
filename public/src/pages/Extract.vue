@@ -63,7 +63,13 @@
         <button class="btn" @click="startExtract">开始提取</button>
         <span v-if="taskStatus" class="status">状态：{{ taskStatus.status }}（进度：{{ taskStatus.progress }}%）</span>
       </div>
-      
+
+      <div v-if="taskStatus && taskStatus.status!=='success' && taskStatus.status!=='failed'" class="progress-wrap">
+        <div class="progress-bar">
+          <div class="progress-fill" :style="{ width: (taskStatus.progress || 0) + '%' }"></div>
+        </div>
+      </div>
+
       <div v-if="taskStatus?.status==='success'" class="result" style="margin-top: 16px;">
         <button class="btn" @click="downloadResult">下载结果</button>
       </div>
@@ -369,4 +375,7 @@ onMounted(()=>{ reloadProtocolFields(); reloadTemplates() })
 .template-backup{ display:flex; gap:8px; align-items:center; }
 .output-options{ display:flex; flex-direction:column; gap:4px; }
 .option-item{ display:flex; align-items:center; gap:8px; cursor:pointer; font-size:14px; }
+.progress-wrap{ margin-top:12px; }
+.progress-bar{ width:100%; height:10px; background:#e2e8f0; border-radius:6px; overflow:hidden; }
+.progress-fill{ height:100%; background:#007bff; border-radius:6px; transition:width 0.3s ease; }
 </style>

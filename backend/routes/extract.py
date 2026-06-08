@@ -240,19 +240,8 @@ def download_result(task_id):
                 'Content-Length': str(len(file_content))
             }
         )
-        
-        # 文件传输完成后删除源文件，确保结果只保留一份
-        try:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-                print(f"[下载完成] 已删除文件: {output_path}")
-                # 更新任务状态，标记文件已被下载
-                status['output_path'] = None
-                status['message'] = '文件已下载并删除'
-                _save_tasks_to_disk()
-        except Exception as e:
-            print(f"[警告] 删除文件失败: {e}")
-        
+
+        # 保留结果文件，允许用户多次下载（避免再次下载报 404）
         return response
     except Exception as e:
         return error_response(50001, f"下载失败: {str(e)}")

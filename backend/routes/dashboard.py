@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 from flask import Blueprint
 from backend.utils import success_response
 from backend.routes.extract import tasks_status
@@ -28,10 +29,15 @@ def get_recent():
         elif status == 'failed':
             fail_count += 1
         
+        file_path = task_info.get('file_path', '')
+        abs_path = os.path.abspath(file_path) if file_path else ''
+
         recent_tasks.append({
             'id': task_id[:8],  # 任务ID前8位作为显示
+            'task_id': task_id,  # 完整任务ID，供前端跳转人工映射页
             'time': task_info.get('created_at', ''),
             'table': task_info.get('msg_name', '—'),  # 表名称
+            'source_path': abs_path,  # 导入文档在服务器的绝对路径
             'status': status
         })
     

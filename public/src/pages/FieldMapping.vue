@@ -658,8 +658,8 @@ async function applyMappings() {
 
       toast.show(
         regenerated
-          ? '映射已应用，结果已按修正重新生成，可下载'
-          : '映射已保存，但结果未重新生成，请重新提取'
+          ? `✓ 应用成功：已应用 ${flatMappings.length} 个映射并重新生成结果，可下载`
+          : `✓ 应用成功：已保存 ${flatMappings.length} 个映射（结果未重新生成，请重新提取）`
       )
     }
   } catch (error: any) {

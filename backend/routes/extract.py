@@ -3,6 +3,7 @@ from flask import Blueprint, request, send_file
 import os
 import uuid
 import json
+import threading
 from datetime import datetime
 from backend.utils import success_response, error_response
 from backend.config import Config
@@ -114,16 +115,34 @@ def start_extraction():
         # 保存文件
         file.save(upload_path)
         tasks_status[task_id]['progress'] = 10
-        
+    except Exception as e:
+        tasks_status[task_id]['status'] = 'failed'
+        tasks_status[task_id]['message'] = f'文件保存失败: {e}'
+        _save_tasks_to_disk()
+        return error_response(40002, f"文件保存失败: {e}")
+
+    # 提取过程放入后台线程执行，路由立即返回，使前端可通过轮询观察进度
+    t = threading.Thread(target=_run_extraction, args=(task_id, upload_path, remove_crc), daemon=True)
+    t.start()
+
+    return success_response({
+        'task_id': task_id,
+        'expected_fields': expected_fields
+    })
+
+
+def _run_extraction(task_id, upload_path, remove_crc):
+    """后台线程：执行解析、关联、导出与映射质量计算，并实时更新进度。"""
+    try:
         # 执行提取
         parser = DocumentParser()
         result = parser.parse(upload_path, options={'remove_crc_tail': remove_crc})
         tasks_status[task_id]['progress'] = 50
-        
+
         # 表格关联：注入元数据、过滤辅助表、附加bit子行
         linker = TableLinker()
         linked_tables = linker.link_tables(result['tables'])
-        
+
         # 使用原始表格数据而不是处理后的数据
         # 保存原始提取的表格数据用于预览
         tasks_status[task_id]['raw_tables'] = result['tables']
@@ -140,57 +159,50 @@ def start_extraction():
         tasks_status[task_id]['progress'] = 80
         output_file = _export_processed_tables(processed_tables, task_id)
         tasks_status[task_id]['progress'] = 90
-        
+
         # 计算映射质量
         extracted_field_names = []
         for table in processed_tables:
             for row in table['data_rows']:
                 extracted_field_names.extend(row.keys())
-        
+
         # 去重
         extracted_field_names = list(set(extracted_field_names))
         expected_fields = tasks_status[task_id].get('expected_fields', [])
-        
+
         print(f'[映射质量调试] 提取字段数: {len(extracted_field_names)}')
         print(f'[映射质量调试] 期望字段数: {len(expected_fields)}')
         print(f'[映射质量调试] 提取字段: {extracted_field_names[:10]}...')
         print(f'[映射质量调试] 期望字段: {expected_fields}')
-        
+
         mapping_quality = _calculate_mapping_quality(extracted_field_names, expected_fields)
         print(f'[映射质量调试] 计算结果: {mapping_quality}')
-        
+
         tasks_status[task_id].update({
             'status': 'success',
             'progress': 100,
             'output_path': output_file,
             'mapping_quality': mapping_quality
         })
-        
+
         # ✅ 保存到磁盘
         _save_tasks_to_disk()
-        
-        return success_response({
-            'task_id': task_id,
-            'expected_fields': expected_fields
-        })
-        
+
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
         tasks_status[task_id]['status'] = 'failed'
         tasks_status[task_id]['message'] = str(e)
         print(f"[提取任务 {task_id}] 错误: {error_trace}")
-        
+
         # ✅ 保存到磁盘
         _save_tasks_to_disk()
-        
-        return error_response(40002, f"文件解析失败: {str(e)}")
     finally:
-        # 清理上传的临时文件
+        # 清理上传的临时文件（仅失败时）
         try:
             if os.path.exists(upload_path) and tasks_status[task_id]['status'] == 'failed':
                 os.remove(upload_path)
-        except:
+        except Exception:
             pass
 
 @extract_bp.route('/status/<task_id>', methods=['GET'])

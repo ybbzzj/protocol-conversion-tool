@@ -644,8 +644,9 @@ async function applyMappings() {
       task_id: props.taskId,
       mappings: flatMappings
     })
-    
-    if (response.data.success) {
+
+    // 后端统一返回 {code:0, message, data:{success, regenerated,...}}
+    if (response.data?.code === 0) {
       const regenerated = response.data?.data?.regenerated
       const historyItem = {
         id: Date.now().toString(),

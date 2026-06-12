@@ -82,13 +82,15 @@
               <h5>📄 待映射字段</h5>
               <span class="count-badge">{{ unmappedSourceFields.length }}</span>
             </div>
+            <p class="panel-hint">点击选中字段，再点右侧目标字段即可映射；也支持直接拖拽</p>
             <div class="field-list" v-if="unmappedSourceFields.length > 0">
               <div 
                 v-for="field in unmappedSourceFields" 
                 :key="field"
                 class="draggable-field source-field"
-                :class="{ 'dragging': draggedField === field, 'has-suggestion': getTopSuggestion(field) }"
+                :class="{ 'dragging': draggedField === field, 'has-suggestion': getTopSuggestion(field), 'selected': selectedSource === field }"
                 draggable="true"
+                @click="selectSource(field)"
                 @dragstart="handleDragStart($event, field)"
                 @dragend="handleDragEnd($event)"
                 @mouseenter="showSuggestion(field)"
@@ -100,13 +102,13 @@
                   <span class="field-actions">
                     <button 
                       v-if="getTopSuggestion(field)" 
-                      @click="quickMap(field)"
+                      @click.stop="quickMap(field)"
                       class="quick-map-btn"
                       :title="`快速映射到: ${getTopSuggestion(field)?.target}`"
                     >
                       ⚡
                     </button>
-                    <button @click="ignoreField(field)" class="ignore-btn" title="忽略此字段">
+                    <button @click.stop="ignoreField(field)" class="ignore-btn" title="忽略此字段">
                       ✕
                     </button>
                   </span>
@@ -163,7 +165,7 @@
               </div>
             </div>
             <div v-else class="empty-state">
-              <p>👈 从左侧拖拽字段到右侧目标字段建立映射</p>
+              <p>👈 从左侧选择或拖拽字段到右侧目标字段建立映射</p>
             </div>
           </div>
           
@@ -173,6 +175,9 @@
               <h5>🎯 目标字段</h5>
               <span class="count-badge">{{ unmappedTargetFields.length }}</span>
             </div>
+            <p class="panel-hint" v-if="selectedSource">
+              已选中「{{ selectedSource }}」，点击右侧目标字段即可建立映射
+            </p>
             <div class="field-list" v-if="unmappedTargetFields.length > 0">
               <div 
                 v-for="field in unmappedTargetFields" 
@@ -180,8 +185,10 @@
                 class="droppable-field target-field"
                 :class="{ 
                   'drop-target': dropTarget === field,
-                  'suggested': isSuggestedTarget(field)
+                  'suggested': isSuggestedTarget(field),
+                  'clickable': selectedSource
                 }"
+                @click="mapToTarget(field)"
                 @drop="handleDrop($event, field)"
                 @dragover="handleDragOver($event)"
                 @dragenter="handleDragEnter($event, field)"
@@ -293,12 +300,31 @@ const mappingHistory = reactive<Array<{id: string, message: string, timestamp: s
 const ignoredFields = reactive<string[]>([])
 const fieldSuggestions = reactive<Record<string, FieldSuggestion[]>>({})
 
-// 标准目标字段
-const standardTargetFields = [
+// 标准目标字段（由后端 preview 返回的用户选择字段填充，带兜底）
+const FALLBACK_TARGET_FIELDS = [
   'ID', '参数', '内容', '信号名称', '数据类型', '类型', 
   '长度', '字节', '单位', '备注', '值域', '信源', '信宿', 
   '信息内容', '消息ID', '接口名称', '时间戳', '转换类型'
 ]
+const targetFields = ref<string[]>([...FALLBACK_TARGET_FIELDS])
+
+// 读取“字段配置”页配置的目标字段（与 Config.vue 的 LS_TARGET_FIELDS 一致）
+const LS_TARGET_FIELDS = 'local_target_fields'
+function loadTargetFieldsFromConfig(): string[] {
+  try {
+    const raw = localStorage.getItem(LS_TARGET_FIELDS)
+    const items = raw ? JSON.parse(raw) : []
+    const names = Array.isArray(items)
+      ? items.map((x: any) => (x?.name || '').trim()).filter((n: string) => n)
+      : []
+    return names.length > 0 ? Array.from(new Set(names)) : [...FALLBACK_TARGET_FIELDS]
+  } catch {
+    return [...FALLBACK_TARGET_FIELDS]
+  }
+}
+
+// 点选映射：当前选中的待映射源字段（拖拽之外的兜底交互）
+const selectedSource = ref<string>('')
 
 // 拖拽状态
 const draggedField = ref<string>('')
@@ -321,7 +347,7 @@ const unmappedSourceFields = computed(() => {
 // 计算属性：未映射的目标字段
 const unmappedTargetFields = computed(() => {
   const mappedTargets = new Set(mappings.map(m => m.target))
-  return standardTargetFields.filter(field => !mappedTargets.has(field))
+  return targetFields.value.filter(field => !mappedTargets.has(field))
 })
 
 // 方法定义
@@ -335,7 +361,10 @@ async function loadPreview() {
   try {
     const response = await api.get(`/mapping/preview/${props.taskId}`)
     previewData.value = response.data?.data || null
-    
+
+    // 目标字段使用用户在“字段配置”页配置的目标字段（local_target_fields），否则回退到默认集合
+    targetFields.value = loadTargetFieldsFromConfig()
+
     // 加载字段推荐
     if (previewData.value?.extracted_fields) {
       await loadSuggestions(previewData.value.extracted_fields)
@@ -368,7 +397,7 @@ async function loadSuggestions(fields: string[]) {
   try {
     const response = await api.post('/mapping/batch-suggest', {
       source_fields: fields,
-      available_targets: standardTargetFields
+      available_targets: targetFields.value
     })
     
     if (response.data?.data?.suggestions) {
@@ -466,7 +495,15 @@ function ignoreField(field: string) {
 }
 
 // 获取字段的最佳推荐
+// 优先复用后端 preview 时给出的原始匹配结论（与程序自动映射保持一致），
+// 没有则回退到 batch-suggest 的推荐，避免删除映射后悬浮推荐与原映射不一致。
 function getTopSuggestion(field: string): FieldSuggestion | null {
+  const original = (previewData.value?.mapping_suggestions || []).find(
+    (m: any) => m.original === field && m.matched
+  )
+  if (original) {
+    return { target: original.matched, confidence: original.confidence ?? 0.9 }
+  }
   const suggestions = fieldSuggestions[field]
   if (!suggestions || suggestions.length === 0) return null
   return suggestions[0]
@@ -479,6 +516,30 @@ function quickMap(field: string) {
     createMapping([field], suggestion.target, suggestion.confidence, 'suggested')
     toast.show(`已映射: ${field} → ${suggestion.target}`)
   }
+}
+
+// 点选映射：选中/取消选中一个源字段（拖拽之外的兜底交互）
+function selectSource(field: string) {
+  selectedSource.value = selectedSource.value === field ? '' : field
+  // 选中时高亮推荐的目标字段
+  if (selectedSource.value) {
+    const suggestion = getTopSuggestion(field)
+    dropTarget.value = suggestion ? suggestion.target : ''
+  } else {
+    dropTarget.value = ''
+  }
+}
+
+// 点选映射：点击目标字段完成映射
+function mapToTarget(targetField: string) {
+  if (!selectedSource.value) {
+    toast.show('请先在左侧选择一个待映射字段')
+    return
+  }
+  createMapping([selectedSource.value], targetField, 0.9, 'manual')
+  toast.show(`已映射: ${selectedSource.value} → ${targetField}`)
+  selectedSource.value = ''
+  dropTarget.value = ''
 }
 
 // 显示推荐提示
@@ -570,24 +631,37 @@ async function applyMappings() {
   
   applying.value = true
   try {
-    const response = await api.post('/mapping/apply', {
-      task_id: props.taskId,
-      mappings: mappings.map(m => ({
-        original: Array.isArray(m.source) ? m.source[0] : m.source,
+    // 展开多源映射：每个源字段都需作为独立 override 下发
+    const flatMappings = mappings.flatMap(m =>
+      m.source.map(src => ({
+        original: src,
         target: m.target,
         confidence: m.confidence
       }))
+    )
+
+    const response = await api.post('/mapping/apply', {
+      task_id: props.taskId,
+      mappings: flatMappings
     })
-    
-    if (response.data.success) {
+
+    // 后端统一返回 {code:0, message, data:{success, regenerated,...}}
+    if (response.data?.code === 0) {
+      const regenerated = response.data?.data?.regenerated
       const historyItem = {
         id: Date.now().toString(),
-        message: `成功应用 ${mappings.length} 个字段映射`,
+        message: regenerated
+          ? `成功应用 ${flatMappings.length} 个映射并重新生成结果`
+          : `已应用 ${flatMappings.length} 个映射（结果未重新生成）`,
         timestamp: new Date().toLocaleTimeString()
       }
       mappingHistory.push(historyItem)
-      
-      toast.show('字段映射应用成功')
+
+      toast.show(
+        regenerated
+          ? `✓ 应用成功：已应用 ${flatMappings.length} 个映射并重新生成结果，可下载`
+          : `✓ 应用成功：已保存 ${flatMappings.length} 个映射（结果未重新生成，请重新提取）`
+      )
     }
   } catch (error: any) {
     toast.show('应用失败: ' + (error.message || '未知错误'))
@@ -820,6 +894,7 @@ watch(() => props.taskId, (newTaskId) => {
   transform: translateX(4px);
   box-shadow: 0 4px 12px rgba(0,123,255,0.15);
   border-color: #007bff;
+  z-index: 20;
 }
 
 .draggable-field:active {
@@ -834,6 +909,31 @@ watch(() => props.taskId, (newTaskId) => {
 
 .draggable-field.has-suggestion {
   border-left: 4px solid #28a745;
+}
+
+.draggable-field.selected {
+  border-color: #007bff;
+  background: #e7f1ff;
+  box-shadow: 0 0 0 3px rgba(0,123,255,0.2);
+}
+
+/* 面板操作提示 */
+.panel-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #6c757d;
+  line-height: 1.4;
+}
+
+/* 点选映射模式下，目标字段呈现可点击态 */
+.droppable-field.clickable {
+  border-color: #007bff;
+  background: #f5f9ff;
+}
+
+.droppable-field.clickable:hover {
+  border-color: #0056b3;
+  background: #e7f1ff;
 }
 
 /* 拖拽目标样式 */

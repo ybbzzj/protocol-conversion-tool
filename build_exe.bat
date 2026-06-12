@@ -36,119 +36,45 @@ echo ✅ PyInstaller 已安装
 python -c "import PyInstaller; print('PyInstaller version:', PyInstaller.__version__)"
 echo.
 
-REM 检查语义模型运行依赖。缺失时必须在打包前解决，否则 exe 会启动失败。
-python -c "import onnxruntime, tokenizers; print('onnxruntime:', onnxruntime.__version__); print('tokenizers: ok')" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo ⚠️  未检测到 onnxruntime/tokenizers，正在安装语义模型运行依赖...
-    python -m pip install onnxruntime==1.14.1 tokenizers==0.13.3
-    if %errorlevel% neq 0 (
-        echo ❌ 语义模型运行依赖安装失败
-        echo    请手动执行：
-        echo    python -m pip install onnxruntime==1.14.1 tokenizers==0.13.3
+REM 检查前端是否构建
+if not exist "%~dp0public\dist\index.html" (
+    echo ⚠️  前端未构建，请先执行以下命令:
+    echo    cd public
+    echo    npm install
+    echo    npm run build
+    echo.
+    set /p CONTINUE="是否继续打包？(前端资源可能不完整) (y/N): "
+    if /i not "!CONTINUE!"=="y" (
+        echo 取消打包
         pause
         exit /b 1
     )
-)
-
-python -c "import onnxruntime, tokenizers; print('✅ onnxruntime:', onnxruntime.__version__); print('✅ tokenizers: ok')"
-if %errorlevel% neq 0 (
-    echo ❌ onnxruntime/tokenizers 仍不可用，停止打包
-    pause
-    exit /b 1
-)
-echo.
-
-REM transformers 不再参与运行时打包；如果环境中安装了它，build.spec 会显式排除。
-python -c "import importlib.util; print('ℹ️ transformers installed:', importlib.util.find_spec('transformers') is not None)"
-echo.
-
-REM 构建并校验前端资源，避免 index.html 引用不存在的 hash 文件导致白屏
-set "HAS_NPM=0"
-if exist "%~dp0public\package.json" (
-    where npm >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo ⚠️  未检测到 npm，无法自动构建前端
-        where node >nul 2>&1
-        if !errorlevel! equ 0 (
-            if exist "%~dp0public\node_modules\vite\bin\vite.js" (
-                echo 检测到 node 和本地 vite，使用 node 直接构建前端...
-                set "HAS_NPM=1"
-                pushd "%~dp0public"
-                node node_modules\vite\bin\vite.js build
-                if !errorlevel! neq 0 (
-                    popd
-                    echo ❌ 前端构建失败
-                    pause
-                    exit /b 1
-                )
-                popd
-                echo ✅ 前端构建完成
-                echo.
-            )
-        )
-    ) else (
-        set "HAS_NPM=1"
-        echo ============================================================
-        echo 构建前端资源...
-        echo ============================================================
-        pushd "%~dp0public"
-        if not exist "node_modules" (
-            echo 安装前端依赖...
-            call npm install
-            if !errorlevel! neq 0 (
-                popd
-                echo ❌ 前端依赖安装失败
-                pause
-                exit /b 1
-            )
-        )
-        call npm run build
-        if !errorlevel! neq 0 (
-            popd
-            echo ❌ 前端构建失败
-            pause
-            exit /b 1
-        )
-        popd
-        echo ✅ 前端构建完成
-        echo.
-    )
-)
-
-if not exist "%~dp0public\dist\index.html" (
-    echo ❌ 前端 dist 不存在：%~dp0public\dist\index.html
-    pause
-    exit /b 1
-)
-
-python "%~dp0verify_frontend_dist.py" "%~dp0public\dist"
-if %errorlevel% neq 0 (
-    echo ❌ 前端 dist 资源不完整
-    if "!HAS_NPM!"=="0" (
-        echo    当前机器未检测到 npm，无法自动修复 dist
-        echo    请安装 Node.js 后重新运行 build_exe.bat，或在 public 目录执行 npm install && npm run build
-    ) else (
-        echo    请检查上方 npm run build 输出
-    )
-    pause
-    exit /b 1
-)
-echo ✅ 前端资源校验通过
-echo.
-
-REM 检查模型文件
-set "MODEL_DIRNAME=bge-small-zh-v1.5"
-set "MODEL_SRC=%~dp0models\%MODEL_DIRNAME%"
-if not exist "%MODEL_SRC%" (
-    echo ⚠️  未检测到语义模型目录
     echo.
-    echo 📥 请先下载模型：
-    echo    python download_model.py
+)
+
+REM 检查模型文件（校验 onnx 真实大小，防止 Git LFS 指针未还原成真文件）
+set "MODEL_ONNX=%~dp0models\bge-small-zh-v1.5-onnx\onnx\model.onnx"
+set "MODEL_OK=1"
+set "MODEL_SIZE=0"
+if not exist "!MODEL_ONNX!" (
+    set "MODEL_OK=0"
+) else (
+    for %%F in ("!MODEL_ONNX!") do set "MODEL_SIZE=%%~zF"
+    REM 真实模型约 102MB；小于 1MB(1048576 字节)说明是 LFS 指针或文件残缺
+    if !MODEL_SIZE! LSS 1048576 set "MODEL_OK=0"
+)
+if "!MODEL_OK!"=="0" (
+    echo ⚠️  语义模型缺失或不完整 ^(当前 model.onnx 大小: !MODEL_SIZE! 字节^)
     echo.
-    echo 💡 模型说明:
-    echo    - 推荐模型：Xenova/bge-small-zh-v1.5
-    echo    - 下载需要联网
-    echo    - 如果无法下载，可手动从 HuggingFace 下载后放入 models 目录
+    echo 💡 常见原因与处理:
+    echo    - 若用 git 拉取代码: 模型由 Git LFS 托管，请先安装 git-lfs 再拉取:
+    echo        git lfs install ^&^& git lfs pull
+    echo    - 若需重新下载: python download_model.py ^(需联网^)
+    echo.
+    echo 📦 模型说明:
+    echo    - 推荐模型：Xenova/bge-small-zh-v1.5 (ONNX)
+    echo    - model.onnx 真实大小约 102MB
+    echo    - 几百字节的 model.onnx 是 LFS 指针文本，不是真模型
     echo.
     set /p CONTINUE="是否继续打包？（模型将不可用）(y/N): "
     if /i not "!CONTINUE!"=="y" (
@@ -185,7 +111,8 @@ pyinstaller --clean "%~dp0build.spec"
 if %errorlevel% equ 0 (
     echo.
     echo 正在复制语义模型到发布目录...
-    set "MODEL_DST=%~dp0dist\协议转换工具\models\!MODEL_DIRNAME!"
+    set "MODEL_SRC=%~dp0models\bge-small-zh-v1.5-onnx"
+    set "MODEL_DST=%~dp0dist\协议转换工具\models\bge-small-zh-v1.5-onnx"
     
     if exist "!MODEL_SRC!" (
         if not exist "%~dp0dist\协议转换工具\models" (
@@ -221,13 +148,13 @@ if %errorlevel% equ 0 (
     echo ⚠️  注意事项:
     echo    - 模型文件较大（约 100MB），首次启动可能需要几秒钟
     echo    - models 目录必须与 exe 在同一层级
-    echo    - 语义模型目录：models\bge-small-zh-v1.5
+    echo    - 语义模型目录：models\bge-small-zh-v1.5-onnx
     echo.
     echo 📂 部署结构:
     echo    协议转换工具/
     echo    ├── 协议转换工具.exe
     echo    └── models/
-    echo        └── bge-small-zh-v1.5/
+    echo        └── bge-small-zh-v1.5-onnx/
     echo.
 ) else (
     echo.

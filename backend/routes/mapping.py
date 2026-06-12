@@ -79,7 +79,8 @@ def preview_extraction(task_id: str):
             'mapping_suggestions': mapping_suggestions,
             'matched_fields': matched_fields,
             'unmatched_fields': unmatched_fields,
-            'total_fields': len(extracted_fields)
+            'total_fields': len(extracted_fields),
+            'expected_fields': status.get('expected_fields', [])
         })
         
     except Exception as e:
@@ -236,11 +237,22 @@ def apply_mapping():
                     mapping['target'],
                     confidence=mapping.get('confidence', 0.8)
                 )
-        
+
+        # 根据本次映射重新生成当前任务的 Excel，使修正对当前文档立即生效
+        from backend.routes.extract import regenerate_output
+        user_overrides = {
+            m['original']: m['target']
+            for m in mappings
+            if m.get('original') and m.get('target')
+        }
+        regenerated, regen_msg = regenerate_output(task_id, user_overrides)
+
         return success_response({
             'success': True,
             'applied_count': applied_count,
-            'task_id': task_id
+            'task_id': task_id,
+            'regenerated': regenerated,
+            'message': '已应用并重新生成结果' if regenerated else f'映射已保存，但重新生成失败：{regen_msg}'
         })
         
     except Exception as e:

@@ -48,11 +48,28 @@
     </section>
 
     <section class="card">
+      <h3>输出控制</h3>
+      <div class="output-options">
+        <label class="option-item">
+          <input type="checkbox" v-model="removeCrc" />
+          <span>删除末尾 CRC 校验字行</span>
+        </label>
+        <p class="hint">勾选后，若表格数据最后一项为 CRC 校验字/校验码，将从结果中剔除。</p>
+      </div>
+    </section>
+
+    <section class="card">
       <div class="flex">
         <button class="btn" @click="startExtract">开始提取</button>
         <span v-if="taskStatus" class="status">状态：{{ taskStatus.status }}（进度：{{ taskStatus.progress }}%）</span>
       </div>
-      
+
+      <div v-if="taskStatus && taskStatus.status!=='success' && taskStatus.status!=='failed'" class="progress-wrap">
+        <div class="progress-bar">
+          <div class="progress-fill" :style="{ width: (taskStatus.progress || 0) + '%' }"></div>
+        </div>
+      </div>
+
       <div v-if="taskStatus?.status==='success'" class="result" style="margin-top: 16px;">
         <label class="hint" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
           <input type="checkbox" v-model="downloadRemoveCrc" />
@@ -90,6 +107,9 @@ const selectedFieldIds = ref<string[]>([])
 const selectedTemplateId = ref<string>('')
 const templateName = ref('')
 const fieldSearch = ref('')
+
+// 输出控制选项：默认删除末尾 CRC 校验字行
+const removeCrc = ref(true)
 
 const fileObj = ref<File | null>(null)
 const currentTaskId = ref<string>('')
@@ -225,6 +245,8 @@ async function startExtract(){
     loading.start('创建提取任务...')
     const fd = new FormData()
     fd.append('file', fileObj.value)
+    // 输出控制：是否删除末尾 CRC 校验字行
+    fd.append('remove_crc', removeCrc.value ? 'true' : 'false')
     // 正确方式: 为每个 field_id 添加独立的表单字段，后端用 request.form.getlist() 获取
     for(const fieldId of selectedFieldIds.value){
       fd.append('field_ids', fieldId)
@@ -232,6 +254,13 @@ async function startExtract(){
       if(field?.name){
         fd.append('field_names', field.name)
       }
+    }
+    // 同时传字段名：前端字段 id 是本地随机生成的，与后端配置 id 不一致，
+    // 期望字段以名称为准，后端优先使用 field_names
+    const idToName = new Map(protocolFields.value.map(f => [f.id, f.name]))
+    for(const fieldId of selectedFieldIds.value){
+      const name = idToName.get(fieldId)
+      if(name){ fd.append('field_names', name) }
     }
     const { data } = await api.post(endpoints.extractStart, fd, { headers:{ 'Content-Type':'multipart/form-data' } })
     currentTaskId.value = data?.data?.task_id || ''
@@ -356,4 +385,9 @@ onMounted(()=>{ reloadProtocolFields(); reloadTemplates() })
 .template-row{ display:flex; gap:8px; align-items:center; margin-bottom: 12px; }
 .template-save{ display:flex; gap:8px; align-items:center; margin-bottom: 12px; }
 .template-backup{ display:flex; gap:8px; align-items:center; }
+.output-options{ display:flex; flex-direction:column; gap:4px; }
+.option-item{ display:flex; align-items:center; gap:8px; cursor:pointer; font-size:14px; }
+.progress-wrap{ margin-top:12px; }
+.progress-bar{ width:100%; height:10px; background:#e2e8f0; border-radius:6px; overflow:hidden; }
+.progress-fill{ height:100%; background:#007bff; border-radius:6px; transition:width 0.3s ease; }
 </style>

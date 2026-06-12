@@ -50,7 +50,6 @@ backend/uploads/
 table_recognition_results/
 dist
 build
-models
 backend/services/__pycache__/data_cleaner.cpython-310.pyc
 backend/__pycache__/config.cpython-310.pyc
 backend/__pycache__/config.cpython-310.pyc

@@ -1,18 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_all
 import os
 import sys
 from pathlib import Path
 
-# Python 3.8 的 dataclasses 是标准库模块，部分 PyInstaller/依赖收集逻辑会误读 __version__。
-# 构建期补齐该属性，避免打包时因 AttributeError 中断。
-try:
-    import dataclasses as _dataclasses
-    if not hasattr(_dataclasses, '__version__'):
-        _dataclasses.__version__ = '0.8'
-except Exception:
-    pass
+# --- 兼容性补丁：修复 Python 3.8 上 hook-transformers 崩溃的问题 ---
+# transformers 的依赖元数据含 `dataclasses; python_version < "3.7"`，
+# 旧版 PyInstaller(5.1) 的 is_module_satisfies 未正确评估 environment marker，
+# 会去读标准库 dataclasses 的 __version__（不存在）而抛 AttributeError 中断打包。
+# 这里包一层：检查抛异常时按“不满足”处理（跳过该可选依赖），仅作用于打包期，不影响运行时。
+import PyInstaller.utils.hooks as _pyi_hooks
+
+_orig_is_module_satisfies = _pyi_hooks.is_module_satisfies
+
+def _safe_is_module_satisfies(*args, **kwargs):
+    try:
+        return _orig_is_module_satisfies(*args, **kwargs)
+    except Exception:
+        return False
+
+_pyi_hooks.is_module_satisfies = _safe_is_module_satisfies
 
 # --- 收集第三方库的依赖 ---
 # 语义模型采用 ONNX，本体模型文件保持与 exe 分离部署
@@ -42,22 +50,16 @@ datas = datas_openpyxl
 binaries = binaries_openpyxl
 hiddenimports = hiddenimports_openpyxl
 
-# 收集语义模型运行时依赖。运行时直接用 tokenizers 读取 tokenizer.json。
-try:
-    print("Collecting onnxruntime dependencies...")
-    d, b, h = collect_all('onnxruntime')
-    datas.extend(d)
-    binaries.extend(b)
-    hiddenimports.extend(h)
-    binaries.extend(collect_dynamic_libs('onnxruntime'))
-except Exception as e:
-    print(f"Warning: Could not collect onnxruntime: {e}")
-
-try:
-    print("Collecting tokenizers binaries...")
-    binaries.extend(collect_dynamic_libs('tokenizers'))
-except Exception as e:
-    print(f"Warning: Could not collect tokenizers binaries: {e}")
+# 收集语义模型运行时依赖
+for pkg in ['onnxruntime', 'transformers', 'tokenizers', 'huggingface_hub']:
+    try:
+        print(f"Collecting {pkg} dependencies...")
+        d, b, h = collect_all(pkg)
+        datas.extend(d)
+        binaries.extend(b)
+        hiddenimports.extend(h)
+    except Exception as e:
+        print(f"Warning: Could not collect {pkg}: {e}")
 
 # 添加更多的隐藏导入
 hiddenimports += [
@@ -67,14 +69,9 @@ hiddenimports += [
     'python_docx',
     'rapidfuzz',
     'onnxruntime',
-    'onnxruntime.capi',
-    'onnxruntime.capi.onnxruntime_pybind11_state',
+    'transformers',
     'tokenizers',
-    'tokenizers.models',
-    'tokenizers.normalizers',
-    'tokenizers.pre_tokenizers',
-    'tokenizers.processors',
-    'tokenizers.decoders',
+    'huggingface_hub',
 ]
 
 # --- 添加本项目自定义的资源文件 (格式：(源路径，目标目录)) ---
@@ -107,7 +104,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['transformers', 'huggingface_hub'],
+    excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=None,

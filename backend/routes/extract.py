@@ -83,6 +83,9 @@ def start_extraction():
     # 输出控制选项：是否删除末尾 CRC 校验字行（默认开启）
     remove_crc = request.form.get('remove_crc', 'true').lower() != 'false'
 
+    # 获取目标消息名称（用于兜底提取）
+    target_message_names = request.form.getlist('target_message_names')
+
     # 加载用户选择的期望字段：优先使用前端直接传来的字段名
     # （前端字段 id 为本地随机生成，与后端配置 id 不一致，无法靠 id 反查名称）
     if field_names:
@@ -108,6 +111,7 @@ def start_extraction():
         'field_ids': field_ids,
         'expected_fields': expected_fields,  # 期望字段
         'remove_crc': remove_crc,  # 输出控制：是否删除末尾 CRC 校验字行
+        'target_message_names': target_message_names,  # 目标消息名称（用于兜底提取）
         'mapping_quality': None  # 映射质量评分
     }
     
@@ -115,6 +119,7 @@ def start_extraction():
         # 保存文件
         file.save(upload_path)
         tasks_status[task_id]['progress'] = 10
+        
     except Exception as e:
         tasks_status[task_id]['status'] = 'failed'
         tasks_status[task_id]['message'] = f'文件保存失败: {e}'
@@ -122,7 +127,7 @@ def start_extraction():
         return error_response(40002, f"文件保存失败: {e}")
 
     # 提取过程放入后台线程执行，路由立即返回，使前端可通过轮询观察进度
-    t = threading.Thread(target=_run_extraction, args=(task_id, upload_path, remove_crc), daemon=True)
+    t = threading.Thread(target=_run_extraction, args=(task_id, upload_path, remove_crc, target_message_names), daemon=True)
     t.start()
 
     return success_response({
@@ -131,11 +136,11 @@ def start_extraction():
     })
 
 
-def _run_extraction(task_id, upload_path, remove_crc):
+def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None):
     """后台线程：执行解析、关联、导出与映射质量计算，并实时更新进度。"""
     try:
-        # 执行提取
-        parser = DocumentParser()
+        # 执行提取（传入目标消息名称用于兜底提取）
+        parser = DocumentParser(target_message_names=target_message_names)
         result = parser.parse(upload_path, options={'remove_crc_tail': remove_crc})
         tasks_status[task_id]['progress'] = 50
 

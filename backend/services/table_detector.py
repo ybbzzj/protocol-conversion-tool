@@ -320,6 +320,50 @@ def _is_noise_table(grid: List[List[str]], preceding_para: str) -> bool:
     return not has_data_type
 
 
+def _match_target_message_name(grid: List[List[str]], preceding_para: str, target_names: set) -> bool:
+    """
+    检查表格是否匹配目标消息名称。
+    匹配规则：
+    1. 表标题（前置段落）是否包含目标名称
+    2. 表格第一行（信息名称行）是否包含目标名称
+    3. 表格内容中是否包含"信息名称"列，且该列值匹配目标名称
+    """
+    if not target_names:
+        return False
+    
+    # 规则1：检查前置段落（表标题）
+    para_name = _extract_name_from_para(preceding_para)
+    if para_name and any(target in para_name for target in target_names):
+        return True
+    
+    # 规则2：检查表格第一行（信息名称行）
+    if grid and len(grid) > 0:
+        row0_unique = _dedup_row(grid[0])
+        msg_name = _extract_msg_name_from_info_row(row0_unique)
+        if msg_name and any(target in msg_name for target in target_names):
+            return True
+    
+    # 规则3：检查表格内容中的"信息名称"列
+    if grid and len(grid) > 1:
+        # 查找包含"信息名称"的列
+        headers, kept_indices = _dedup_headers(grid[0])
+        info_name_col_idx = None
+        for idx, header in enumerate(headers):
+            if '信息名称' in header or '通信帧名称' in header:
+                info_name_col_idx = kept_indices[idx] if idx < len(kept_indices) else None
+                break
+        
+        # 如果找到"信息名称"列，检查其值
+        if info_name_col_idx is not None:
+            for row in grid[1:]:  # 跳过表头行
+                if info_name_col_idx < len(row):
+                    cell_value = row[info_name_col_idx].strip()
+                    if cell_value and any(target in cell_value for target in target_names):
+                        return True
+    
+    return False
+
+
 # ─── 主类 ─────────────────────────────────────────────────────────────────────
 
 class TableDetector:
@@ -328,7 +372,7 @@ class TableDetector:
     完整替换 docx2python，精确处理水平/垂直合并单元格。
     """
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, target_message_names=None):
         # 输出控制：是否丢弃 data_rows 末尾的 CRC 校验字行（默认开启，保持既有行为）
         self.remove_crc_tail = True
         # 保留 keywords 等属性以兼容外部调用
@@ -344,6 +388,8 @@ class TableDetector:
             'remark': ['备注', '说明', '值域', '数据处理方法'],
             'meta': ['信源', '信宿', '信息内容', '消息ID', '接口名称', '周期', '发起时机', '错误处理']
         }
+        # 目标消息名称列表（用于兜底提取）
+        self.target_message_names = set(target_message_names) if target_message_names else set()
 
     def extract_tables_from_docx(self, file_path: str) -> List[Dict]:
         """
@@ -417,13 +463,20 @@ class TableDetector:
         if not grid or len(grid) < 1:
             return base
 
-        # 强制跳过
+        # 强制跳过（除非匹配目标名称）
         if force_skip:
-            return base
+            # 检查是否匹配目标名称，如果匹配则不跳过
+            if not _match_target_message_name(grid, preceding_para, self.target_message_names):
+                return base
 
         # ── 判断是否为干扰/无效表格 ──────────────────────────────────────────
+        # 如果匹配目标名称，则强制不跳过干扰表判断
         if _is_noise_table(grid, preceding_para):
-            return base
+            # 再次检查是否匹配目标名称
+            if not _match_target_message_name(grid, preceding_para, self.target_message_names):
+                return base
+            else:
+                logger.info(f"Table #{t_idx}: 匹配目标名称，强制跳过干扰表判断")
 
         # ── 获取行0去重内容 ─────────────────────────────────────────────────
         row0_unique = _dedup_row(grid[0])
@@ -816,8 +869,8 @@ class TableDetector:
 # ─── DocumentParser ──────────────────────────────────────────────────────────
 
 class DocumentParser:
-    def __init__(self, config=None):
-        self.detector = TableDetector(config)
+    def __init__(self, config=None, target_message_names=None):
+        self.detector = TableDetector(config, target_message_names)
         try:
             from .table_linker import TableLinker
         except ImportError:

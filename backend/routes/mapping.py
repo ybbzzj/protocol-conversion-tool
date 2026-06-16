@@ -391,36 +391,53 @@ def _extract_fields_and_data_from_raw_tables(raw_tables: List[Dict]) -> Tuple[Li
     """
     从原始表格数据中提取字段名和完整表格数据
     返回: (字段列表, 表格数据列表)
+    
+    修复：遍历所有有效的字段表（field_def类型），避免前面有空表或干扰表时误报字段为零
     """
     try:
         if not raw_tables:
             return [], []
         
-        # 使用第一个表格的字段作为标准字段
-        first_table = raw_tables[0]
-        if not first_table.get('data_rows'):
-            return [], []
-        
-        # 提取字段名（从第一行数据的键）
-        first_row = first_table['data_rows'][0]
-        fields = list(first_row.keys())
-        
-        # 提取所有表格的数据，每表只取第一行
+        # 收集所有字段表的字段名（去重）
+        all_fields = set()
         all_table_data = []
+        
+        # 遍历所有表格，只处理有效的字段定义表
         for table in raw_tables:
+            table_type = table.get('table_type', '')
             table_name = table.get('msg_name', 'Unknown')
             data_rows = table.get('data_rows', [])
+            
+            # 只处理字段定义表，跳过辅助表和干扰表
+            if table_type not in ('field_def', '', None):
+                continue
+            
+            # 如果表格有数据行，提取字段
             if data_rows:
-                # 只取第一行数据
+                # 从第一行提取字段名
                 first_row = data_rows[0]
+                fields = list(first_row.keys())
+                all_fields.update(fields)
+                
+                # 添加表格数据（只取第一行用于预览）
                 row_with_table = {'表格名称': table_name, '行号': 1}
                 row_with_table.update(first_row)
                 all_table_data.append(row_with_table)
         
-        return fields, all_table_data
+        # 转换为有序列表
+        fields_list = list(all_fields)
+        
+        # 如果没有找到任何有效字段表，返回空列表
+        if not fields_list:
+            print("[原始表格数据提取] 未找到有效的字段定义表")
+            return [], []
+        
+        return fields_list, all_table_data
     except Exception as e:
         # 如果处理失败，返回空列表
         print(f"[原始表格数据提取] 处理失败: {e}")
+        import traceback
+        print(traceback.format_exc())
         return [], []
 
 # 注册蓝图到应用

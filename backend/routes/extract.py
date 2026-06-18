@@ -85,6 +85,14 @@ def start_extraction():
 
     # 获取目标消息名称（用于兜底提取）
     target_message_names = request.form.getlist('target_message_names')
+    
+    # 获取用户配置（用于配置匹配和兜底提取）
+    table_configs = request.form.get('table_configs')
+    if table_configs:
+        try:
+            table_configs = json.loads(table_configs)
+        except json.JSONDecodeError:
+            table_configs = None
 
     # 加载用户选择的期望字段：优先使用前端直接传来的字段名
     # （前端字段 id 为本地随机生成，与后端配置 id 不一致，无法靠 id 反查名称）
@@ -112,6 +120,7 @@ def start_extraction():
         'expected_fields': expected_fields,  # 期望字段
         'remove_crc': remove_crc,  # 输出控制：是否删除末尾 CRC 校验字行
         'target_message_names': target_message_names,  # 目标消息名称（用于兜底提取）
+        'table_configs': table_configs,  # 用户配置（用于配置匹配）
         'mapping_quality': None  # 映射质量评分
     }
     
@@ -127,7 +136,7 @@ def start_extraction():
         return error_response(40002, f"文件保存失败: {e}")
 
     # 提取过程放入后台线程执行，路由立即返回，使前端可通过轮询观察进度
-    t = threading.Thread(target=_run_extraction, args=(task_id, upload_path, remove_crc, target_message_names), daemon=True)
+    t = threading.Thread(target=_run_extraction, args=(task_id, upload_path, remove_crc, target_message_names, table_configs), daemon=True)
     t.start()
 
     return success_response({
@@ -136,11 +145,11 @@ def start_extraction():
     })
 
 
-def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None):
+def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None, table_configs=None):
     """后台线程：执行解析、关联、导出与映射质量计算，并实时更新进度。"""
     try:
-        # 执行提取（传入目标消息名称用于兜底提取）
-        parser = DocumentParser(target_message_names=target_message_names)
+        # 执行提取（传入目标消息名称和配置用于兜底提取）
+        parser = DocumentParser(config=table_configs, target_message_names=target_message_names)
         result = parser.parse(upload_path, options={'remove_crc_tail': remove_crc})
         tasks_status[task_id]['progress'] = 50
 

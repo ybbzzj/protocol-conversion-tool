@@ -1,6 +1,6 @@
 {
   "file": "混合模式协议(公开).docx",
-  "timestamp": "2026-06-16T20:55:21.204751",
+  "timestamp": "2026-06-19T00:01:20.064867",
   "total_tables": 7,
   "tables": [
     {
@@ -308,7 +308,9 @@
         "备注"
       ],
       "data_rows_count": 3,
-      "meta": {},
+      "meta": {
+        "消息ID": "0x0301"
+      },
       "data_rows": [
         {
           "序号": "",

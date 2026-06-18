@@ -370,6 +370,12 @@ class TableDetector:
     """
     协议文档表格检测器（python-docx 版本）。
     完整替换 docx2python，精确处理水平/垂直合并单元格。
+    
+    修改点：
+    1. 支持配置匹配：按"表格类型+字段组合+列角色"传入配置
+    2. 处理顺序改为：配置匹配 → 智能识别 → 噪声过滤
+    3. 支持 table_type=message_id，兼容旧格式和新格式
+    4. 配置兜底：字段表命中配置后必须提取，ID表命中后用于补ID
     """
 
     def __init__(self, config=None, target_message_names=None):
@@ -390,6 +396,124 @@ class TableDetector:
         }
         # 目标消息名称列表（用于兜底提取）
         self.target_message_names = set(target_message_names) if target_message_names else set()
+        
+        # 配置兜底：用户传入的表格配置
+        self.table_configs = self._parse_config(config)
+        
+        # 日志记录器
+        self.log_records = []
+    
+    def _parse_config(self, config):
+        """解析用户配置，提取表格类型和字段组合配置"""
+        if not config:
+            return []
+        
+        configs = []
+        
+        if isinstance(config, list):
+            for item in config:
+                if isinstance(item, dict):
+                    configs.append(item)
+        elif isinstance(config, dict):
+            # 支持配置分组，不能只传平铺字段名
+            groups = config.get('groups', [])
+            if groups:
+                for group in groups:
+                    if isinstance(group, dict):
+                        configs.append(group)
+            else:
+                configs.append(config)
+        
+        return configs
+    
+    def _match_config(self, grid, headers_text):
+        """
+        根据配置匹配表格类型。
+        匹配规则：
+        1. 检查表格类型配置（table_type）
+        2. 检查字段组合（必须包含的字段）
+        3. 检查列角色（id_value, message_name等）
+        
+        特殊规则：
+        - 字段表配置（field_def）至少要求"内容/参数"和"数据类型"命中
+        - 允许多出"序号"等列
+        
+        返回：(匹配的配置, 表格类型) 或 (None, None)
+        """
+        if not self.table_configs:
+            return None, None
+        
+        for config in self.table_configs:
+            table_type = config.get('table_type')
+            required_fields = config.get('required_fields', [])
+            column_roles = config.get('column_roles', {})
+            
+            if not table_type:
+                continue
+            
+            # 字段表配置特殊规则：至少要求"内容/参数"和"数据类型"命中
+            if table_type == 'field_def':
+                has_content_field = False
+                has_type_field = False
+                
+                # 检查是否有内容字段（内容/参数/信号名称等）
+                content_candidates = ['内容', '参数', '信号名称', '信息内容', '数据含义', '字段']
+                for candidate in content_candidates:
+                    if candidate in headers_text:
+                        has_content_field = True
+                        break
+                
+                # 检查是否有数据类型字段
+                type_candidates = ['数据类型', '类型', '数据格式']
+                for candidate in type_candidates:
+                    if candidate in headers_text:
+                        has_type_field = True
+                        break
+                
+                # 字段表必须同时包含内容字段和数据类型字段
+                if not (has_content_field and has_type_field):
+                    continue
+            
+            # 检查字段组合：必须包含所有required_fields
+            has_all_required = True
+            for field in required_fields:
+                if field not in headers_text:
+                    has_all_required = False
+                    break
+            
+            if not has_all_required:
+                continue
+            
+            # 检查列角色匹配
+            if column_roles:
+                role_matched = True
+                for role, candidates in column_roles.items():
+                    if isinstance(candidates, list):
+                        found = any(candidate in headers_text for candidate in candidates)
+                    else:
+                        found = candidates in headers_text
+                    if not found:
+                        role_matched = False
+                        break
+                if not role_matched:
+                    continue
+            
+            # 配置匹配成功
+            logger.info(f"配置匹配成功: table_type={table_type}, headers_text={headers_text[:50]}...")
+            return config, table_type
+        
+        return None, None
+    
+    def _log_table_status(self, t_idx, status, reason, table_type=None, msg_name=None):
+        """记录表格识别状态日志"""
+        self.log_records.append({
+            'table_index': t_idx,
+            'status': status,
+            'reason': reason,
+            'table_type': table_type,
+            'msg_name': msg_name
+        })
+        logger.info(f"Table #{t_idx}: {status} - {reason} (type={table_type}, name={msg_name})")
 
     def extract_tables_from_docx(self, file_path: str) -> List[Dict]:
         """
@@ -442,7 +566,14 @@ class TableDetector:
         return extracted_tables
 
     def _parse_single_table(self, table, t_idx: int, preceding_para: str, force_skip: bool) -> Dict:
-        """解析单个表格"""
+        """
+        解析单个表格
+        
+        修改点：处理顺序改为配置匹配 → 智能识别 → 噪声过滤
+        1. 配置匹配：按"表格类型+字段组合+列角色"匹配
+        2. 智能识别：端口分配表、消息ID表（兼容新旧格式）、bit位定义表
+        3. 噪声过滤：最后判断是否为干扰表
+        """
         base = {
             'index': t_idx,
             'msg_name': '',
@@ -463,44 +594,76 @@ class TableDetector:
         if not grid or len(grid) < 1:
             return base
 
-        # 强制跳过（除非匹配目标名称）
-        if force_skip:
-            # 检查是否匹配目标名称，如果匹配则不跳过
-            if not _match_target_message_name(grid, preceding_para, self.target_message_names):
-                return base
-
-        # ── 判断是否为干扰/无效表格 ──────────────────────────────────────────
-        # 如果匹配目标名称，则强制不跳过干扰表判断
-        if _is_noise_table(grid, preceding_para):
-            # 再次检查是否匹配目标名称
-            if not _match_target_message_name(grid, preceding_para, self.target_message_names):
-                return base
-            else:
-                logger.info(f"Table #{t_idx}: 匹配目标名称，强制跳过干扰表判断")
-
-        # ── 获取行0去重内容 ─────────────────────────────────────────────────
+        # 获取行0去重内容
         row0_unique = _dedup_row(grid[0])
         row0_text = ' '.join(row0_unique)
-
-        # ── 端口分配表识别（含信源系统码+信宿系统码） ────────────────────────
+        
+        # ── 修改点1：配置匹配（最高优先级） ─────────────────────────────────────
+        config, matched_table_type = self._match_config(grid, row0_text)
+        if config and matched_table_type:
+            # 配置匹配成功，强制提取
+            self._log_table_status(t_idx, '配置匹配', f'命中配置: {matched_table_type}', matched_table_type)
+            
+            if matched_table_type == 'field_def':
+                return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para)
+            elif matched_table_type == 'message_id':
+                return self._parse_message_id_table(grid, t_idx, preceding_para)
+            elif matched_table_type == 'port_allocation':
+                return self._parse_port_allocation(grid, t_idx, preceding_para)
+            elif matched_table_type == 'bit_def':
+                return self._parse_bit_def_table(grid, t_idx, preceding_para)
+        
+        # ── 修改点2：智能识别（中等优先级） ─────────────────────────────────────
+        
+        # 端口分配表识别（含信源系统码+信宿系统码）
         if '信源系统码' in row0_text and '信宿系统码' in row0_text:
+            self._log_table_status(t_idx, '智能识别', '端口分配表', 'port_allocation')
             return self._parse_port_allocation(grid, t_idx, preceding_para)
 
-        # ── 消息ID表识别（含消息ID+信息内容，≤6列） ──────────────────────────
-        if '消息ID' in row0_text and '信息内容' in row0_text:
+        # 消息ID表识别（兼容新旧格式）
+        # 旧格式：消息ID + 信息内容
+        # 新格式：ID序号 + ID定义 + 是否有数据（ID序号为id_value，ID定义为message_name）
+        has_message_id = '消息ID' in row0_text
+        has_info_content = '信息内容' in row0_text
+        has_id_seq = 'ID序号' in row0_text or '序号' in row0_text and 'ID' in row0_text
+        has_id_def = 'ID定义' in row0_text
+        
+        if (has_message_id and has_info_content) or (has_id_seq and has_id_def):
             unique_cols, _ = _dedup_headers(grid[0])
             if len(unique_cols) <= 7:
+                self._log_table_status(t_idx, '智能识别', '消息ID表', 'message_id')
                 return self._parse_message_id_table(grid, t_idx, preceding_para)
 
-        # ── bit位定义表识别（含位号+状态参数） ────────────────────────────────
+        # bit位定义表识别（含位号+状态参数）
         if ('位号' in row0_text or '位号' in ' '.join(_dedup_row(grid[1])) if len(grid) > 1 else False) \
                 and '状态参数' in row0_text:
+            self._log_table_status(t_idx, '智能识别', 'bit位定义表', 'bit_def')
             return self._parse_bit_def_table(grid, t_idx, preceding_para)
         # 也匹配只有"位号"列的情况
         if '位号' in row0_text and any(kw in row0_text for kw in ['状态参数', '取值说明']):
+            self._log_table_status(t_idx, '智能识别', 'bit位定义表', 'bit_def')
             return self._parse_bit_def_table(grid, t_idx, preceding_para)
+        
+        # ── 修改点3：噪声过滤（最低优先级） ─────────────────────────────────────
+        
+        # 强制跳过（除非匹配目标名称）
+        if force_skip:
+            if not _match_target_message_name(grid, preceding_para, self.target_message_names):
+                self._log_table_status(t_idx, '过滤', '前置段落干扰词', 'skip')
+                return base
 
-        # ── 字段定义表（A/B/C三种类型） ────────────────────────────────────────
+        # 判断是否为干扰/无效表格
+        if _is_noise_table(grid, preceding_para):
+            # 检查是否匹配目标名称，如果匹配则强制提取
+            if not _match_target_message_name(grid, preceding_para, self.target_message_names):
+                self._log_table_status(t_idx, '过滤', '噪声表', 'skip')
+                return base
+            else:
+                self._log_table_status(t_idx, '强制提取', '匹配目标名称，跳过噪声过滤', 'field_def')
+                logger.info(f"Table #{t_idx}: 匹配目标名称，强制跳过干扰表判断")
+        
+        # ── 字段定义表（最后处理） ──────────────────────────────────────────────
+        self._log_table_status(t_idx, '智能识别', '字段定义表', 'field_def')
         return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para)
 
     # ── 端口分配表 ────────────────────────────────────────────────────────────
@@ -522,14 +685,32 @@ class TableDetector:
     # ── 消息ID映射表 ──────────────────────────────────────────────────────────
 
     def _parse_message_id_table(self, grid: List[List[str]], t_idx: int, preceding_para: str) -> Dict:
+        """
+        解析消息ID表，兼容新旧格式：
+        - 旧格式：消息ID + 信息内容
+        - 新格式：ID序号 + ID定义 + 是否有数据
+        
+        新格式中：ID序号为 id_value，ID定义为 message_name
+        """
         headers, kept_indices = _dedup_headers(grid[0])
         data_rows = self._extract_data_rows(grid, headers, kept_indices, start_row=1)
+        
+        # 标记列角色，便于 TableLinker 建立映射
+        meta = {}
+        
+        # 识别列角色
+        for header in headers:
+            if '消息ID' in header or 'ID序号' in header:
+                meta['id_column'] = header
+            elif '信息内容' in header or 'ID定义' in header:
+                meta['name_column'] = header
+        
         return {
             'index': t_idx,
             'msg_name': '消息ID表',
             'headers': headers,
             'data_rows': data_rows,
-            'meta': {},
+            'meta': meta,
             'table_type': 'message_id',
             'is_auxiliary': True,
             'preceding_para': preceding_para,
@@ -938,6 +1119,6 @@ class DocumentParser:
         try:
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(result_data, f, ensure_ascii=False, indent=2)
-            print(f"✅ 表格识别结果已保存: {output_file}")
+            print("[INFO] 表格识别结果已保存: {}".format(output_file))
         except Exception as e:
-            print(f"❌ 保存识别结果失败: {e}")
+            print("[ERROR] 保存识别结果失败: {}".format(e))

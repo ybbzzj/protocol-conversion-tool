@@ -151,29 +151,62 @@ class TableLinker:
     def _build_msgid_dict(self, tables: List[Dict]) -> Dict[str, str]:
         """
         扫描所有消息ID表，建立：消息名 → 消息ID（如 '0x8000'）
+        
+        兼容新旧格式：
+        - 旧格式：消息ID + 信息内容
+        - 新格式：ID序号 + ID定义 + 是否有数据（ID序号为id_value，ID定义为message_name）
         """
         msgid_dict = {}
         for table in tables:
             headers = table.get('headers', [])
             data_rows = table.get('data_rows', [])
             headers_text = ' '.join(headers)
-
-            # 识别消息ID表：含"消息ID"且含"信息内容"
-            if '消息ID' not in headers_text and '消息标识' not in headers_text:
+            meta = table.get('meta', {})
+            
+            # 识别消息ID表：
+            # 旧格式：含"消息ID"且含"信息内容"
+            # 新格式：含"ID序号"且含"ID定义"
+            is_old_format = ('消息ID' in headers_text or '消息标识' in headers_text) and '信息内容' in headers_text
+            is_new_format = 'ID序号' in headers_text and 'ID定义' in headers_text
+            
+            if not (is_old_format or is_new_format):
                 continue
-            if '信息内容' not in headers_text:
-                continue
-
-            col_content = col_id = None
-            for idx, h in enumerate(headers):
-                if '信息内容' in h:
-                    col_content = idx
-                elif '消息ID' in h or '消息标识' in h:
-                    col_id = idx
-
+            
+            # 根据格式确定列角色
+            if is_new_format:
+                # 新格式：ID序号为id_value，ID定义为message_name
+                col_content = None  # ID定义
+                col_id = None       # ID序号
+                for idx, h in enumerate(headers):
+                    if 'ID定义' in h:
+                        col_content = idx
+                    elif 'ID序号' in h:
+                        col_id = idx
+            else:
+                # 旧格式：信息内容为message_name，消息ID为id_value
+                col_content = None  # 信息内容
+                col_id = None       # 消息ID
+                for idx, h in enumerate(headers):
+                    if '信息内容' in h:
+                        col_content = idx
+                    elif '消息ID' in h or '消息标识' in h:
+                        col_id = idx
+            
+            # 也可以从meta中获取列角色信息
+            if col_content is None and 'name_column' in meta:
+                try:
+                    col_content = headers.index(meta['name_column'])
+                except ValueError:
+                    pass
+            if col_id is None and 'id_column' in meta:
+                try:
+                    col_id = headers.index(meta['id_column'])
+                except ValueError:
+                    pass
+            
             if col_content is None or col_id is None:
                 continue
-
+            
             for row in data_rows:
                 vals = list(row.values())
                 if max(col_content, col_id) >= len(vals):
@@ -182,7 +215,7 @@ class TableLinker:
                 msg_id = str(vals[col_id]).strip()
                 if name and name not in ('—', '-') and msg_id and msg_id not in ('—', '-'):
                     msgid_dict[_normalize_msg_name(name)] = msg_id
-
+        
         return msgid_dict
 
     def _build_bit_def_map(self, tables: List[Dict]) -> List[Dict]:

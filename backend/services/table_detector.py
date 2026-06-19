@@ -271,18 +271,20 @@ def _parse_aggregate_meta(text: str) -> Dict:
     return meta
 
 
-def _is_noise_table(grid: List[List[str]], preceding_para: str) -> bool:
+def _is_noise_table(grid: List[List[str]], preceding_para: str, config_field_names: List[str] = None) -> bool:
     """
     判断是否为干扰/无效表格：
     1. 前置段落含干扰词
-    2. 表头含干扰词（如测试指令、周期等）
+    2. 是示例/目标格式表（首行就是输出Excel的列名）
     3. 是帧格式说明表（帧头/帧尾）
-    4. 整表无任何数据类型关键字（特殊情况除外）
-    5. 是示例/目标格式表（首行就是输出Excel的列名）
     
-    【特殊情况】：以下表格即使无数据类型关键字也不应被过滤：
+    【不过滤规则】以下表格即使无数据类型关键字也不应被过滤：
     - 端口分配表（含信源系统码+信宿系统码+信息内容）
-    - 消息ID表（含消息ID+信息内容）
+    - 消息ID表（含消息ID/ID序号+信息内容/ID定义）
+    - 匹配用户配置的字段表（表头与配置字段高度重合）
+    
+    【最后】才检查表头干扰词和整表数据类型关键字。
+    配置匹配优先于噪声过滤。
     """
     if any(marker in preceding_para for marker in NOISE_PARA_MARKERS):
         return True
@@ -297,10 +299,6 @@ def _is_noise_table(grid: List[List[str]], preceding_para: str) -> bool:
     if EXAMPLE_TABLE_HEADERS.issubset(row0_set):
         return True
 
-    # 检查表头含干扰词
-    if any(kw in row0_text for kw in NOISE_HEADER_KEYWORDS):
-        return True
-
     # 帧格式表
     all_text = ' '.join(cell for row in grid for cell in row)
     if '帧头' in all_text and '帧尾' in all_text:
@@ -308,11 +306,36 @@ def _is_noise_table(grid: List[List[str]], preceding_para: str) -> bool:
     if '帧格式' in preceding_para:
         return True
 
-    # ◄ 【新增】不过滤端口分配表和消息ID表（即使无数据类型关键字）
-    has_port_allocation_features = ('信源系统码' in row0_text and '信宿系统码' in row0_text and '信息内容' in row0_text)
-    has_message_id_features = ('消息ID' in row0_text and '信息内容' in row0_text)
-    if has_port_allocation_features or has_message_id_features:
+    # ── 【不过滤】端口分配表 ──────────────────────────────────────────────
+    has_port_allocation_features = ('信源系统码' in row0_text and '信宿系统码' in row0_text)
+    if has_port_allocation_features:
         return False
+
+    # ── 【不过滤】消息ID表（兼容新旧格式） ───────────────────────────────
+    has_old_id = '消息ID' in row0_text and '信息内容' in row0_text
+    has_new_id = ('ID序号' in row0_text or ('ID' in row0_text and '序号' in row0_text)) and 'ID定义' in row0_text
+    has_generic_id = ('ID' in row0_text) and ('信息内容' in row0_text or '定义' in row0_text or '名称' in row0_text)
+    if has_old_id or has_new_id or has_generic_id:
+        return False
+
+    # ── 【不过滤】匹配用户配置的字段表 ──────────────────────────────────
+    # 如果表头中的字段名与用户配置的字段名高度重合，说明是有效字段表，不过滤
+    if config_field_names:
+        config_field_set = set(f.strip() for f in config_field_names if f.strip())
+        header_match_count = sum(1 for h in row0_unique if h.strip() in config_field_set or
+                                 any(cf in h or h in cf for cf in config_field_set if len(cf) >= 2))
+        # 如果至少有3个表头字段匹配配置，或匹配比例超过50%，不过滤
+        non_empty_headers = [h for h in row0_unique if h.strip() and len(h.strip()) >= 2]
+        if non_empty_headers and (header_match_count >= 3 or
+                                   header_match_count / max(len(non_empty_headers), 1) >= 0.5):
+            logger.info(f"配置兜底: 表头与配置字段匹配({header_match_count}/{len(non_empty_headers)})，不过滤")
+            return False
+
+    # ── 以下才执行干扰过滤 ────────────────────────────────────────────────
+    
+    # 检查表头含干扰词
+    if any(kw in row0_text for kw in NOISE_HEADER_KEYWORDS):
+        return True
 
     # 检查整表是否含数据类型关键字
     all_upper = all_text.upper()
@@ -404,25 +427,116 @@ class TableDetector:
         self.log_records = []
     
     def _parse_config(self, config):
-        """解析用户配置，提取表格类型和字段组合配置"""
+        """
+        解析用户配置，提取表格类型和字段组合配置。
+        
+        支持的配置格式：
+        1. 结构化配置（dict with groups / list of dicts）：
+           {table_type: 'field_def', required_fields: [...], column_roles: {...}}
+        2. 平铺字段名列表（前端直接传来的字段名数组）：
+           ['参数', '数据类型', '数据长度', '值域', '单位', '备注']
+           自动推断表格类型和角色。
+        """
         if not config:
             return []
         
         configs = []
         
         if isinstance(config, list):
-            for item in config:
-                if isinstance(item, dict):
-                    configs.append(item)
+            # 检查列表元素类型
+            if config and isinstance(config[0], dict):
+                # 结构化配置列表
+                for item in config:
+                    if isinstance(item, dict):
+                        configs.append(item)
+            elif config and isinstance(config[0], str):
+                # ── 平铺字段名列表 → 自动推断表格类型 ──────────────────────
+                field_names = [f.strip() for f in config if isinstance(f, str) and f.strip()]
+                if field_names:
+                    inferred = self._infer_config_from_fields(field_names)
+                    configs.extend(inferred)
         elif isinstance(config, dict):
-            # 支持配置分组，不能只传平铺字段名
+            # 支持配置分组
             groups = config.get('groups', [])
             if groups:
                 for group in groups:
                     if isinstance(group, dict):
                         configs.append(group)
-            else:
+            elif 'table_type' in config:
                 configs.append(config)
+            elif 'fields' in config or 'field_names' in config:
+                # dict 格式但只有字段名列表
+                fields = config.get('fields', config.get('field_names', []))
+                if fields and isinstance(fields, list):
+                    inferred = self._infer_config_from_fields(fields)
+                    configs.extend(inferred)
+        
+        return configs
+    
+    def _infer_config_from_fields(self, field_names: List[str]) -> List[Dict]:
+        """
+        根据平铺字段名列表推断表格配置。
+        
+        推断规则：
+        - 如果字段名中包含内容字段（参数/内容/信号名称等）+ 类型字段（数据类型/类型/数据长度等）
+          → 推断为 field_def 表
+        - 如果字段名中包含 ID 相关字段（消息ID/ID序号/ID定义等）
+          → 推断为 message_id 表
+        
+        Returns:
+            推断出的配置列表
+        """
+        configs = []
+        
+        # 内容字段候选
+        content_candidates = {'参数', '内容', '信号名称', '信息内容', '数据含义', '字段', '名称'}
+        # 类型字段候选（包含"长度"类字段，如"数据长度"、"数据长度（字节）"）
+        type_candidates = {'数据类型', '类型', '数据格式'}
+        length_candidates = {'数据长度', '字节数', '字节', '长度', '数据长度（字节）'}
+        # ID 相关字段候选
+        id_candidates = {'消息ID', 'ID序号', '消息标识', 'ID定义', 'ID'}
+        
+        field_set = set(field_names)
+        
+        has_content = bool(field_set & content_candidates)
+        has_type = bool(field_set & type_candidates)
+        has_length = bool(field_set & length_candidates)
+        has_id = bool(field_set & id_candidates)
+        
+        # 推断字段定义表
+        if has_content and (has_type or has_length):
+            configs.append({
+                'table_type': 'field_def',
+                'required_fields': field_names,
+                'column_roles': {},
+                '_inferred': True,  # 标记为推断配置
+            })
+        
+        # 推断消息ID表
+        if has_id:
+            # 确定列角色
+            roles = {}
+            for f in field_names:
+                if 'ID序号' in f or '消息ID' in f or '消息标识' in f:
+                    roles['id_value'] = f
+                elif 'ID定义' in f or '信息内容' in f:
+                    roles['message_name'] = f
+            configs.append({
+                'table_type': 'message_id',
+                'required_fields': field_names,
+                'column_roles': roles,
+                '_inferred': True,
+            })
+        
+        # 如果没有推断出任何类型，创建一个通用字段表配置（宽松匹配）
+        if not configs and len(field_names) >= 3:
+            configs.append({
+                'table_type': 'field_def',
+                'required_fields': field_names,
+                'column_roles': {},
+                '_inferred': True,
+                '_lenient': True,  # 宽松匹配模式
+            })
         
         return configs
     
@@ -431,61 +545,46 @@ class TableDetector:
         根据配置匹配表格类型。
         匹配规则：
         1. 检查表格类型配置（table_type）
-        2. 检查字段组合（必须包含的字段）
+        2. 检查字段组合（配置字段与表头的重合度）
         3. 检查列角色（id_value, message_name等）
         
-        特殊规则：
-        - 字段表配置（field_def）至少要求"内容/参数"和"数据类型"命中
-        - 允许多出"序号"等列
+        匹配策略（按优先级）：
+        - 结构化配置：required_fields 中的字段至少有50%在表头中命中
+        - 推断配置（_inferred=True）：表头与配置字段的子串匹配比例>=50%
+        - 宽松模式（_lenient=True）：只要有内容字段+类型/长度字段命中即可
         
         返回：(匹配的配置, 表格类型) 或 (None, None)
         """
         if not self.table_configs:
             return None, None
         
+        # 提取表头字段列表（用于匹配）
+        header_fields = [h.strip() for h in headers_text.split() if h.strip()]
+        
         for config in self.table_configs:
             table_type = config.get('table_type')
             required_fields = config.get('required_fields', [])
             column_roles = config.get('column_roles', {})
+            is_inferred = config.get('_inferred', False)
+            is_lenient = config.get('_lenient', False)
             
             if not table_type:
                 continue
             
-            # 字段表配置特殊规则：至少要求"内容/参数"和"数据类型"命中
+            # ── 字段表配置匹配 ────────────────────────────────────────────
             if table_type == 'field_def':
-                has_content_field = False
-                has_type_field = False
-                
-                # 检查是否有内容字段（内容/参数/信号名称等）
-                content_candidates = ['内容', '参数', '信号名称', '信息内容', '数据含义', '字段']
-                for candidate in content_candidates:
-                    if candidate in headers_text:
-                        has_content_field = True
-                        break
-                
-                # 检查是否有数据类型字段
-                type_candidates = ['数据类型', '类型', '数据格式']
-                for candidate in type_candidates:
-                    if candidate in headers_text:
-                        has_type_field = True
-                        break
-                
-                # 字段表必须同时包含内容字段和数据类型字段
-                if not (has_content_field and has_type_field):
+                matched = self._match_field_def_config(headers_text, header_fields, required_fields, is_lenient)
+                if not matched:
                     continue
             
-            # 检查字段组合：必须包含所有required_fields
-            has_all_required = True
-            for field in required_fields:
-                if field not in headers_text:
-                    has_all_required = False
-                    break
+            # ── ID表配置匹配 ──────────────────────────────────────────────
+            elif table_type == 'message_id':
+                matched = self._match_message_id_config(headers_text, header_fields, required_fields, column_roles)
+                if not matched:
+                    continue
             
-            if not has_all_required:
-                continue
-            
-            # 检查列角色匹配
-            if column_roles:
+            # ── 其他类型：检查列角色匹配 ──────────────────────────────────
+            elif column_roles:
                 role_matched = True
                 for role, candidates in column_roles.items():
                     if isinstance(candidates, list):
@@ -503,6 +602,89 @@ class TableDetector:
             return config, table_type
         
         return None, None
+    
+    def _match_field_def_config(self, headers_text: str, header_fields: List[str],
+                                 required_fields: List[str], is_lenient: bool) -> bool:
+        """
+        字段定义表配置匹配。
+        
+        匹配条件：
+        1. 必须有内容字段命中（内容/参数/信号名称等）
+        2. 必须有类型/长度字段命中（数据类型/类型/数据长度等）
+        3. 配置字段与表头的匹配度足够高
+        """
+        # 检查内容字段
+        content_candidates = ['内容', '参数', '信号名称', '信息内容', '数据含义', '字段']
+        has_content_field = any(c in headers_text for c in content_candidates)
+        
+        # 检查类型/长度字段（扩展：包含"数据长度"类字段）
+        type_candidates = ['数据类型', '类型', '数据格式']
+        length_candidates = ['数据长度', '字节数', '字节']
+        has_type_field = any(c in headers_text for c in type_candidates)
+        has_length_field = any(c in headers_text for c in length_candidates)
+        
+        # 字段表必须同时包含内容字段和类型/长度字段
+        if not has_content_field:
+            return False
+        if not (has_type_field or has_length_field):
+            return False
+        
+        # 宽松模式：只要内容+类型/长度命中就匹配
+        if is_lenient:
+            return True
+        
+        # 检查配置字段与表头的匹配度
+        if required_fields:
+            match_count = 0
+            for field in required_fields:
+                field_clean = field.strip()
+                if not field_clean:
+                    continue
+                # 精确匹配
+                if field_clean in headers_text:
+                    match_count += 1
+                    continue
+                # 子串匹配（表头字段包含配置字段，或反之）
+                for hf in header_fields:
+                    if field_clean in hf or hf in field_clean:
+                        match_count += 1
+                        break
+            
+            match_ratio = match_count / max(len(required_fields), 1)
+            # 至少50%的字段匹配
+            if match_ratio < 0.5:
+                return False
+        
+        return True
+    
+    def _match_message_id_config(self, headers_text: str, header_fields: List[str],
+                                  required_fields: List[str], column_roles: Dict) -> bool:
+        """
+        消息ID表配置匹配。
+        
+        匹配条件：
+        1. 表头包含ID相关字段（消息ID/ID序号/ID定义等）
+        2. 如果有column_roles，则按角色匹配
+        """
+        # 检查ID相关字段
+        id_field_candidates = ['消息ID', 'ID序号', 'ID定义', '消息标识', 'ID']
+        has_id_field = any(c in headers_text for c in id_field_candidates)
+        if not has_id_field:
+            return False
+        
+        # 如果有列角色配置，检查角色匹配
+        if column_roles:
+            for role, field_name in column_roles.items():
+                if isinstance(field_name, str) and field_name:
+                    if field_name not in headers_text:
+                        # 尝试子串匹配
+                        if not any(field_name in hf or hf in field_name for hf in header_fields):
+                            return False
+                elif isinstance(field_name, list):
+                    if not any(f in headers_text for f in field_name):
+                        return False
+        
+        return True
     
     def _log_table_status(self, t_idx, status, reason, table_type=None, msg_name=None):
         """记录表格识别状态日志"""
@@ -599,6 +781,12 @@ class TableDetector:
         row0_text = ' '.join(row0_unique)
         
         # ── 修改点1：配置匹配（最高优先级） ─────────────────────────────────────
+        # 【例外】示例/目标格式表始终过滤，即使配置匹配也不提取
+        row0_set = set(h.strip() for h in row0_unique if h.strip())
+        if EXAMPLE_TABLE_HEADERS.issubset(row0_set):
+            self._log_table_status(t_idx, '过滤', '示例/目标格式表', 'skip')
+            return base
+        
         config, matched_table_type = self._match_config(grid, row0_text)
         if config and matched_table_type:
             # 配置匹配成功，强制提取
@@ -607,7 +795,8 @@ class TableDetector:
             if matched_table_type == 'field_def':
                 return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para)
             elif matched_table_type == 'message_id':
-                return self._parse_message_id_table(grid, t_idx, preceding_para)
+                config_roles = config.get('column_roles', {})
+                return self._parse_message_id_table(grid, t_idx, preceding_para, config_roles)
             elif matched_table_type == 'port_allocation':
                 return self._parse_port_allocation(grid, t_idx, preceding_para)
             elif matched_table_type == 'bit_def':
@@ -620,19 +809,32 @@ class TableDetector:
             self._log_table_status(t_idx, '智能识别', '端口分配表', 'port_allocation')
             return self._parse_port_allocation(grid, t_idx, preceding_para)
 
-        # 消息ID表识别（兼容新旧格式）
+        # 消息ID表识别（兼容新旧格式 + 配置驱动）
         # 旧格式：消息ID + 信息内容
         # 新格式：ID序号 + ID定义 + 是否有数据（ID序号为id_value，ID定义为message_name）
+        # 配置驱动：column_roles 指定 id_value 和 message_name 对应的列名
         has_message_id = '消息ID' in row0_text
         has_info_content = '信息内容' in row0_text
-        has_id_seq = 'ID序号' in row0_text or '序号' in row0_text and 'ID' in row0_text
+        has_id_seq = 'ID序号' in row0_text or ('序号' in row0_text and 'ID' in row0_text)
         has_id_def = 'ID定义' in row0_text
+        # 扩展ID识别：含"ID"和"定义/名称"等组合
+        has_generic_id = 'ID' in row0_text and ('定义' in row0_text or '名称' in row0_text)
         
-        if (has_message_id and has_info_content) or (has_id_seq and has_id_def):
+        # 从配置中获取ID表列角色提示
+        config_id_roles = {}
+        if config and matched_table_type == 'message_id':
+            config_id_roles = config.get('column_roles', {})
+        
+        is_id_table = (has_message_id and has_info_content) or \
+                      (has_id_seq and has_id_def) or \
+                      has_generic_id or \
+                      bool(config_id_roles)
+        
+        if is_id_table:
             unique_cols, _ = _dedup_headers(grid[0])
-            if len(unique_cols) <= 7:
+            if len(unique_cols) <= 8:
                 self._log_table_status(t_idx, '智能识别', '消息ID表', 'message_id')
-                return self._parse_message_id_table(grid, t_idx, preceding_para)
+                return self._parse_message_id_table(grid, t_idx, preceding_para, config_id_roles)
 
         # bit位定义表识别（含位号+状态参数）
         if ('位号' in row0_text or '位号' in ' '.join(_dedup_row(grid[1])) if len(grid) > 1 else False) \
@@ -653,7 +855,12 @@ class TableDetector:
                 return base
 
         # 判断是否为干扰/无效表格
-        if _is_noise_table(grid, preceding_para):
+        # 传入配置字段名列表，让噪声过滤函数知道哪些表头是用户期望的
+        config_field_names = []
+        for cfg in self.table_configs:
+            config_field_names.extend(cfg.get('required_fields', []))
+        
+        if _is_noise_table(grid, preceding_para, config_field_names):
             # 检查是否匹配目标名称，如果匹配则强制提取
             if not _match_target_message_name(grid, preceding_para, self.target_message_names):
                 self._log_table_status(t_idx, '过滤', '噪声表', 'skip')
@@ -684,26 +891,41 @@ class TableDetector:
 
     # ── 消息ID映射表 ──────────────────────────────────────────────────────────
 
-    def _parse_message_id_table(self, grid: List[List[str]], t_idx: int, preceding_para: str) -> Dict:
+    def _parse_message_id_table(self, grid: List[List[str]], t_idx: int, preceding_para: str,
+                                  config_column_roles: Dict = None) -> Dict:
         """
         解析消息ID表，兼容新旧格式：
         - 旧格式：消息ID + 信息内容
         - 新格式：ID序号 + ID定义 + 是否有数据
+        - 配置驱动：按 column_roles 指定列角色
         
-        新格式中：ID序号为 id_value，ID定义为 message_name
+        列角色确定优先级：
+        1. 配置中的 column_roles（最高优先级）
+        2. 智能识别（消息ID/ID序号 → id_value，信息内容/ID定义 → message_name）
         """
         headers, kept_indices = _dedup_headers(grid[0])
         data_rows = self._extract_data_rows(grid, headers, kept_indices, start_row=1)
         
-        # 标记列角色，便于 TableLinker 建立映射
         meta = {}
         
-        # 识别列角色
-        for header in headers:
-            if '消息ID' in header or 'ID序号' in header:
-                meta['id_column'] = header
-            elif '信息内容' in header or 'ID定义' in header:
-                meta['name_column'] = header
+        # ── 优先使用配置指定的列角色 ──────────────────────────────────────
+        if config_column_roles:
+            id_col = config_column_roles.get('id_value', '')
+            name_col = config_column_roles.get('message_name', '')
+            if id_col:
+                meta['id_column'] = id_col
+            if name_col:
+                meta['name_column'] = name_col
+        
+        # ── 如果配置未指定，则智能识别列角色 ──────────────────────────────
+        if 'id_column' not in meta or 'name_column' not in meta:
+            for header in headers:
+                if 'id_column' not in meta:
+                    if '消息ID' in header or 'ID序号' in header or '消息标识' in header:
+                        meta['id_column'] = header
+                if 'name_column' not in meta:
+                    if '信息内容' in header or 'ID定义' in header or '名称' in header:
+                        meta['name_column'] = header
         
         return {
             'index': t_idx,
@@ -800,7 +1022,7 @@ class TableDetector:
             for r_idx in range(start_search, min(8, n_rows)):
                 ru = _dedup_row(grid[r_idx])
                 rt = ' '.join(ru)
-                has_type = any(kw in rt for kw in ['数据类型', '类型', '数据格式', '字节', '字节数', '长度'])
+                has_type = any(kw in rt for kw in ['数据类型', '类型', '数据格式', '字节', '字节数', '长度', '数据长度'])
                 # 对于聚合式表格，需要更精确地识别内容列（排除元数据行）
                 has_content = any(kw in rt for kw in ['内容', '参数', '信号名称', '字段', '数据含义', '名称'])
                 # 添加聚合式特有的表头标记
@@ -874,7 +1096,8 @@ class TableDetector:
         else:
             # 类型B / C：行0 就是列名行
             row0_text = ' '.join(_dedup_row(grid[0]))
-            has_type = any(kw in row0_text for kw in ['数据类型', '类型', '数据格式'])
+            # 扩展类型字段检测：包含"数据长度"类字段（如"数据长度（字节）"）
+            has_type = any(kw in row0_text for kw in ['数据类型', '类型', '数据格式', '数据长度', '字节数'])
             has_content = any(kw in row0_text for kw in ['内容', '参数', '信号名称', '字段', '数据含义', '名称'])
             if has_type or has_content:
                 header_row_idx = 0

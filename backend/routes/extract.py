@@ -93,6 +93,11 @@ def start_extraction():
             table_configs = json.loads(table_configs)
         except json.JSONDecodeError:
             table_configs = None
+    
+    # 如果未传入结构化配置，则使用前端传来的字段名列表作为兜底配置
+    # 这样用户选择的字段组合可以参与表格分类和噪声过滤
+    if not table_configs and field_names:
+        table_configs = field_names  # 平铺字段名列表，由 _parse_config 自动推断表格类型
 
     # 加载用户选择的期望字段：优先使用前端直接传来的字段名
     # （前端字段 id 为本地随机生成，与后端配置 id 不一致，无法靠 id 反查名称）

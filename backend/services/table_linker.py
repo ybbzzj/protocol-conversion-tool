@@ -154,7 +154,8 @@ class TableLinker:
         
         兼容新旧格式：
         - 旧格式：消息ID + 信息内容
-        - 新格式：ID序号 + ID定义 + 是否有数据（ID序号为id_value，ID定义为message_name）
+        - 新格式：ID序号 + ID定义 + 是否有数据
+        - 配置驱动：meta中指定 id_column 和 name_column
         """
         msgid_dict = {}
         for table in tables:
@@ -163,46 +164,53 @@ class TableLinker:
             headers_text = ' '.join(headers)
             meta = table.get('meta', {})
             
-            # 识别消息ID表：
-            # 旧格式：含"消息ID"且含"信息内容"
-            # 新格式：含"ID序号"且含"ID定义"
-            is_old_format = ('消息ID' in headers_text or '消息标识' in headers_text) and '信息内容' in headers_text
-            is_new_format = 'ID序号' in headers_text and 'ID定义' in headers_text
+            # 优先使用 meta 中的列角色信息（来自配置匹配或智能识别）
+            col_content = None
+            col_id = None
             
-            if not (is_old_format or is_new_format):
-                continue
-            
-            # 根据格式确定列角色
-            if is_new_format:
-                # 新格式：ID序号为id_value，ID定义为message_name
-                col_content = None  # ID定义
-                col_id = None       # ID序号
-                for idx, h in enumerate(headers):
-                    if 'ID定义' in h:
-                        col_content = idx
-                    elif 'ID序号' in h:
-                        col_id = idx
-            else:
-                # 旧格式：信息内容为message_name，消息ID为id_value
-                col_content = None  # 信息内容
-                col_id = None       # 消息ID
-                for idx, h in enumerate(headers):
-                    if '信息内容' in h:
-                        col_content = idx
-                    elif '消息ID' in h or '消息标识' in h:
-                        col_id = idx
-            
-            # 也可以从meta中获取列角色信息
-            if col_content is None and 'name_column' in meta:
+            if 'name_column' in meta:
                 try:
                     col_content = headers.index(meta['name_column'])
                 except ValueError:
-                    pass
-            if col_id is None and 'id_column' in meta:
+                    # 尝试子串匹配
+                    for idx, h in enumerate(headers):
+                        if meta['name_column'] in h or h in meta['name_column']:
+                            col_content = idx
+                            break
+            
+            if 'id_column' in meta:
                 try:
                     col_id = headers.index(meta['id_column'])
                 except ValueError:
-                    pass
+                    for idx, h in enumerate(headers):
+                        if meta['id_column'] in h or h in meta['id_column']:
+                            col_id = idx
+                            break
+            
+            # 如果 meta 未指定列角色，按表头特征识别
+            if col_content is None or col_id is None:
+                # 识别消息ID表类型
+                is_old_format = ('消息ID' in headers_text or '消息标识' in headers_text) and '信息内容' in headers_text
+                is_new_format = 'ID序号' in headers_text and 'ID定义' in headers_text
+                is_generic_id = 'ID' in headers_text and ('定义' in headers_text or '名称' in headers_text)
+                
+                if not (is_old_format or is_new_format or is_generic_id):
+                    # 兼容：table_type 标记为 message_id 的表格也尝试解析
+                    if table.get('table_type') != 'message_id':
+                        continue
+                
+                # 根据格式确定列角色
+                if col_content is None:
+                    for idx, h in enumerate(headers):
+                        if '信息内容' in h or 'ID定义' in h or '名称' in h:
+                            col_content = idx
+                            break
+                
+                if col_id is None:
+                    for idx, h in enumerate(headers):
+                        if '消息ID' in h or 'ID序号' in h or '消息标识' in h or 'ID' in h:
+                            col_id = idx
+                            break
             
             if col_content is None or col_id is None:
                 continue

@@ -248,26 +248,41 @@ def _extract_name_from_para(para_text: str) -> str:
 def _parse_aggregate_meta(text: str) -> Dict:
     """
     解析聚合式消息元数据字符串。
-    如 'BCRT1-SA0-模式码0x03' → {信源机器码:'BC', 信宿机器码:'1', 子地址:'0', 数据段长度:'3'}
+    支持两种格式：
+    - BCRT格式: 'BCRT1-SA0-模式码0x03' → {信源机器码:'BC', 信宿机器码:'1', 子地址:'0', 数据段长度:'3'}
+    - RT-SA格式: 'RT13-SA15-8BC' → {信源机器码:'13', 子地址:'15', 数据段长度:'8', 信宿机器码:'BC'}
     """
     meta = {}
-    # 信源机器码 BC，信宿机器码 RT后的数字
+    # 格式1: BCRT（信源机器码 BC，信宿机器码 RT后的数字）
     m = re.search(r'(BC)\s*(?:→|->)?\s*RT\s*(\w+)', text, re.IGNORECASE)
     if m:
         meta['信源机器码'] = 'BC'
         meta['信宿机器码'] = m.group(2)
-    # 子地址 SA0
-    m = re.search(r'SA\s*(\d+)', text, re.IGNORECASE)
-    if m:
-        meta['子地址'] = m.group(1)
-    # 数据段长度（模式码0x03）
-    m = re.search(r'模式码\s*(0x[0-9A-Fa-f]+|\d+)', text)
-    if m:
-        val = m.group(1)
-        if val.upper().startswith('0X'):
-            meta['数据段长度'] = str(int(val, 16))
-        else:
-            meta['数据段长度'] = val
+
+    # 格式2: RT-SA（信源机器码 RT后的数字，信宿机器码 末尾的字母）
+    # 示例: RT13-SA15-8BC 或 RT13-SA16-29→BC → 信源机器码=13, 子地址=15/16, 数据段长度=8/29, 信宿机器码=BC
+    if '信源机器码' not in meta:
+        m = re.search(r'RT(\d+)[-_]?SA(\d+)[-_]?(\d+)(?:→|->)?([A-Za-z]{2})', text, re.IGNORECASE)
+        if m:
+            meta['信源机器码'] = m.group(1)
+            meta['子地址'] = m.group(2)
+            meta['数据段长度'] = m.group(3)
+            meta['信宿机器码'] = m.group(4).upper()
+
+    # 子地址 SA0（仅在格式2未设置时提取）
+    if '子地址' not in meta:
+        m = re.search(r'SA\s*(\d+)', text, re.IGNORECASE)
+        if m:
+            meta['子地址'] = m.group(1)
+    # 数据段长度（模式码0x03，仅在格式2未设置时提取）
+    if '数据段长度' not in meta:
+        m = re.search(r'模式码\s*(0x[0-9A-Fa-f]+|\d+)', text)
+        if m:
+            val = m.group(1)
+            if val.upper().startswith('0X'):
+                meta['数据段长度'] = str(int(val, 16))
+            else:
+                meta['数据段长度'] = val
     return meta
 
 

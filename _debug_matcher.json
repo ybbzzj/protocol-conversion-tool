@@ -1,0 +1,72 @@
+{
+  "序号": {
+    "target": "序号",
+    "confidence": 1,
+    "type": "exact"
+  },
+  "内容": {
+    "target": "内容",
+    "confidence": 1,
+    "type": "exact"
+  },
+  "类型": {
+    "target": "类型",
+    "confidence": 1,
+    "type": "exact"
+  },
+  "值域": {
+    "target": "值域",
+    "confidence": 1,
+    "type": "exact"
+  },
+  "单位": {
+    "target": "单位",
+    "confidence": 1,
+    "type": "exact"
+  },
+  "数据处理方法": {
+    "target": "备注",
+    "confidence": 0.954,
+    "type": "exact"
+  },
+  "参数": {
+    "target": "参数",
+    "confidence": 1,
+    "type": "exact"
+  },
+  "数据类型": {
+    "target": "数据类型",
+    "confidence": 1,
+    "type": "exact"
+  },
+  "数据长度（字节）": {
+    "target": "长度",
+    "confidence": 0.9,
+    "type": "exact"
+  },
+  "备注": {
+    "target": "备注",
+    "confidence": 1,
+    "type": "exact"
+  },
+  "说明": {
+    "target": "备注",
+    "confidence": 0.95,
+    "type": "exact"
+  },
+  "数据处理": {
+    "target": null,
+    "confidence": 0.0,
+    "type": "unmatched"
+  },
+  "数据转换方法": {
+    "target": null,
+    "confidence": 0.0,
+    "type": "unmatched"
+  },
+  "转换公式": {
+    "target": "转换公式",
+    "confidence": 1.0,
+    "type": "semantic"
+  }
+}

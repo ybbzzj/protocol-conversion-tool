@@ -1,6 +1,6 @@
 {
-  "file": "7723e94c-f32c-40a6-a094-90482b42c528_混合模式协议(公开)(1).docx",
-  "timestamp": "2026-06-20T00:32:17.739917",
+  "file": "d59caaf6-9269-4e95-877c-6339c4794aea_v2_case_10_id_format_frame_id_frame_define.docx",
+  "timestamp": "2026-06-20T21:04:16.452781",
   "total_tables": 7,
   "tables": [
     {
@@ -320,9 +320,7 @@
         "备注"
       ],
       "data_rows_count": 3,
-      "meta": {
-        "消息ID": "0x0301"
-      },
+      "meta": {},
       "data_rows": [
         {
           "序号": "",

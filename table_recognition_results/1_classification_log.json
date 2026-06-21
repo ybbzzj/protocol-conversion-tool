@@ -1,0 +1,203 @@
+{
+  "file": "3813a656-d7ad-41bb-8523-dedf0d25f7ec_v2_case_14_invalid_id_but_fields_keep.docx",
+  "timestamp": "2026-06-21T16:54:01.989953",
+  "total_tables_scanned": 28,
+  "decisions": [
+    {
+      "table_index": 0,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 1,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 2,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 3,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 4,
+      "status": "智能识别",
+      "reason": "端口分配表",
+      "table_type": "port_allocation",
+      "msg_name": null
+    },
+    {
+      "table_index": 5,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 6,
+      "status": "配置匹配",
+      "reason": "命中配置: message_id",
+      "table_type": "message_id",
+      "msg_name": null
+    },
+    {
+      "table_index": 7,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 8,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 9,
+      "status": "配置匹配",
+      "reason": "命中配置: message_id",
+      "table_type": "message_id",
+      "msg_name": null
+    },
+    {
+      "table_index": 10,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 11,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 12,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 13,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 14,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 15,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 16,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 17,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 18,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 19,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 20,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 21,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 22,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 23,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 24,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    },
+    {
+      "table_index": 25,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 26,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null
+    },
+    {
+      "table_index": 27,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null
+    }
+  ]
+}

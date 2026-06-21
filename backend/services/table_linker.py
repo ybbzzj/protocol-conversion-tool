@@ -193,11 +193,10 @@ class TableLinker:
                 is_old_format = ('消息ID' in headers_text or '消息标识' in headers_text) and '信息内容' in headers_text
                 is_new_format = 'ID序号' in headers_text and 'ID定义' in headers_text
                 is_generic_id = 'ID' in headers_text and ('定义' in headers_text or '名称' in headers_text)
+                is_marked = table.get('table_type') == 'message_id'
                 
-                if not (is_old_format or is_new_format or is_generic_id):
-                    # 兼容：table_type 标记为 message_id 的表格也尝试解析
-                    if table.get('table_type') != 'message_id':
-                        continue
+                if not (is_old_format or is_new_format or is_generic_id or is_marked):
+                    continue
                 
                 # 根据格式确定列角色
                 if col_content is None:
@@ -211,6 +210,24 @@ class TableLinker:
                         if '消息ID' in h or 'ID序号' in h or '消息标识' in h or 'ID' in h:
                             col_id = idx
                             break
+            
+            # 如果关键词匹配也失败了，用数据模式推断（针对 message_id 类型的表）
+            if (col_content is None or col_id is None) and table.get('table_type') == 'message_id' and data_rows:
+                import re as _re
+                sample_rows = data_rows[:min(5, len(data_rows))]
+                for idx, h in enumerate(headers):
+                    if idx == col_id or idx == col_content:
+                        continue
+                    vals = [r.get(h, '') for r in sample_rows if r.get(h)]
+                    if not vals:
+                        continue
+                    hex_count = sum(1 for v in vals if _re.match(r'^0x[0-9A-Fa-f]+$', str(v).strip()))
+                    num_count = sum(1 for v in vals if _re.match(r'^\d+$', str(v).strip()))
+                    if hex_count > len(vals) / 2 or num_count > len(vals) / 2:
+                        col_id = idx
+                    else:
+                        if col_content is None and str(vals[0]).strip() and str(vals[0]).strip() not in ('—', '-', ''):
+                            col_content = idx
             
             if col_content is None or col_id is None:
                 continue

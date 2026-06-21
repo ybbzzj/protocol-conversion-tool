@@ -697,36 +697,57 @@ class TableDetector:
         """
         消息ID表配置匹配。
         
-        匹配条件（按优先级）：
-        1. 有列角色配置时：角色字段在表头中出现即匹配（纯配置驱动）
-        2. 有 _id_field_names 时：标记字段在表头中出现即匹配
+        匹配策略：
+        1. 有列角色时：所有角色字段必须在表头中命中（精确匹配）
+        2. 有 _id_field_names 时：至少 60% 的标记字段必须在表头中命中
         3. 回退：硬编码ID关键词集合（仅未标记 isIdField 时）
         """
         config = config or {}
         
-        # 纯配置驱动：有列角色时，角色字段命中表头即成功
+        def _field_in_headers(field_name: str) -> bool:
+            """检查字段名是否精确出现在表头中"""
+            if not field_name:
+                return False
+            # 精确匹配：字段名完全等于某个表头
+            if field_name in header_fields:
+                return True
+            # 宽松精确：字段名包含某个表头或反之（但要长度接近）
+            for hf in header_fields:
+                if len(hf) >= 2 and len(field_name) >= 2:
+                    if field_name == hf:
+                        return True
+                    # 子串匹配但要求长度比 > 0.5（避免单字匹配）
+                    if field_name in hf and len(field_name) / len(hf) > 0.5:
+                        return True
+                    if hf in field_name and len(hf) / len(field_name) > 0.5:
+                        return True
+            return False
+        
+        # ── 策略1：列角色全部命中 ────────────────────────────────
         if column_roles:
+            all_roles_match = True
             for role, field_name in column_roles.items():
                 if isinstance(field_name, str) and field_name:
-                    if field_name in headers_text:
-                        return True
-                    if any(field_name in hf or hf in field_name for hf in header_fields):
-                        return True
+                    if not _field_in_headers(field_name):
+                        all_roles_match = False
+                        break
                 elif isinstance(field_name, list):
-                    if any(f in headers_text for f in field_name):
-                        return True
+                    if not any(_field_in_headers(f) for f in field_name):
+                        all_roles_match = False
+                        break
+            if all_roles_match:
+                return True
         
-        # 有 id_field_names 配置时：标记字段命中表头即成功
+        # ── 策略2：标记字段至少 60% 命中 ──────────────────────────
         id_field_names = config.get('_id_field_names', [])
         if id_field_names:
-            for f in id_field_names:
-                if f in headers_text:
-                    return True
-                if any(f in hf or hf in f for hf in header_fields):
-                    return True
+            match_count = sum(1 for f in id_field_names if _field_in_headers(f))
+            match_ratio = match_count / len(id_field_names)
+            if match_ratio >= 0.6:
+                return True
         
-        # 回退：硬编码集合（仅未标记 isIdField 时使用）
-        id_field_candidates = ['消息ID', 'ID序号', 'ID定义', '消息标识', 'ID']
+        # ── 回退：硬编码集合（仅未标记 isIdField 时使用）────────
+        id_field_candidates = ['消息ID', 'ID序号', 'ID定义', '消息标识']
         return any(c in headers_text for c in id_field_candidates)
     
     def _log_table_status(self, t_idx, status, reason, table_type=None, msg_name=None):
@@ -856,12 +877,13 @@ class TableDetector:
         # 旧格式：消息ID + 信息内容
         # 新格式：ID序号 + ID定义 + 是否有数据（ID序号为id_value，ID定义为message_name）
         # 配置驱动：column_roles 指定 id_value 和 message_name 对应的列名
+        row0_text_lower = row0_text.lower()
         has_message_id = '消息ID' in row0_text
         has_info_content = '信息内容' in row0_text
-        has_id_seq = 'ID序号' in row0_text or ('序号' in row0_text and 'ID' in row0_text)
+        has_id_seq = 'ID序号' in row0_text or ('序号' in row0_text and 'id' in row0_text_lower)
         has_id_def = 'ID定义' in row0_text
-        # 智能识别回退（仅当配置未匹配时到达此处）：含"ID"和"定义/名称"等组合
-        has_generic_id = 'ID' in row0_text and ('定义' in row0_text or '名称' in row0_text)
+        # 智能识别回退（仅当配置未匹配时到达此处）：含“id”和“定义/名称”等组合
+        has_generic_id = 'id' in row0_text_lower and ('定义' in row0_text or '名称' in row0_text)
         
         # 从配置中获取ID表列角色提示
         config_id_roles = {}
@@ -965,10 +987,10 @@ class TableDetector:
             # 第一轮：关键词匹配（向后兼容）
             for header in headers:
                 if 'name_column' not in meta:
-                    if '定义' in header or header == '信息内容' or ('名称' in header and 'ID' not in header):
+                    if '定义' in header or header == '信息内容' or ('名称' in header and 'id' not in header.lower()):
                         meta['name_column'] = header
                 if 'id_column' not in meta:
-                    if ('ID' in header or 'id' in header.lower()) and '定义' not in header:
+                    if ('id' in header.lower()) and '定义' not in header and '说明' not in header:
                         meta['id_column'] = header
         
         # 第二轮：数据模式推断（关键词全都不匹配时，分析实际数据）
@@ -1454,3 +1476,18 @@ class DocumentParser:
             print(f"[INFO] 关联表格已保存: {linked_file}")
         except Exception as e:
             print(f"[ERROR] 保存关联表格失败: {e}")
+        
+        # ── 5. latest_recognition.json（综合摘要，兼容旧格式）────────
+        latest_file = os.path.join(output_dir, 'latest_recognition.json')
+        latest_data = {
+            'file': basename,
+            'timestamp': datetime.now().isoformat(),
+            'total_tables': len(linked_tables),
+            'tables': linked_data['tables']
+        }
+        try:
+            with open(latest_file, 'w', encoding='utf-8') as f:
+                json.dump(latest_data, f, ensure_ascii=False, indent=2)
+            print(f"[INFO] 综合摘要已保存: {latest_file}")
+        except Exception as e:
+            print(f"[ERROR] 保存综合摘要失败: {e}")

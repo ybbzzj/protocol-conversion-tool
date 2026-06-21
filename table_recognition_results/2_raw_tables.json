@@ -1,12 +1,267 @@
 {
   "file": "3813a656-d7ad-41bb-8523-dedf0d25f7ec_v2_case_14_invalid_id_but_fields_keep.docx",
-  "timestamp": "2026-06-21T16:54:02.007054",
-  "total_tables": 7,
+  "timestamp": "2026-06-21T16:54:02.002474",
+  "total_tables": 28,
   "tables": [
+    {
+      "index": 0,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 1,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 2,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 3,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 4,
+      "msg_name": "端口分配表",
+      "table_type": "port_allocation",
+      "is_auxiliary": true,
+      "headers": [
+        "序号",
+        "信源",
+        "信宿",
+        "信息内容",
+        "接收组播地址",
+        "接收端口号",
+        "信源系统码",
+        "信源机器码",
+        "信宿系统码",
+        "信宿机器码"
+      ],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 5,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 6,
+      "msg_name": "消息ID表",
+      "table_type": "message_id",
+      "is_auxiliary": true,
+      "headers": [
+        "序号",
+        "信源",
+        "信宿",
+        "信息内容",
+        "消息ID"
+      ],
+      "data_rows_count": 10,
+      "meta": {
+        "id_column": "编号",
+        "name_column": "定义说明"
+      },
+      "data_rows": [
+        {
+          "序号": "",
+          "信源": "",
+          "信宿": "",
+          "信息内容": "XX装置数据1",
+          "消息ID": "0x8000"
+        },
+        {
+          "序号": "",
+          "信源": "",
+          "信宿": "",
+          "信息内容": "测试数据2",
+          "消息ID": "0x8001"
+        },
+        {
+          "序号": "",
+          "信源": "",
+          "信宿": "",
+          "信息内容": "",
+          "消息ID": "0x8002"
+        },
+        {
+          "序号": "",
+          "信源": "",
+          "信宿": "",
+          "信息内容": "",
+          "消息ID": "0x8003"
+        },
+        {
+          "序号": "",
+          "信源": "",
+          "信宿": "",
+          "信息内容": "",
+          "消息ID": "0x8004"
+        },
+        {
+          "序号": "",
+          "信源": "",
+          "信宿": "",
+          "信息内容": "",
+          "消息ID": "0x8005"
+        },
+        {
+          "序号": "",
+          "信源": "",
+          "信宿": "",
+          "信息内容": "",
+          "消息ID": "0x8006"
+        },
+        {
+          "序号": "",
+          "信源": "",
+          "信宿": "",
+          "信息内容": "",
+          "消息ID": "0x8007"
+        },
+        {
+          "序号": "",
+          "信源": "",
+          "信宿": "",
+          "信息内容": "",
+          "消息ID": "0x8008"
+        },
+        {
+          "序号": "",
+          "信源": "",
+          "信宿": "",
+          "信息内容": "",
+          "消息ID": "0x8009"
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 8,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 9,
+      "msg_name": "消息ID表",
+      "table_type": "message_id",
+      "is_auxiliary": true,
+      "headers": [
+        "编号",
+        "定义说明",
+        "是否携带"
+      ],
+      "data_rows_count": 3,
+      "meta": {
+        "id_column": "编号",
+        "name_column": "定义说明"
+      },
+      "data_rows": [
+        {
+          "编号": "0x0301",
+          "定义说明": "XX装置仿真输入数据",
+          "是否携带": "是"
+        },
+        {
+          "编号": "0x0302",
+          "定义说明": "",
+          "是否携带": "是"
+        },
+        {
+          "编号": "0x0A01",
+          "定义说明": "",
+          "是否携带": "是"
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 11,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 12,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 13,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
     {
       "index": 14,
       "msg_name": "自检结果",
       "table_type": "field_def",
+      "is_auxiliary": false,
       "headers": [
         "序号",
         "内容",
@@ -24,7 +279,6 @@
         "信宿机器码": "BC",
         "错误处理": "-"
       },
-      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",
@@ -56,6 +310,7 @@
       "index": 15,
       "msg_name": "测试结果",
       "table_type": "field_def",
+      "is_auxiliary": false,
       "headers": [
         "序号",
         "内容",
@@ -73,7 +328,6 @@
         "信宿机器码": "BC",
         "错误处理": "-"
       },
-      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",
@@ -94,9 +348,20 @@
       ]
     },
     {
+      "index": 16,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
       "index": 17,
       "msg_name": "测量数据",
       "table_type": "field_def",
+      "is_auxiliary": false,
       "headers": [
         "序号",
         "内容",
@@ -115,7 +380,6 @@
         "发起时机": "上电后",
         "错误处理": "-"
       },
-      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",
@@ -147,6 +411,7 @@
       "index": 18,
       "msg_name": "运行状态数据",
       "table_type": "field_def",
+      "is_auxiliary": false,
       "headers": [
         "序号",
         "内容",
@@ -164,7 +429,6 @@
         "信宿机器码": "BC",
         "错误处理": "-"
       },
-      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",
@@ -201,9 +465,40 @@
       ]
     },
     {
+      "index": 19,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 20,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 21,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
       "index": 22,
       "msg_name": "XX装置数据1",
       "table_type": "field_def",
+      "is_auxiliary": false,
       "headers": [
         "序号",
         "参数",
@@ -214,10 +509,7 @@
         "备注"
       ],
       "data_rows_count": 3,
-      "meta": {
-        "消息ID": "0x8000"
-      },
-      "meta_sources": {},
+      "meta": {},
       "data_rows": [
         {
           "序号": "",
@@ -252,6 +544,7 @@
       "index": 23,
       "msg_name": "测试数据2",
       "table_type": "field_def",
+      "is_auxiliary": false,
       "headers": [
         "序号",
         "参数",
@@ -262,10 +555,7 @@
         "备注"
       ],
       "data_rows_count": 4,
-      "meta": {
-        "消息ID": "0x8001"
-      },
-      "meta_sources": {},
+      "meta": {},
       "data_rows": [
         {
           "序号": "",
@@ -306,9 +596,30 @@
       ]
     },
     {
+      "index": 24,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
+      "index": 25,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
+    },
+    {
       "index": 26,
       "msg_name": "XX装置仿真输入数据",
       "table_type": "field_def",
+      "is_auxiliary": false,
       "headers": [
         "序号",
         "参数",
@@ -319,10 +630,7 @@
         "备注"
       ],
       "data_rows_count": 3,
-      "meta": {
-        "消息ID": "0x0301"
-      },
-      "meta_sources": {},
+      "meta": {},
       "data_rows": [
         {
           "序号": "",
@@ -352,6 +660,16 @@
           "备注": "注1：。 注2：。"
         }
       ]
+    },
+    {
+      "index": 27,
+      "msg_name": "",
+      "table_type": "skip",
+      "is_auxiliary": false,
+      "headers": [],
+      "data_rows_count": 0,
+      "meta": {},
+      "data_rows": []
     }
   ]
 }

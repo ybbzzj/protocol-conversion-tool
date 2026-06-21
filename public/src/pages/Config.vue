@@ -18,10 +18,10 @@
         <div class="row">
           <input class="input" v-model="pfName" placeholder="字段名" />
           <button class="btn" @click="addProtocolField(false)">新增</button>
-          <button class="btn" style="background:#e67e22;color:#fff" @click="addProtocolField(true)">新增ID字段</button>
+          <button class="btn" style="background:#e67e22;color:#fff" @click="addProtocolField(true)">新增ID</button>
           <button class="btn secondary" @click="refreshProtocolFields">刷新</button>
         </div>
-        <p class="hint">“新增ID字段”用于添加属于“消息ID定义表”的列（如帧ID、帧定义、ID序号等），系统会自动识别为ID表。</p>
+        <p class="hint">“新增ID”用于添加属于“消息ID定义表”的列（如帧ID、帧定义、ID序号等），系统会自动识别为ID表。</p>
         <table class="table">
           <thead><tr><th>名称</th><th style="width:90px">ID表头</th><th>操作</th></tr></thead>
           <tbody>
@@ -103,7 +103,7 @@ function addProtocolField(isId: boolean = false){
   saveToLS(LS_PROTOCOL_FIELDS, items)
   pfName.value=''
   refreshProtocolFields()
-  toast.show(isId ? '已新增ID字段字段' : '已新增协议字段')
+  toast.show(isId ? '已新增ID字段' : '已新增协议字段')
 }
 function saveProtocolField(item: FieldItem){
   const items = loadFromLS(LS_PROTOCOL_FIELDS).map(x=> x.id===item.id ? { ...x, name:item.name.trim(), isIdField: !!item.isIdField } : x)

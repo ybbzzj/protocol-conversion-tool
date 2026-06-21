@@ -1,0 +1,91 @@
+{
+  "test1_frame_id": {
+    "matched_type": "message_id",
+    "column_roles": {
+      "id_value": "帧ID",
+      "message_name": "帧定义"
+    }
+  },
+  "test2_new_id_field": {
+    "matched_type": "message_id",
+    "column_roles": {
+      "id_value": "数据帧ID",
+      "message_name": "数据帧定义"
+    }
+  },
+  "test3_id_number": {
+    "matched_type": "message_id",
+    "column_roles": {
+      "id_value": "ID号"
+    }
+  },
+  "test4_existing_format": {
+    "matched_type": "message_id",
+    "column_roles": {
+      "id_value": "消息ID",
+      "message_name": "信息内容"
+    }
+  },
+  "test5_id_seq_format": {
+    "matched_type": "message_id",
+    "column_roles": {
+      "id_value": "ID序号",
+      "message_name": "ID定义"
+    }
+  },
+  "test6_normal_field_def": {
+    "matched_type": "field_def"
+  },
+  "test7_column_roles": [
+    {
+      "headers": [
+        "帧ID",
+        "帧定义",
+        "是否带数据"
+      ],
+      "expected_id": "帧ID",
+      "expected_name": "帧定义",
+      "actual_id": "帧ID",
+      "actual_name": "帧定义",
+      "id_ok": true,
+      "name_ok": true
+    },
+    {
+      "headers": [
+        "消息ID",
+        "信息内容"
+      ],
+      "expected_id": "消息ID",
+      "expected_name": "信息内容",
+      "actual_id": "消息ID",
+      "actual_name": "信息内容",
+      "id_ok": true,
+      "name_ok": true
+    },
+    {
+      "headers": [
+        "ID序号",
+        "ID定义",
+        "是否有数据"
+      ],
+      "expected_id": "ID序号",
+      "expected_name": "ID定义",
+      "actual_id": "ID序号",
+      "actual_name": "ID定义",
+      "id_ok": true,
+      "name_ok": true
+    },
+    {
+      "headers": [
+        "数据帧ID",
+        "数据帧定义"
+      ],
+      "expected_id": "数据帧ID",
+      "expected_name": "数据帧定义",
+      "actual_id": "数据帧ID",
+      "actual_name": "数据帧定义",
+      "id_ok": true,
+      "name_ok": true
+    }
+  ]
+}

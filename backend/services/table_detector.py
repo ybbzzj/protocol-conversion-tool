@@ -29,7 +29,7 @@ DATA_TYPE_KEYWORDS = {
 NOISE_PARA_MARKERS = ['干扰表格', '测试用', '不需要提取']
 
 # 干扰表格表头关键词
-NOISE_HEADER_KEYWORDS = ['测试指令', '是否带数据', '周期']
+NOISE_HEADER_KEYWORDS = ['测试指令']
 
 # 示例/目标格式表标志（首行包含这些列名，说明是示例表，跳过）
 EXAMPLE_TABLE_HEADERS = {'名称', '信源系统码', '内容', '转换类型', '判读公式'}
@@ -480,23 +480,28 @@ class TableDetector:
             elif 'table_type' in config:
                 configs.append(config)
             elif 'fields' in config or 'field_names' in config:
-                # dict 格式但只有字段名列表
+                # dict 格式：字段名列表 + 可选的 ID 表头字段标记
                 fields = config.get('fields', config.get('field_names', []))
+                id_field_names = config.get('id_field_names', [])
                 if fields and isinstance(fields, list):
-                    inferred = self._infer_config_from_fields(fields)
+                    inferred = self._infer_config_from_fields(fields, id_field_names)
                     configs.extend(inferred)
         
         return configs
     
-    def _infer_config_from_fields(self, field_names: List[str]) -> List[Dict]:
+    def _infer_config_from_fields(self, field_names: List[str], id_field_names: List[str] = None) -> List[Dict]:
         """
         根据平铺字段名列表推断表格配置。
         
         推断规则：
         - 如果字段名中包含内容字段（参数/内容/信号名称等）+ 类型字段（数据类型/类型/数据长度等）
           → 推断为 field_def 表
-        - 如果字段名中包含 ID 相关字段（消息ID/ID序号/ID定义等）
-          → 推断为 message_id 表
+        - 如果用户通过 id_field_names 显式标记了 ID 表字段 → 使用标记创建 message_id 配置
+        - 否则回退到严格模式匹配（硬编码集合）
+        
+        Args:
+            field_names: 所有协议字段名列表
+            id_field_names: 用户在配置页标记为“ID表头”的字段名列表
         
         Returns:
             推断出的配置列表
@@ -508,15 +513,18 @@ class TableDetector:
         # 类型字段候选（包含"长度"类字段，如"数据长度"、"数据长度（字节）"）
         type_candidates = {'数据类型', '类型', '数据格式'}
         length_candidates = {'数据长度', '字节数', '字节', '长度', '数据长度（字节）'}
-        # ID 相关字段候选
-        id_candidates = {'消息ID', 'ID序号', '消息标识', 'ID定义', 'ID'}
+        # ID 表检测：优先使用用户显式标记，否则严格模式匹配
+        id_field_names = id_field_names or []
+        has_explicit_id = len(id_field_names) > 0
+        
+        # 严格回退：只在无显式标记时使用硬编码集合
+        id_candidates_strict = {'消息ID', 'ID序号', '消息标识', 'ID定义', 'ID'}
+        has_id = has_explicit_id or bool(set(field_names) & id_candidates_strict)
         
         field_set = set(field_names)
-        
         has_content = bool(field_set & content_candidates)
         has_type = bool(field_set & type_candidates)
         has_length = bool(field_set & length_candidates)
-        has_id = bool(field_set & id_candidates)
         
         # 推断字段定义表
         if has_content and (has_type or has_length):
@@ -529,18 +537,29 @@ class TableDetector:
         
         # 推断消息ID表
         if has_id:
-            # 确定列角色
+            # 列角色推断
             roles = {}
-            for f in field_names:
-                if 'ID序号' in f or '消息ID' in f or '消息标识' in f:
-                    roles['id_value'] = f
-                elif 'ID定义' in f or '信息内容' in f:
-                    roles['message_name'] = f
+            if has_explicit_id:
+                # ── 纯配置驱动：不依赖任何硬编码关键词 ──
+                # 按位置分配角色：第1个字段→id_value，第2个→message_name
+                for i, f in enumerate(id_field_names):
+                    if i == 0:
+                        roles['id_value'] = f
+                    elif i == 1:
+                        roles['message_name'] = f
+            else:
+                # ── 严格回退：用硬编码关键词（仅当用户未标记 isIdField 时）──
+                for f in field_names:
+                    if '定义' in f or f == '信息内容' or ('名称' in f and 'ID' not in f):
+                        roles['message_name'] = f
+                    elif 'ID' in f or 'id' in f.lower():
+                        roles['id_value'] = f
             configs.append({
                 'table_type': 'message_id',
                 'required_fields': field_names,
                 'column_roles': roles,
                 '_inferred': True,
+                '_id_field_names': id_field_names if has_explicit_id else [],
             })
         
         # 如果没有推断出任何类型，创建一个通用字段表配置（宽松匹配）
@@ -594,7 +613,7 @@ class TableDetector:
             
             # ── ID表配置匹配 ──────────────────────────────────────────────
             elif table_type == 'message_id':
-                matched = self._match_message_id_config(headers_text, header_fields, required_fields, column_roles)
+                matched = self._match_message_id_config(headers_text, header_fields, required_fields, column_roles, config)
                 if not matched:
                     continue
             
@@ -673,33 +692,42 @@ class TableDetector:
         return True
     
     def _match_message_id_config(self, headers_text: str, header_fields: List[str],
-                                  required_fields: List[str], column_roles: Dict) -> bool:
+                                  required_fields: List[str], column_roles: Dict,
+                                  config: Dict = None) -> bool:
         """
         消息ID表配置匹配。
         
-        匹配条件：
-        1. 表头包含ID相关字段（消息ID/ID序号/ID定义等）
-        2. 如果有column_roles，则按角色匹配
+        匹配条件（按优先级）：
+        1. 有列角色配置时：角色字段在表头中出现即匹配（纯配置驱动）
+        2. 有 _id_field_names 时：标记字段在表头中出现即匹配
+        3. 回退：硬编码ID关键词集合（仅未标记 isIdField 时）
         """
-        # 检查ID相关字段
-        id_field_candidates = ['消息ID', 'ID序号', 'ID定义', '消息标识', 'ID']
-        has_id_field = any(c in headers_text for c in id_field_candidates)
-        if not has_id_field:
-            return False
+        config = config or {}
         
-        # 如果有列角色配置，检查角色匹配
+        # 纯配置驱动：有列角色时，角色字段命中表头即成功
         if column_roles:
             for role, field_name in column_roles.items():
                 if isinstance(field_name, str) and field_name:
-                    if field_name not in headers_text:
-                        # 尝试子串匹配
-                        if not any(field_name in hf or hf in field_name for hf in header_fields):
-                            return False
+                    if field_name in headers_text:
+                        return True
+                    if any(field_name in hf or hf in field_name for hf in header_fields):
+                        return True
                 elif isinstance(field_name, list):
-                    if not any(f in headers_text for f in field_name):
-                        return False
+                    if any(f in headers_text for f in field_name):
+                        return True
         
-        return True
+        # 有 id_field_names 配置时：标记字段命中表头即成功
+        id_field_names = config.get('_id_field_names', [])
+        if id_field_names:
+            for f in id_field_names:
+                if f in headers_text:
+                    return True
+                if any(f in hf or hf in f for hf in header_fields):
+                    return True
+        
+        # 回退：硬编码集合（仅未标记 isIdField 时使用）
+        id_field_candidates = ['消息ID', 'ID序号', 'ID定义', '消息标识', 'ID']
+        return any(c in headers_text for c in id_field_candidates)
     
     def _log_table_status(self, t_idx, status, reason, table_type=None, msg_name=None):
         """记录表格识别状态日志"""
@@ -832,7 +860,7 @@ class TableDetector:
         has_info_content = '信息内容' in row0_text
         has_id_seq = 'ID序号' in row0_text or ('序号' in row0_text and 'ID' in row0_text)
         has_id_def = 'ID定义' in row0_text
-        # 扩展ID识别：含"ID"和"定义/名称"等组合
+        # 智能识别回退（仅当配置未匹配时到达此处）：含"ID"和"定义/名称"等组合
         has_generic_id = 'ID' in row0_text and ('定义' in row0_text or '名称' in row0_text)
         
         # 从配置中获取ID表列角色提示
@@ -932,14 +960,35 @@ class TableDetector:
             if name_col:
                 meta['name_column'] = name_col
         
-        # ── 如果配置未指定，则智能识别列角色 ──────────────────────────────
+        # ── 如果配置未指定，先用关键词尝试，再回退到数据模式推断 ───
         if 'id_column' not in meta or 'name_column' not in meta:
+            # 第一轮：关键词匹配（向后兼容）
             for header in headers:
-                if 'id_column' not in meta:
-                    if '消息ID' in header or 'ID序号' in header or '消息标识' in header:
-                        meta['id_column'] = header
                 if 'name_column' not in meta:
-                    if '信息内容' in header or 'ID定义' in header or '名称' in header:
+                    if '定义' in header or header == '信息内容' or ('名称' in header and 'ID' not in header):
+                        meta['name_column'] = header
+                if 'id_column' not in meta:
+                    if ('ID' in header or 'id' in header.lower()) and '定义' not in header:
+                        meta['id_column'] = header
+        
+        # 第二轮：数据模式推断（关键词全都不匹配时，分析实际数据）
+        if ('id_column' not in meta or 'name_column' not in meta) and data_rows:
+            import re as _re
+            sample_rows = data_rows[:min(5, len(data_rows))]
+            for i, header in enumerate(headers):
+                if header in meta.values():
+                    continue
+                vals = [r.get(header, '') for r in sample_rows if r.get(header)]
+                if not vals:
+                    continue
+                # 超过一半的值像 ID（0x开头或纯数字）→ id_column
+                hex_count = sum(1 for v in vals if _re.match(r'^0x[0-9A-Fa-f]+$', str(v).strip()))
+                num_count = sum(1 for v in vals if _re.match(r'^\d+$', str(v).strip()))
+                if hex_count > len(vals) / 2 or num_count > len(vals) / 2:
+                    if 'id_column' not in meta:
+                        meta['id_column'] = header
+                else:
+                    if 'name_column' not in meta:
                         meta['name_column'] = header
         
         return {
@@ -1319,44 +1368,89 @@ class DocumentParser:
         return {'tables': linked_tables, 'tables_count': len(linked_tables)}
     
     def _output_recognition_results(self, raw_tables: List[Dict], linked_tables: List[Dict], doc_path: str):
-        """输出表格识别结果为JSON文件（用于调试和验证）"""
+        """输出表格识别结果为JSON文件（包含所有表格类型和分类日志，用于调试和验证）"""
         import json
         import os
         from datetime import datetime
         
-        # 仅保留一份结果
         output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(doc_path))), 'table_recognition_results')
-        os.makedirs(output_dir, exist_ok=True)
-        output_file = os.path.join(output_dir, 'latest_recognition.json')
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            print(f"-> 已创建输出目录: {output_dir}")
         
-        # 构建简化的输出结构
-        result_data = {
-            'file': os.path.basename(doc_path),
+        basename = os.path.basename(doc_path)
+        
+        # ── 1. 分类日志（每个表格的识别决策过程）──────────────────────
+        log_file = os.path.join(output_dir, '1_classification_log.json')
+        log_data = {
+            'file': basename,
             'timestamp': datetime.now().isoformat(),
-            'total_tables': len(linked_tables),
+            'total_tables_scanned': len(self.detector.log_records),
+            'decisions': self.detector.log_records
+        }
+        try:
+            with open(log_file, 'w', encoding='utf-8') as f:
+                json.dump(log_data, f, ensure_ascii=False, indent=2)
+            print(f"[INFO] 分类日志已保存: {log_file}")
+        except Exception as e:
+            print(f"[ERROR] 保存分类日志失败: {e}")
+        
+        # ── 2. 原始识别结果（所有表格，含 ID/端口/bit/field_def/skip）────
+        raw_file = os.path.join(output_dir, '2_raw_tables.json')
+        raw_data = {
+            'file': basename,
+            'timestamp': datetime.now().isoformat(),
+            'total_tables': len(raw_tables),
             'tables': []
         }
-        
-        for idx, table in enumerate(linked_tables):
+        for table in raw_tables:
             table_info = {
                 'index': table.get('index'),
                 'msg_name': table.get('msg_name', ''),
-                'table_type': table.get('table_type', ''),
+                'table_type': table.get('table_type', 'unknown'),
                 'is_auxiliary': table.get('is_auxiliary', False),
                 'headers': table.get('headers', []),
                 'data_rows_count': len(table.get('data_rows', [])),
                 'meta': table.get('meta', {}),
                 'data_rows': [
-                    {k: (str(v)[:100] if v else '') for k, v in row.items() if not str(k).startswith('_')}
-                    for row in table.get('data_rows', [])[:10]  # 仅保留前10行
+                    {k: (str(v)[:120] if v else '') for k, v in row.items() if not str(k).startswith('_')}
+                    for row in table.get('data_rows', [])[:15]
                 ]
             }
-            result_data['tables'].append(table_info)
-        
-        # 写入JSON文件（覆盖旧文件）
+            raw_data['tables'].append(table_info)
         try:
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(result_data, f, ensure_ascii=False, indent=2)
-            print("[INFO] 表格识别结果已保存: {}".format(output_file))
+            with open(raw_file, 'w', encoding='utf-8') as f:
+                json.dump(raw_data, f, ensure_ascii=False, indent=2)
+            print(f"[INFO] 原始表格已保存: {raw_file}")
         except Exception as e:
-            print("[ERROR] 保存识别结果失败: {}".format(e))
+            print(f"[ERROR] 保存原始表格失败: {e}")
+        
+        # ── 3. 关联后结果（仅 field_def，含注入的元数据和 bit 子行）────
+        linked_file = os.path.join(output_dir, '3_linked_tables.json')
+        linked_data = {
+            'file': basename,
+            'timestamp': datetime.now().isoformat(),
+            'total_field_def_tables': len(linked_tables),
+            'tables': []
+        }
+        for table in linked_tables:
+            table_info = {
+                'index': table.get('index'),
+                'msg_name': table.get('msg_name', ''),
+                'table_type': table.get('table_type', ''),
+                'headers': table.get('headers', []),
+                'data_rows_count': len(table.get('data_rows', [])),
+                'meta': table.get('meta', {}),
+                'meta_sources': table.get('meta_sources', {}),
+                'data_rows': [
+                    {k: (str(v)[:120] if v else '') for k, v in row.items() if not str(k).startswith('_')}
+                    for row in table.get('data_rows', [])[:15]
+                ]
+            }
+            linked_data['tables'].append(table_info)
+        try:
+            with open(linked_file, 'w', encoding='utf-8') as f:
+                json.dump(linked_data, f, ensure_ascii=False, indent=2)
+            print(f"[INFO] 关联表格已保存: {linked_file}")
+        except Exception as e:
+            print(f"[ERROR] 保存关联表格失败: {e}")

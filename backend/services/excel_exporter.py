@@ -279,13 +279,40 @@ class ExcelExporter:
                     # 子行：名称为空
                     fill_data['名称'] = ''
 
-                # ── 用户手动映射优先 ──────────────────────────────────────────
-                # _override_cols 中列出的目标列由用户在前端手动映射指定，
-                # 其值取自 row[col]，优先级高于上面写死的启发式（直接覆盖 fill_data）。
+                # ── 用户手动映射（程序计算列条件覆盖，普通列直接覆盖）────
+                # _override_cols 中列出的目标列由用户在前端手动映射指定。
+                # 对判读公式/转换公式：只有当原始值能被标准化器正确解析时才覆盖，
+                # 否则保留程序从正确源列提取并标准化的结果。
                 override_cols = row.get('_override_cols') or []
                 for ocol in override_cols:
-                    if ocol in template_headers and row.get(ocol) not in (None, ''):
-                        fill_data[ocol] = row[ocol]
+                    raw_val = row.get(ocol)
+                    if raw_val in (None, ''):
+                        continue
+                    raw_val = str(raw_val).strip()
+                    if not raw_val or raw_val in ('—', '-'):
+                        continue
+
+                    if ocol == '判读公式':
+                        # 只有当值能被解析为有效范围/枚举时才覆盖
+                        from backend.services.data_cleaner import RangeValueFormatter
+                        formatted_range = RangeValueFormatter().format_range(raw_val)
+                        # 有效范围格式: [数字,数字] 或 {枚举值}
+                        if (re.match(r'^\[[\d\s,xa-fA-F\-]+\]$', formatted_range)
+                                or re.match(r'^\{[^}]+\}$', formatted_range)):
+                            fill_data['判读公式'] = formatted_range
+                        # 否则保留程序从值域列提取的结果
+
+                    elif ocol == '转换公式':
+                        # 只有当值能被解析为有效公式时才覆盖
+                        from backend.services.data_cleaner import FormulaStandardizer
+                        formatted_formula = FormulaStandardizer().standardize(raw_val)
+                        # 有效公式格式: 包含 X（aX+b 形式）
+                        if re.search(r'[\d.]+[xX]', formatted_formula):
+                            fill_data['转换公式'] = formatted_formula
+                        # 否则保留程序从数据处理方法等列提取的结果
+
+                    elif ocol in template_headers:
+                        fill_data[ocol] = raw_val
 
                 self._write_row(ws, current_row, template_headers, fill_data, color_map)
                 current_row += 1

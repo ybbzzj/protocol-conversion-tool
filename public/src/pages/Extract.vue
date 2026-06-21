@@ -83,7 +83,7 @@ import { useRouter } from 'vue-router'
 import { api, endpoints } from '../api'
 import { useToastStore, useLoadingStore } from '../stores/ui'
 
-type FieldItem = { id:string, name:string }
+type FieldItem = { id:string, name:string, isIdField?:boolean }
 type TemplateItem = { id:string, name:string, field_ids:string[] }
 
 const toast = useToastStore()
@@ -245,10 +245,14 @@ async function startExtract(){
     }
     // 同时传字段名：前端字段 id 是本地随机生成的，与后端配置 id 不一致，
     // 期望字段以名称为准，后端优先使用 field_names
-    const idToName = new Map(protocolFields.value.map(f => [f.id, f.name]))
+    const idToField = new Map(protocolFields.value.map(f => [f.id, f]))
     for(const fieldId of selectedFieldIds.value){
-      const name = idToName.get(fieldId)
-      if(name){ fd.append('field_names', name) }
+      const field = idToField.get(fieldId)
+      if(field){
+        fd.append('field_names', field.name)
+        // 如果该字段标记为ID表头，单独发送
+        if(field.isIdField){ fd.append('id_field_names', field.name) }
+      }
     }
     const { data } = await api.post(endpoints.extractStart, fd, { headers:{ 'Content-Type':'multipart/form-data' } })
     currentTaskId.value = data?.data?.task_id || ''

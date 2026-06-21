@@ -79,6 +79,7 @@ def start_extraction():
     
     field_ids = request.form.getlist('field_ids')
     field_names = request.form.getlist('field_names')
+    id_field_names = request.form.getlist('id_field_names')  # 用户标记的ID表头字段
 
     # 输出控制选项：是否删除末尾 CRC 校验字行（默认开启）
     remove_crc = request.form.get('remove_crc', 'true').lower() != 'false'
@@ -95,9 +96,12 @@ def start_extraction():
             table_configs = None
     
     # 如果未传入结构化配置，则使用前端传来的字段名列表作为兜底配置
-    # 这样用户选择的字段组合可以参与表格分类和噪声过滤
+    # 同时附带用户标记的ID表头字段名
     if not table_configs and field_names:
-        table_configs = field_names  # 平铺字段名列表，由 _parse_config 自动推断表格类型
+        table_configs = {
+            'fields': field_names,
+            'id_field_names': id_field_names,  # 用户在配置页标记的ID表字段
+        }
 
     # 加载用户选择的期望字段：优先使用前端直接传来的字段名
     # （前端字段 id 为本地随机生成，与后端配置 id 不一致，无法靠 id 反查名称）
@@ -149,6 +153,46 @@ def start_extraction():
         'expected_fields': expected_fields
     })
 
+def _dump_processed_tables(processed_tables, doc_path):
+    """将字段映射后的 processed_tables 输出为 JSON（调试用）"""
+    import json as _json
+    import os as _os
+    from datetime import datetime as _dt
+    
+    output_dir = _os.path.join(
+        _os.path.dirname(_os.path.dirname(_os.path.dirname(doc_path))),
+        'table_recognition_results'
+    )
+    if not _os.path.exists(output_dir):
+        _os.makedirs(output_dir)
+    
+    out_file = _os.path.join(output_dir, '4_processed_tables.json')
+    data = {
+        'file': _os.path.basename(doc_path),
+        'timestamp': _dt.now().isoformat(),
+        'total_processed_tables': len(processed_tables),
+        'tables': []
+    }
+    for table in processed_tables:
+        table_info = {
+            'msg_name': table.get('msg_name', ''),
+            'table_type': table.get('table_type', ''),
+            'meta': table.get('meta', {}),
+            'data_rows_count': len(table.get('data_rows', [])),
+            'data_rows': [
+                {k: (str(v)[:120] if v else '') for k, v in row.items() if not str(k).startswith('_')}
+                for row in table.get('data_rows', [])[:15]
+            ]
+        }
+        data['tables'].append(table_info)
+    
+    try:
+        with open(out_file, 'w', encoding='utf-8') as f:
+            _json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"[INFO] 处理后表格已保存: {out_file}")
+    except Exception as e:
+        print(f"[ERROR] 保存处理后表格失败: {e}")
+
 
 def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None, table_configs=None):
     """后台线程：执行解析、关联、导出与映射质量计算，并实时更新进度。"""
@@ -174,6 +218,7 @@ def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None,
 
         # 处理表格并导出
         processed_tables = _build_processed_tables(linked_tables)
+        _dump_processed_tables(processed_tables, upload_path)
         tasks_status[task_id]['table_count'] = len(processed_tables)
         tasks_status[task_id]['progress'] = 80
         output_file = _export_processed_tables(processed_tables, task_id)

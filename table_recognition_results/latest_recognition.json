@@ -1,13 +1,12 @@
 {
-  "file": "0c934635-caba-466e-8f29-48dd88fad72f_v2_case_14_invalid_id_but_fields_keep.docx",
-  "timestamp": "2026-06-21T14:38:55.766159",
+  "file": "b87367bf-7942-4ea2-ae7b-1775ce63682c_v2_case_14_invalid_id_but_fields_keep.docx",
+  "timestamp": "2026-06-21T16:46:25.702218",
   "total_tables": 7,
   "tables": [
     {
       "index": 14,
       "msg_name": "自检结果",
       "table_type": "field_def",
-      "is_auxiliary": false,
       "headers": [
         "序号",
         "内容",
@@ -25,6 +24,7 @@
         "信宿机器码": "BC",
         "错误处理": "-"
       },
+      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",
@@ -48,7 +48,7 @@
           "类型": "USHORT",
           "值域": "-",
           "单位": "-",
-          "数据处理方法": "D15：备用，默认填0。\nD14：。0=正常，1=异常。（XX）\nD13：。0=正常，1=异常。（XX）\nD12：0=正常，1=异常。（XX）\nD11：0=正常，1=异常。\nD10：0=正常，1=异常"
+          "数据处理方法": "D15：备用，默认填0。\nD14：。0=正常，1=异常。（XX）\nD13：。0=正常，1=异常。（XX）\nD12：0=正常，1=异常。（XX）\nD11：0=正常，1=异常。\nD10：0=正常，1=异常。\nD9：10=正常，1=异常。\nD8："
         }
       ]
     },
@@ -56,7 +56,6 @@
       "index": 15,
       "msg_name": "测试结果",
       "table_type": "field_def",
-      "is_auxiliary": false,
       "headers": [
         "序号",
         "内容",
@@ -74,6 +73,7 @@
         "信宿机器码": "BC",
         "错误处理": "-"
       },
+      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",
@@ -97,7 +97,6 @@
       "index": 17,
       "msg_name": "测量数据",
       "table_type": "field_def",
-      "is_auxiliary": false,
       "headers": [
         "序号",
         "内容",
@@ -116,6 +115,7 @@
         "发起时机": "上电后",
         "错误处理": "-"
       },
+      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",
@@ -147,7 +147,6 @@
       "index": 18,
       "msg_name": "运行状态数据",
       "table_type": "field_def",
-      "is_auxiliary": false,
       "headers": [
         "序号",
         "内容",
@@ -165,6 +164,7 @@
         "信宿机器码": "BC",
         "错误处理": "-"
       },
+      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",
@@ -204,7 +204,6 @@
       "index": 22,
       "msg_name": "XX装置数据1",
       "table_type": "field_def",
-      "is_auxiliary": false,
       "headers": [
         "序号",
         "参数",
@@ -218,6 +217,7 @@
       "meta": {
         "消息ID": "0x8000"
       },
+      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",
@@ -252,7 +252,6 @@
       "index": 23,
       "msg_name": "测试数据2",
       "table_type": "field_def",
-      "is_auxiliary": false,
       "headers": [
         "序号",
         "参数",
@@ -266,6 +265,7 @@
       "meta": {
         "消息ID": "0x8001"
       },
+      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",
@@ -309,7 +309,6 @@
       "index": 26,
       "msg_name": "XX装置仿真输入数据",
       "table_type": "field_def",
-      "is_auxiliary": false,
       "headers": [
         "序号",
         "参数",
@@ -320,7 +319,10 @@
         "备注"
       ],
       "data_rows_count": 3,
-      "meta": {},
+      "meta": {
+        "消息ID": "0x0301"
+      },
+      "meta_sources": {},
       "data_rows": [
         {
           "序号": "",

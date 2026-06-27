@@ -72,8 +72,10 @@ def start_extraction():
         return error_response(40001, "文件为空")
     
     # 验证文件类型
-    allowed_extensions = {'.doc', '.docx', '.xlsx', '.xls', '.csv'}
     file_ext = os.path.splitext(file.filename)[1].lower()
+    if file_ext == '.doc':
+        return error_response(40001, "不支持 .doc 格式，请将文件另存为 .docx 后再上传")
+    allowed_extensions = {'.docx', '.xlsx', '.xls', '.csv'}
     if file_ext not in allowed_extensions:
         return error_response(40001, f"不支持的文件格式，请上传 {', '.join(allowed_extensions)} 格式的文件")
     

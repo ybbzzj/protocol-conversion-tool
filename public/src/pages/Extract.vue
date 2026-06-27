@@ -43,8 +43,8 @@
 
     <section class="card">
       <h3>上传协议文档</h3>
-      <input type="file" accept=".doc,.docx" @change="onFileChange" class="input" style="padding: 8px;" />
-      <p class="hint">支持 .doc/.docx</p>
+      <input type="file" accept=".docx" @change="onFileChange" class="input" style="padding: 8px;" />
+      <p class="hint">支持 .docx</p>
     </section>
 
     <section class="card">
@@ -223,7 +223,14 @@ function downloadJSON(data: any, filename: string){
 
 function onFileChange(ev: Event){
   const input = ev.target as HTMLInputElement
-  fileObj.value = input.files && input.files[0] ? input.files[0] : null
+  const f = input.files && input.files[0] ? input.files[0] : null
+  if(f && f.name.toLowerCase().endsWith('.doc')){
+    toast.show('不支持 .doc 格式，请用 Word 将文件另存为 .docx 后再上传')
+    input.value = ''
+    fileObj.value = null
+    return
+  }
+  fileObj.value = f
   // 保存原始文件名
   if(fileObj.value){
     originalFilename.value = fileObj.value.name

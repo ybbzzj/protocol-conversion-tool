@@ -247,6 +247,14 @@ def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None,
         mapping_quality = _calculate_mapping_quality(source_fields, expected_fields)
         logger.info("[提取 %s] 映射质量: %s", tag, mapping_quality)
 
+        # 落一份按 task_id 命名的提取报告 + app.log 可读摘要（含表格决策与字段匹配明细）
+        try:
+            table_decisions = getattr(parser.detector, 'log_records', [])
+            _write_extraction_report(task_id, upload_path, table_decisions,
+                                     source_fields, expected_fields, mapping_quality)
+        except Exception as e:
+            logger.exception("[提取 %s] 生成提取报告失败: %s", tag, e)
+
         tasks_status[task_id].update({
             'status': 'success',
             'progress': 100,
@@ -531,3 +539,59 @@ def _calculate_mapping_quality(source_fields, expected_fields=None):
         'covered_count': covered_count,
         'coverage': coverage,
     }
+
+
+def _write_extraction_report(task_id, upload_path, table_decisions, source_fields, expected_fields, mapping_quality):
+    """落一份按 task_id 命名的提取报告（不被覆盖），并向 app.log 打一段可读摘要。
+
+    研发/用户排查时只需把 logs/report_<task_id>.json 发出即可定位：
+      - 每张表的识别/过滤决策及原因（来自 table_detector 的 log_records）；
+      - 每个源字段匹配到的目标、置信度与匹配类型；
+      - 期望覆盖与映射质量统计。
+    """
+    tag = task_id[:8]
+    matcher = FieldMatcher()
+    field_matches = []
+    for field in source_fields:
+        r = matcher.match_field(field)
+        field_matches.append({
+            'source': field,
+            'target': r.get('target') if isinstance(r, dict) else None,
+            'confidence': round(r.get('confidence', 0), 4) if isinstance(r, dict) else 0,
+            'match_type': r.get('match_type', 'unmatched') if isinstance(r, dict) else 'unmatched',
+        })
+
+    # 表格决策按状态归类，便于一眼看出哪些表被跳过及原因
+    skipped = [d for d in table_decisions if d.get('table_type') == 'skip']
+    kept = [d for d in table_decisions if d.get('table_type') != 'skip']
+
+    report = {
+        'task_id': task_id,
+        'file': os.path.basename(upload_path),
+        'timestamp': datetime.now().isoformat(),
+        'mapping_quality': mapping_quality,
+        'expected_fields': expected_fields,
+        'tables_scanned': len(table_decisions),
+        'tables_kept': len(kept),
+        'tables_skipped': len(skipped),
+        'table_decisions': table_decisions,
+        'field_matches': field_matches,
+    }
+
+    try:
+        os.makedirs(Config.LOG_DIR, exist_ok=True)
+        report_path = os.path.join(Config.LOG_DIR, f'report_{task_id}.json')
+        with open(report_path, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        logger.info("[提取 %s] 提取报告已保存: %s", tag, report_path)
+    except Exception as e:
+        logger.exception("[提取 %s] 保存提取报告失败: %s", tag, e)
+
+    # 向 app.log 打可读摘要：表格扫描/保留/跳过 + 跳过原因 + 未匹配字段
+    logger.info("[提取 %s] 表格: 扫描 %d / 保留 %d / 跳过 %d",
+                tag, len(table_decisions), len(kept), len(skipped))
+    for d in skipped:
+        logger.info("[提取 %s] 跳过表 #%s: %s", tag, d.get('table_index'), d.get('reason'))
+    unmatched = [m['source'] for m in field_matches if not m['target']]
+    if unmatched:
+        logger.info("[提取 %s] 未匹配字段 %d 个: %s", tag, len(unmatched), unmatched)

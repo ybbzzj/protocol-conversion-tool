@@ -12,6 +12,17 @@ _DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 _configured = False
 
 
+class _AccessLogNoiseFilter(logging.Filter):
+    """过滤前端高频轮询接口的成功访问日志，避免业务日志被 200 淹没。"""
+    QUIET_PATHS = ('/api/extract/status/',)
+
+    def filter(self, record):
+        msg = record.getMessage()
+        if any(p in msg for p in self.QUIET_PATHS) and (' 200 ' in msg or ' 304 ' in msg):
+            return False
+        return True
+
+
 def setup_logging(level=logging.INFO):
     """初始化根日志器。重复调用安全（只初始化一次）。"""
     global _configured
@@ -39,10 +50,11 @@ def setup_logging(level=logging.INFO):
     file_handler.setFormatter(formatter)
     root.addHandler(file_handler)
 
-    # 让 werkzeug 的 HTTP 访问日志走同一套 handler，避免重复输出
+    # 让 werkzeug 的 HTTP 访问日志走同一套 handler，并过滤轮询噪声
     werkzeug_logger = logging.getLogger('werkzeug')
     werkzeug_logger.handlers = []
     werkzeug_logger.propagate = True
+    werkzeug_logger.addFilter(_AccessLogNoiseFilter())
 
     _configured = True
     logging.getLogger(__name__).info('日志系统已初始化，日志目录: %s', Config.LOG_DIR)

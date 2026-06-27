@@ -418,14 +418,15 @@ def _extract_fields_and_data_from_raw_tables(raw_tables: List[Dict]) -> Tuple[Li
             
             # 如果表格有数据行，提取字段
             if data_rows:
-                # 从第一行提取字段名
+                # 从第一行提取字段名（过滤 _ 开头的内部字段，如 _fmt_单位、_is_bit_row，
+                # 这些是处理过程的中间产物，不应作为待映射的源字段暴露给用户）
                 first_row = data_rows[0]
-                fields = list(first_row.keys())
+                fields = [k for k in first_row.keys() if not str(k).startswith('_')]
                 all_fields.update(fields)
-                
+
                 # 添加表格数据（只取第一行用于预览）
                 row_with_table = {'表格名称': table_name, '行号': 1}
-                row_with_table.update(first_row)
+                row_with_table.update({k: v for k, v in first_row.items() if not str(k).startswith('_')})
                 all_table_data.append(row_with_table)
         
         # 转换为有序列表

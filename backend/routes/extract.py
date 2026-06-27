@@ -226,22 +226,16 @@ def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None,
         output_file = _export_processed_tables(processed_tables, task_id)
         tasks_status[task_id]['progress'] = 90
 
-        # 计算映射质量
-        extracted_field_names = []
-        for table in processed_tables:
-            for row in table['data_rows']:
-                extracted_field_names.extend(row.keys())
+        # 计算映射质量（口径与人工映射页左侧统一）：
+        # 使用与 preview 完全相同的字段源（清洗后的真实源字段）与匹配逻辑，
+        # 保证“弹窗待人工处理数”与“人工页左侧待映射数”一致。
+        from backend.routes.mapping import _extract_fields_and_data_from_raw_tables
+        source_fields, _ = _extract_fields_and_data_from_raw_tables(result['tables'])
 
-        # 去重
-        extracted_field_names = list(set(extracted_field_names))
-        expected_fields = tasks_status[task_id].get('expected_fields', [])
+        print(f'[映射质量调试] 待映射源字段数: {len(source_fields)}')
+        print(f'[映射质量调试] 待映射源字段: {source_fields[:10]}...')
 
-        print(f'[映射质量调试] 提取字段数: {len(extracted_field_names)}')
-        print(f'[映射质量调试] 期望字段数: {len(expected_fields)}')
-        print(f'[映射质量调试] 提取字段: {extracted_field_names[:10]}...')
-        print(f'[映射质量调试] 期望字段: {expected_fields}')
-
-        mapping_quality = _calculate_mapping_quality(extracted_field_names, expected_fields)
+        mapping_quality = _calculate_mapping_quality(source_fields)
         print(f'[映射质量调试] 计算结果: {mapping_quality}')
 
         tasks_status[task_id].update({
@@ -469,60 +463,54 @@ def _load_expected_fields(field_ids):
         return []
 
 
-def _calculate_mapping_quality(extracted_fields, expected_fields):
+def _calculate_mapping_quality(source_fields):
     """
-    计算字段映射质量评分
+    计算字段映射质量（口径与人工映射页左侧统一）。
+
+    入参 source_fields 为清洗后的真实源表头（与 preview 同一来源）。
+    按 match_with_context 的置信度分两档，与前端自动映射条件
+    （matched 且 confidence >= 0.9）保持一致：
+      - auto_count   : 置信度 >= 0.9，会被自动映射进中间栏；
+      - manual_count : 其余字段（含低置信与无匹配），需在人工页左侧处理。
+    保证“弹窗待人工处理数”恒等于“人工页左侧待映射数”。
     """
-    if not extracted_fields or not expected_fields:
+    if not source_fields:
         return {
             'score': 0,
             'level': 'unknown',
-            'exact_count': 0,
-            'semantic_count': 0,
-            'alias_count': 0,
-            'fuzzy_count': 0,
+            'auto_count': 0,
+            'manual_count': 0,
             'unmatched_count': 0,
             'total': 0
         }
-    
+
     matcher = FieldMatcher()
-    mapping_results = []
-    
-    # 对每个提取的字段进行匹配
-    for ext_field in extracted_fields:
-        match_result = matcher.match_field(ext_field)
-        mapping_results.append(match_result)
-    
-    # 统计匹配结果
-    exact_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'exact')
-    semantic_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'semantic')
-    alias_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'alias')
-    fuzzy_only_count = sum(1 for r in mapping_results if isinstance(r, dict) and r.get('match_type') == 'fuzzy')
-    # 保持兼容：历史字段 fuzzy_count 仍返回“广义模糊”数量
-    fuzzy_count = fuzzy_only_count + semantic_count + alias_count
-    unmatched_count = sum(1 for r in mapping_results if isinstance(r, dict) and not r.get('target'))
-    total = len(mapping_results)
-    
-    # 计算加权评分
-    if total > 0:
-        score = (
-            exact_count * 1.0
-            + semantic_count * 0.85
-            + alias_count * 0.8
-            + fuzzy_only_count * 0.7
-        ) / total
-        level = 'excellent' if score > 0.9 else 'good' if score > 0.7 else 'poor'
-    else:
-        score = 0
-        level = 'unknown'
-    
+
+    auto_count = 0       # 置信度 >= 0.9，自动映射
+    manual_count = 0     # 需人工处理（进左侧）
+    unmatched_count = 0  # 完全无匹配（manual 的子集，仅用于提示）
+
+    for field in source_fields:
+        r = matcher.match_field(field)
+        target = r.get('target') if isinstance(r, dict) else None
+        confidence = r.get('confidence', 0) if isinstance(r, dict) else 0
+
+        if target and confidence >= 0.9:
+            auto_count += 1
+        else:
+            manual_count += 1
+            if not target:
+                unmatched_count += 1
+
+    total = len(source_fields)
+    score = auto_count / total if total > 0 else 0
+    level = 'excellent' if score > 0.9 else 'good' if score > 0.7 else 'poor'
+
     return {
         'score': score,
         'level': level,
-        'exact_count': exact_count,
-        'semantic_count': semantic_count,
-        'alias_count': alias_count,
-        'fuzzy_count': fuzzy_count,
+        'auto_count': auto_count,
+        'manual_count': manual_count,
         'unmatched_count': unmatched_count,
         'total': total
     }

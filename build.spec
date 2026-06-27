@@ -86,7 +86,10 @@ added_datas = [
     # 注意：models 目录不打包到 exe，需要单独提供
     # (os.path.join(base_dir, 'models'), 'models'),
     (os.path.join(base_dir, 'word', 'csvfile'), 'word/csvfile'),
-    (os.path.join(base_dir, 'backend', 'data'), 'backend/data'),
+    # 仅打包知识库与用户映射这两份资产；tasks_history.json 是运行时数据
+    # （含本机绝对路径的历史任务），不可打包进交付物，否则客户端会看到他人测试任务。
+    (os.path.join(base_dir, 'backend', 'data', 'knowledge_base.json'), 'backend/data'),
+    (os.path.join(base_dir, 'backend', 'data', 'user_mappings.json'), 'backend/data'),
     (os.path.join(base_dir, 'backend', 'config_protocol_fields.json'), 'backend'),
     (os.path.join(base_dir, 'backend', 'config_target_fields.json'), 'backend'),
     (os.path.join(base_dir, 'backend', 'config_templates.json'), 'backend'),

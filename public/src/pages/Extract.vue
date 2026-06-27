@@ -310,7 +310,7 @@ function handleSmartWorkflow(statusData) {
       }, 1000)
     } else if (score > 0.7) {
       // 中等质量 - 提示可选修正
-      const confirmMsg = `字段映射质量良好(${(score*100).toFixed(1)}%)，是否需要人工修正后再下载？\n\n匹配详情:\n- 精确匹配: ${quality.exact_count}个\n- 模糊匹配: ${quality.fuzzy_count}个\n- 未匹配: ${quality.unmatched_count}个\n\n点击"确定"进入修正页面，"取消"直接下载`
+      const confirmMsg = `字段映射质量良好(${(score*100).toFixed(1)}%)，是否需要人工修正后再下载？\n\n匹配详情:\n- 自动映射: ${quality.auto_count}个\n- 待人工处理: ${quality.manual_count}个\n\n点击"确定"进入修正页面，"取消"直接下载`
       
       if (confirm(confirmMsg)) {
         // 跳转到字段映射页面

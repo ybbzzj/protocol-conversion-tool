@@ -231,11 +231,13 @@ def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None,
         # 保证“弹窗待人工处理数”与“人工页左侧待映射数”一致。
         from backend.routes.mapping import _extract_fields_and_data_from_raw_tables
         source_fields, _ = _extract_fields_and_data_from_raw_tables(result['tables'])
+        expected_fields = tasks_status[task_id].get('expected_fields', [])
 
         print(f'[映射质量调试] 待映射源字段数: {len(source_fields)}')
         print(f'[映射质量调试] 待映射源字段: {source_fields[:10]}...')
+        print(f'[映射质量调试] 期望字段数: {len(expected_fields)}')
 
-        mapping_quality = _calculate_mapping_quality(source_fields)
+        mapping_quality = _calculate_mapping_quality(source_fields, expected_fields)
         print(f'[映射质量调试] 计算结果: {mapping_quality}')
 
         tasks_status[task_id].update({
@@ -463,7 +465,7 @@ def _load_expected_fields(field_ids):
         return []
 
 
-def _calculate_mapping_quality(source_fields):
+def _calculate_mapping_quality(source_fields, expected_fields=None):
     """
     计算字段映射质量（口径与人工映射页左侧统一）。
 
@@ -473,19 +475,17 @@ def _calculate_mapping_quality(source_fields):
       - auto_count   : 置信度 >= 0.9，会被自动映射进中间栏；
       - manual_count : 其余字段（含低置信与无匹配），需在人工页左侧处理。
     保证“弹窗待人工处理数”恒等于“人工页左侧待映射数”。
+
+    expected_fields 为用户在提取页勾选的协议字段（期望字段）。
+    用于计算“期望覆盖”这一独立维度（与上面的映射质量口径分开，互不混算）：
+      - expected_count : 用户勾选的协议字段数（分母）；
+      - covered_count  : 这些字段中、能在提取到的源字段里找到 >=0.9 相似项的数量（分子）；
+      - coverage       : covered_count / expected_count，反映“想要的字段文档提供了多少”。
     """
-    if not source_fields:
-        return {
-            'score': 0,
-            'level': 'unknown',
-            'auto_count': 0,
-            'manual_count': 0,
-            'unmatched_count': 0,
-            'total': 0
-        }
-
     matcher = FieldMatcher()
+    expected_fields = expected_fields or []
 
+    # —— 维度一：映射质量（基于提取到的源字段）——
     auto_count = 0       # 置信度 >= 0.9，自动映射
     manual_count = 0     # 需人工处理（进左侧）
     unmatched_count = 0  # 完全无匹配（manual 的子集，仅用于提示）
@@ -506,11 +506,23 @@ def _calculate_mapping_quality(source_fields):
     score = auto_count / total if total > 0 else 0
     level = 'excellent' if score > 0.9 else 'good' if score > 0.7 else 'poor'
 
+    # —— 维度二：期望覆盖（基于用户勾选的协议字段）——
+    # 对每个期望字段，若提取到的源字段中存在相似度 >=0.9 的项，则视为被覆盖。
+    covered_count = 0
+    for exp in expected_fields:
+        if any(matcher._calculate_similarity(exp, src) >= 0.9 for src in source_fields):
+            covered_count += 1
+    expected_count = len(expected_fields)
+    coverage = covered_count / expected_count if expected_count > 0 else 0
+
     return {
         'score': score,
         'level': level,
         'auto_count': auto_count,
         'manual_count': manual_count,
         'unmatched_count': unmatched_count,
-        'total': total
+        'total': total,
+        'expected_count': expected_count,
+        'covered_count': covered_count,
+        'coverage': coverage,
     }

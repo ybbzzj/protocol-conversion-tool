@@ -79,26 +79,51 @@
     <div v-if="modalVisible" class="modal-mask" @click.self="modalVisible=false">
       <div class="modal-box">
         <h3 class="modal-title">提取完成</h3>
-        <p class="modal-sub">字段映射度 <b>{{ scorePercent }}%</b></p>
-        <div class="modal-stats">
-          <div class="stat-row">
-            <span class="stat-label">提取字段</span>
-            <span class="stat-val">{{ resultModal.total }}</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label"><i class="dot dot-ok"></i>已映射</span>
-            <span class="stat-val">{{ resultModal.auto }}</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label"><i class="dot dot-warn"></i>待人工匹配</span>
-            <span class="stat-val">{{ resultModal.manual }}</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label"><i class="dot dot-err"></i>其中未匹配</span>
-            <span class="stat-val">{{ resultModal.unmatched }}</span>
+        <p class="modal-sub">字段匹配率 <b>{{ coveragePercent }}%</b></p>
+
+        <!-- 维度一：期望覆盖（按用户选取的协议字段数计算匹配率） -->
+        <div class="modal-group">
+          <div class="modal-group-title">期望覆盖</div>
+          <div class="modal-stats">
+            <div class="stat-row">
+              <span class="stat-label">已选协议字段</span>
+              <span class="stat-val">{{ resultModal.expected }}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label"><i class="dot dot-ok"></i>本次覆盖</span>
+              <span class="stat-val">{{ resultModal.covered }}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">覆盖率</span>
+              <span class="stat-val">{{ coveragePercent }}%</span>
+            </div>
           </div>
         </div>
-        <p class="modal-hint">建议进入人工匹配核对后再下载；也可直接下载当前结果。</p>
+
+        <!-- 维度二：映射质量（程序提取到的全部字段去向） -->
+        <div class="modal-group">
+          <div class="modal-group-title">映射质量</div>
+          <div class="modal-stats">
+            <div class="stat-row">
+              <span class="stat-label">提取字段</span>
+              <span class="stat-val">{{ resultModal.total }}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label"><i class="dot dot-ok"></i>已映射</span>
+              <span class="stat-val">{{ resultModal.auto }}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label"><i class="dot dot-warn"></i>待人工匹配</span>
+              <span class="stat-val">{{ resultModal.manual }}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label"><i class="dot dot-err"></i>其中未匹配</span>
+              <span class="stat-val">{{ resultModal.unmatched }}</span>
+            </div>
+          </div>
+        </div>
+
+        <p class="modal-hint">匹配率按已选协议字段计算；提取字段中难匹配的会进入人工匹配左侧待处理。建议核对后再下载。</p>
         <div class="modal-actions">
           <button class="btn secondary" @click="downloadFromModal">直接下载</button>
           <button class="btn" @click="gotoMapping">进入人工匹配</button>
@@ -143,10 +168,10 @@ let pollTimer: any = null
 
 // 提取完成后的结果选择弹窗
 const modalVisible = ref(false)
-const resultModal = ref<{ score:number, total:number, auto:number, manual:number, unmatched:number }>({
-  score: 0, total: 0, auto: 0, manual: 0, unmatched: 0
+const resultModal = ref<{ score:number, total:number, auto:number, manual:number, unmatched:number, expected:number, covered:number, coverage:number }>({
+  score: 0, total: 0, auto: 0, manual: 0, unmatched: 0, expected: 0, covered: 0, coverage: 0
 })
-const scorePercent = computed(()=> (resultModal.value.score * 100).toFixed(1))
+const coveragePercent = computed(()=> (resultModal.value.coverage * 100).toFixed(1))
 
 const tplImportInputRef = ref<HTMLInputElement | null>(null)
 
@@ -340,11 +365,14 @@ function handleSmartWorkflow(statusData) {
       total: quality.total ?? 0,
       auto: quality.auto_count ?? 0,
       manual: quality.manual_count ?? 0,
-      unmatched: quality.unmatched_count ?? 0
+      unmatched: quality.unmatched_count ?? 0,
+      expected: quality.expected_count ?? 0,
+      covered: quality.covered_count ?? 0,
+      coverage: quality.coverage ?? 0
     }
   } else {
     // 无质量评分时也给出弹窗，数字置零
-    resultModal.value = { score: 0, total: 0, auto: 0, manual: 0, unmatched: 0 }
+    resultModal.value = { score: 0, total: 0, auto: 0, manual: 0, unmatched: 0, expected: 0, covered: 0, coverage: 0 }
   }
   modalVisible.value = true
 }
@@ -423,7 +451,9 @@ onMounted(()=>{ reloadProtocolFields(); reloadTemplates() })
 .modal-title{ margin:0 0 4px; font-size:18px; color:var(--text-main); }
 .modal-sub{ margin:0 0 16px; font-size:14px; color:var(--text-secondary); }
 .modal-sub b{ color:var(--primary); font-size:16px; }
-.modal-stats{ display:flex; flex-direction:column; gap:8px; padding:12px 0; border-top:1px solid var(--border-color); border-bottom:1px solid var(--border-color); }
+.modal-group{ margin-bottom:12px; }
+.modal-group-title{ font-size:13px; font-weight:600; color:var(--text-main); margin-bottom:6px; }
+.modal-stats{ display:flex; flex-direction:column; gap:8px; padding:10px 12px; background:#f8fafc; border:1px solid var(--border-color); border-radius:var(--radius-sm); }
 .stat-row{ display:flex; justify-content:space-between; align-items:center; font-size:14px; }
 .stat-label{ color:var(--text-secondary); display:flex; align-items:center; gap:6px; }
 .stat-val{ color:var(--text-main); font-weight:600; }

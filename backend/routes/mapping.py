@@ -19,6 +19,11 @@ task_mappings = {}
 # 全局变量存储用户自定义映射（持久化）
 user_mappings = {}
 
+# 人工映射的置信度：用户在映射页点击“应用”即视为人工确认，代表明确意图，
+# 须 ≥ 知识库精确匹配门槛(0.9，见 field_matcher._exact_match)，
+# 以确保该映射对后续新文档永久自动生效（而非沿用系统推荐的相似度）。
+MANUAL_MAPPING_CONFIDENCE = 1.0
+
 # 加载用户映射配置
 def load_user_mappings():
     """加载用户自定义映射配置"""
@@ -215,12 +220,11 @@ def apply_mapping():
             if mapping.get('target'):  # 只保存有效的映射
                 original = mapping['original']
                 target = mapping['target']
-                confidence = mapping.get('confidence', 0.8)
-                
-                # 保存用户映射
+
+                # 保存用户映射（人工确认，置信度固定为高，保证永久生效）
                 user_mappings[original] = {
                     'target': target,
-                    'confidence': confidence,
+                    'confidence': MANUAL_MAPPING_CONFIDENCE,
                     'created_at': __import__('datetime').datetime.now().isoformat()
                 }
                 applied_count += 1
@@ -235,7 +239,7 @@ def apply_mapping():
                 matcher.save_mapping(
                     mapping['original'], 
                     mapping['target'],
-                    confidence=mapping.get('confidence', 0.8)
+                    confidence=MANUAL_MAPPING_CONFIDENCE
                 )
 
         # 根据本次映射重新生成当前任务的 Excel，使修正对当前文档立即生效

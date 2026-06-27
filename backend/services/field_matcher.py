@@ -437,7 +437,9 @@ class EnhancedFieldMatcher:
         }
         
         if existing_idx is not None:
-            # 更新现有记录
+            # 更新现有记录：target 以最新一次为准（用户可能修正了映射目标），
+            # confidence 取较高值，命中次数累加。
+            self.knowledge_base[existing_idx]['target'] = target
             self.knowledge_base[existing_idx]['hits'] += 1
             self.knowledge_base[existing_idx]['confidence'] = max(
                 self.knowledge_base[existing_idx]['confidence'], 

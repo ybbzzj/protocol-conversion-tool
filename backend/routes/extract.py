@@ -3,6 +3,7 @@ from flask import Blueprint, request, send_file
 import os
 import uuid
 import json
+import logging
 import threading
 from datetime import datetime
 from backend.utils import success_response, error_response
@@ -12,6 +13,8 @@ from backend.services.table_linker import TableLinker
 from backend.services.excel_exporter import ExcelExporter
 from backend.services.data_cleaner import DataProcessor
 from backend.services.field_matcher import EnhancedFieldMatcher as FieldMatcher
+
+logger = logging.getLogger(__name__)
 
 extract_bp = Blueprint('extract', __name__)
 
@@ -30,9 +33,9 @@ def _load_tasks_from_disk():
                 history = json.load(f)
                 # 过滤掉过期的文件路径或大对象，只保留元数据
                 tasks_status.update(history)
-                print(f"[任务系统] 已从磁盘加载 {len(history)} 条历史记录")
+                logger.info("[任务系统] 已从磁盘加载 %d 条历史记录", len(history))
     except Exception as e:
-        print(f"[任务系统] 加载历史记录失败: {e}")
+        logger.exception("[任务系统] 加载历史记录失败: %s", e)
 
 def _save_tasks_to_disk():
     """将任务元数据持久化到磁盘"""
@@ -56,7 +59,7 @@ def _save_tasks_to_disk():
         with open(TASKS_HISTORY_PATH, 'w', encoding='utf-8') as f:
             json.dump(persist_data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"[任务系统] 持久化历史记录失败: {e}")
+        logger.exception("[任务系统] 持久化历史记录失败: %s", e)
 
 # 模块加载时自动读取
 _load_tasks_from_disk()
@@ -191,22 +194,26 @@ def _dump_processed_tables(processed_tables, doc_path):
     try:
         with open(out_file, 'w', encoding='utf-8') as f:
             _json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"[INFO] 处理后表格已保存: {out_file}")
+        logger.info("[INFO] 处理后表格已保存: %s", out_file)
     except Exception as e:
-        print(f"[ERROR] 保存处理后表格失败: {e}")
+        logger.exception("[ERROR] 保存处理后表格失败: %s", e)
 
 
 def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None, table_configs=None):
     """后台线程：执行解析、关联、导出与映射质量计算，并实时更新进度。"""
+    tag = task_id[:8]
+    logger.info("[提取 %s] 开始，文件: %s", tag, os.path.basename(upload_path))
     try:
         # 执行提取（传入目标消息名称和配置用于兜底提取）
         parser = DocumentParser(config=table_configs, target_message_names=target_message_names)
         result = parser.parse(upload_path, options={'remove_crc_tail': remove_crc})
         tasks_status[task_id]['progress'] = 50
+        logger.info("[提取 %s] 解析完成，识别表格 %d 张", tag, len(result.get('tables', [])))
 
         # 表格关联：注入元数据、过滤辅助表、附加bit子行
         linker = TableLinker()
         linked_tables = linker.link_tables(result['tables'])
+        logger.info("[提取 %s] 关联完成，保留表格 %d 张", tag, len(linked_tables))
 
         # 使用原始表格数据而不是处理后的数据
         # 保存原始提取的表格数据用于预览
@@ -225,6 +232,7 @@ def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None,
         tasks_status[task_id]['progress'] = 80
         output_file = _export_processed_tables(processed_tables, task_id)
         tasks_status[task_id]['progress'] = 90
+        logger.info("[提取 %s] 导出完成，输出文件: %s", tag, output_file)
 
         # 计算映射质量（口径与人工映射页左侧统一）：
         # 使用与 preview 完全相同的字段源（清洗后的真实源字段）与匹配逻辑，
@@ -233,12 +241,11 @@ def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None,
         source_fields, _ = _extract_fields_and_data_from_raw_tables(result['tables'])
         expected_fields = tasks_status[task_id].get('expected_fields', [])
 
-        print(f'[映射质量调试] 待映射源字段数: {len(source_fields)}')
-        print(f'[映射质量调试] 待映射源字段: {source_fields[:10]}...')
-        print(f'[映射质量调试] 期望字段数: {len(expected_fields)}')
+        logger.debug("[提取 %s] 待映射源字段数: %d, 期望字段数: %d", tag, len(source_fields), len(expected_fields))
+        logger.debug("[提取 %s] 待映射源字段: %s", tag, source_fields[:10])
 
         mapping_quality = _calculate_mapping_quality(source_fields, expected_fields)
-        print(f'[映射质量调试] 计算结果: {mapping_quality}')
+        logger.info("[提取 %s] 映射质量: %s", tag, mapping_quality)
 
         tasks_status[task_id].update({
             'status': 'success',
@@ -246,16 +253,15 @@ def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None,
             'output_path': output_file,
             'mapping_quality': mapping_quality
         })
+        logger.info("[提取 %s] 成功", tag)
 
         # ✅ 保存到磁盘
         _save_tasks_to_disk()
 
     except Exception as e:
-        import traceback
-        error_trace = traceback.format_exc()
         tasks_status[task_id]['status'] = 'failed'
         tasks_status[task_id]['message'] = str(e)
-        print(f"[提取任务 {task_id}] 错误: {error_trace}")
+        logger.exception("[提取 %s] 失败: %s", tag, e)
 
         # ✅ 保存到磁盘
         _save_tasks_to_disk()
@@ -431,8 +437,7 @@ def regenerate_output(task_id, user_overrides):
         _save_tasks_to_disk()
         return True, output_file
     except Exception as e:
-        import traceback
-        print(f"[重新生成 {task_id}] 错误: {traceback.format_exc()}")
+        logger.exception("[重新生成 %s] 错误: %s", task_id[:8], e)
         return False, str(e)
 
 
@@ -461,7 +466,7 @@ def _load_expected_fields(field_ids):
         
         return []
     except Exception as e:
-        print(f"[加载期望字段] 错误: {e}")
+        logger.exception("[加载期望字段] 错误: %s", e)
         return []
 
 

@@ -21,6 +21,8 @@ class Config:
     UPLOAD_FOLDER = os.path.join(BASE_DIR, 'backend', 'uploads')
     OUTPUT_FOLDER = os.path.join(BASE_DIR, 'backend', 'outputs')
     DATA_DIR = os.path.join(BASE_DIR, 'backend', 'data')
+    # 日志目录 (可写，在 exe 同级目录，便于用户/研发取走排查)
+    LOG_DIR = os.path.join(BASE_DIR, 'logs')
     
     # 知识库本地文件路径 (不再使用数据库)
     KNOWLEDGE_BASE_FILE = os.path.join(DATA_DIR, 'knowledge_base.json')

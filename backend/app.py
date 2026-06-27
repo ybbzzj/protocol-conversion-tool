@@ -2,11 +2,18 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import logging
 from flask import Flask, send_from_directory, request, send_file
 from flask_cors import CORS
 from backend.config import config_by_name
+from backend.logging_config import setup_logging
+
+logger = logging.getLogger(__name__)
 
 def create_app(config_name='development'):
+    # ✅ 0. 最先初始化日志系统（控制台 + 滚动文件），保证后续所有输出可落盘
+    setup_logging()
+
     # ✅ 指定静态文件目录为前端构建后的 dist 文件夹
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     static_folder = os.path.join(base_dir, 'public', 'dist')
@@ -71,22 +78,22 @@ def create_app(config_name='development'):
         return f"Frontend dist not found at: {static_folder}", 404
     
     # 打印调试信息
-    print(f"[App] 启动模式: 集成托管")
-    print(f"[App] 静态目录：{static_folder}")
-    print(f"[App] index.html: {'✅ 存在' if os.path.exists(os.path.join(static_folder, 'index.html')) else '❌ 不存在'}")
+    logger.info("[App] 启动模式: 集成托管")
+    logger.info("[App] 静态目录：%s", static_folder)
+    logger.info("[App] index.html: %s", '存在' if os.path.exists(os.path.join(static_folder, 'index.html')) else '不存在')
         
     # 预加载语义模型（后台线程，不阻塞启动）
     def preload_model():
         try:
             from backend.services.embedding_service import embedding_service
             if embedding_service.is_available():
-                print("[App] 正在预加载语义模型...")
+                logger.info("[App] 正在预加载语义模型...")
                 embedding_service.warmup(["参数", "时间戳", "单位", "值域", "备注", "信号名称"])
-                print("[App] ✅ 语义模型预加载完成")
+                logger.info("[App] 语义模型预加载完成")
             else:
-                print("[App] ⚠️ 未检测到可用语义模型，已降级为规则匹配")
+                logger.warning("[App] 未检测到可用语义模型，已降级为规则匹配")
         except Exception as e:
-            print(f"[App] 预加载语义模型失败：{e}")
+            logger.exception("[App] 预加载语义模型失败：%s", e)
 
     import threading
     threading.Thread(target=preload_model, daemon=True).start()

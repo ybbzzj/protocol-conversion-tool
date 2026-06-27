@@ -79,28 +79,9 @@
     <div v-if="modalVisible" class="modal-mask" @click.self="modalVisible=false">
       <div class="modal-box">
         <h3 class="modal-title">提取完成</h3>
-        <p class="modal-sub">字段匹配率 <b>{{ coveragePercent }}%</b></p>
+        <p class="modal-sub">匹配质量 <b>{{ scorePercent }}%</b></p>
 
-        <!-- 维度一：期望覆盖（按用户选取的协议字段数计算匹配率） -->
-        <div class="modal-group">
-          <div class="modal-group-title">期望覆盖</div>
-          <div class="modal-stats">
-            <div class="stat-row">
-              <span class="stat-label">已选协议字段</span>
-              <span class="stat-val">{{ resultModal.expected }}</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label"><i class="dot dot-ok"></i>本次覆盖</span>
-              <span class="stat-val">{{ resultModal.covered }}</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">覆盖率</span>
-              <span class="stat-val">{{ coveragePercent }}%</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 维度二：映射质量（程序提取到的全部字段去向） -->
+        <!-- 上块「映射质量」：程序提取到的全部字段去向 -->
         <div class="modal-group">
           <div class="modal-group-title">映射质量</div>
           <div class="modal-stats">
@@ -119,6 +100,25 @@
             <div class="stat-row">
               <span class="stat-label"><i class="dot dot-err"></i>其中未匹配</span>
               <span class="stat-val">{{ resultModal.unmatched }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 下块「期望覆盖」：按用户选取的协议字段数计算覆盖率 -->
+        <div class="modal-group">
+          <div class="modal-group-title">期望覆盖</div>
+          <div class="modal-stats">
+            <div class="stat-row">
+              <span class="stat-label">已选协议字段</span>
+              <span class="stat-val">{{ resultModal.expected }}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label"><i class="dot dot-ok"></i>本次覆盖</span>
+              <span class="stat-val">{{ resultModal.covered }}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">覆盖率</span>
+              <span class="stat-val">{{ coveragePercent }}%</span>
             </div>
           </div>
         </div>
@@ -171,6 +171,7 @@ const modalVisible = ref(false)
 const resultModal = ref<{ score:number, total:number, auto:number, manual:number, unmatched:number, expected:number, covered:number, coverage:number }>({
   score: 0, total: 0, auto: 0, manual: 0, unmatched: 0, expected: 0, covered: 0, coverage: 0
 })
+const scorePercent = computed(()=> (resultModal.value.score * 100).toFixed(1))
 const coveragePercent = computed(()=> (resultModal.value.coverage * 100).toFixed(1))
 
 const tplImportInputRef = ref<HTMLInputElement | null>(null)

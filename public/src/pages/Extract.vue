@@ -74,6 +74,37 @@
         <button class="btn" @click="downloadResult">下载结果</button>
       </div>
     </section>
+
+    <!-- 提取完成结果弹窗：无论匹配质量如何，由用户选择下一步 -->
+    <div v-if="modalVisible" class="modal-mask" @click.self="modalVisible=false">
+      <div class="modal-box">
+        <h3 class="modal-title">提取完成</h3>
+        <p class="modal-sub">字段映射度 <b>{{ scorePercent }}%</b></p>
+        <div class="modal-stats">
+          <div class="stat-row">
+            <span class="stat-label">提取字段</span>
+            <span class="stat-val">{{ resultModal.total }}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label"><i class="dot dot-ok"></i>已映射</span>
+            <span class="stat-val">{{ resultModal.auto }}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label"><i class="dot dot-warn"></i>待人工匹配</span>
+            <span class="stat-val">{{ resultModal.manual }}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label"><i class="dot dot-err"></i>其中未匹配</span>
+            <span class="stat-val">{{ resultModal.unmatched }}</span>
+          </div>
+        </div>
+        <p class="modal-hint">建议进入人工匹配核对后再下载；也可直接下载当前结果。</p>
+        <div class="modal-actions">
+          <button class="btn secondary" @click="downloadFromModal">直接下载</button>
+          <button class="btn" @click="gotoMapping">进入人工匹配</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -109,6 +140,13 @@ const currentTaskId = ref<string>('')
 const originalFilename = ref<string>('')
 const taskStatus = ref<{ status:string, progress:number, message?:string } | null>(null)
 let pollTimer: any = null
+
+// 提取完成后的结果选择弹窗
+const modalVisible = ref(false)
+const resultModal = ref<{ score:number, total:number, auto:number, manual:number, unmatched:number }>({
+  score: 0, total: 0, auto: 0, manual: 0, unmatched: 0
+})
+const scorePercent = computed(()=> (resultModal.value.score * 100).toFixed(1))
 
 const tplImportInputRef = ref<HTMLInputElement | null>(null)
 
@@ -294,42 +332,31 @@ function startPolling(){
 }
 
 function handleSmartWorkflow(statusData) {
+  // 无论匹配质量如何，统一弹出选择弹窗，由用户决定进入人工匹配还是直接下载
   const quality = statusData.mapping_quality
-  
   if (quality && quality.score !== undefined) {
-    const score = quality.score
-    const level = quality.level
-    
-    console.log('[智能分流] 映射质量:', quality)
-    
-    if (score > 0.9) {
-      // 高质量 - 直接下载
-      toast.show(`字段映射质量优秀(${(score*100).toFixed(1)}%)，直接下载结果`)
-      setTimeout(() => {
-        downloadResult()
-      }, 1000)
-    } else if (score > 0.7) {
-      // 中等质量 - 提示可选修正
-      const confirmMsg = `字段映射质量良好(${(score*100).toFixed(1)}%)，是否需要人工修正后再下载？\n\n匹配详情:\n- 自动映射: ${quality.auto_count}个\n- 待人工处理: ${quality.manual_count}个\n\n点击"确定"进入修正页面，"取消"直接下载`
-      
-      if (confirm(confirmMsg)) {
-        // 跳转到字段映射页面
-        router.push({ name: 'mapping', params: { taskId: currentTaskId.value } })
-      } else {
-        downloadResult()
-      }
-    } else {
-      // 低质量 - 强制修正
-      toast.show(`字段映射质量较低(${(score*100).toFixed(1)}%)，需要人工修正`)
-      setTimeout(() => {
-        router.push({ name: 'mapping', params: { taskId: currentTaskId.value } })
-      }, 1500)
+    resultModal.value = {
+      score: quality.score,
+      total: quality.total ?? 0,
+      auto: quality.auto_count ?? 0,
+      manual: quality.manual_count ?? 0,
+      unmatched: quality.unmatched_count ?? 0
     }
   } else {
-    // 兼容旧版本或无质量评分的情况
-    toast.show('提取完成，可下载结果')
-    downloadResult()
+    // 无质量评分时也给出弹窗，数字置零
+    resultModal.value = { score: 0, total: 0, auto: 0, manual: 0, unmatched: 0 }
   }
+  modalVisible.value = true
+}
+
+function gotoMapping(){
+  modalVisible.value = false
+  router.push({ name: 'mapping', params: { taskId: currentTaskId.value } })
+}
+
+function downloadFromModal(){
+  modalVisible.value = false
+  downloadResult()
 }
 
 function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null } }
@@ -389,4 +416,21 @@ onMounted(()=>{ reloadProtocolFields(); reloadTemplates() })
 .progress-wrap{ margin-top:12px; }
 .progress-bar{ width:100%; height:10px; background:#e2e8f0; border-radius:6px; overflow:hidden; }
 .progress-fill{ height:100%; background:#007bff; border-radius:6px; transition:width 0.3s ease; }
+
+/* 提取完成结果弹窗 */
+.modal-mask{ position:fixed; inset:0; background:rgba(15,23,42,0.4); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; z-index:9999; }
+.modal-box{ background:var(--bg-card); width:380px; max-width:calc(100vw - 32px); padding:24px; border-radius:var(--radius-md); box-shadow:var(--shadow-lg); }
+.modal-title{ margin:0 0 4px; font-size:18px; color:var(--text-main); }
+.modal-sub{ margin:0 0 16px; font-size:14px; color:var(--text-secondary); }
+.modal-sub b{ color:var(--primary); font-size:16px; }
+.modal-stats{ display:flex; flex-direction:column; gap:8px; padding:12px 0; border-top:1px solid var(--border-color); border-bottom:1px solid var(--border-color); }
+.stat-row{ display:flex; justify-content:space-between; align-items:center; font-size:14px; }
+.stat-label{ color:var(--text-secondary); display:flex; align-items:center; gap:6px; }
+.stat-val{ color:var(--text-main); font-weight:600; }
+.dot{ width:8px; height:8px; border-radius:50%; display:inline-block; }
+.dot-ok{ background:#22c55e; }
+.dot-warn{ background:#f59e0b; }
+.dot-err{ background:#ef4444; }
+.modal-hint{ margin:12px 0 16px; font-size:12px; color:var(--text-secondary); line-height:1.5; }
+.modal-actions{ display:flex; gap:8px; justify-content:flex-end; }
 </style>

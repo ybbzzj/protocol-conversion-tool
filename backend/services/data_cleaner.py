@@ -37,6 +37,11 @@ class DataTypeConverter:
         '32BIT无符号整型': ('UINT32', 32), '32位无符号整型': ('UINT32', 32),
         '32BIT有符号整型': ('INT32',  32), '32位有符号整型': ('INT32',  32),
         '32位整型': ('UINT32', 32),
+        # 64 bit
+        'INT64':   ('INT64',  64), 'UINT64':  ('UINT64', 64),
+        'INTEGER-64':  ('INT64',  64), 'UINTEGER-64': ('UINT64', 64),
+        'INT-64':  ('INT64',  64), 'UINT-64': ('UINT64', 64),
+        'LONGLONG': ('INT64', 64), 'ULONGLONG': ('UINT64', 64),
         # 16 bit 中文别名
         '16BIT无符号整型': ('UINT16', 16), '16位无符号整型': ('UINT16', 16),
         '16BIT有符号整型': ('INT16',  16), '16位有符号整型': ('INT16',  16),

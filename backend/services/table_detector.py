@@ -1339,11 +1339,11 @@ class TableDetector:
             data_rows.append(row_dict)
 
         # ◄ 末尾 CRC 校验字过滤（可由输出控制开关关闭）：
-        # 若最后一个有效数据行的内容字段包含 CRC校验字/检验字/校验码/检验码（CRC 大小写不敏感），
-        # 则丢弃该行（这类校验字段通常不是协议有效数据项）。
+        # 若最后一个有效数据行的内容字段包含 "CRC校验"/"CRC检验"（CRC 大小写不敏感），
+        # 则丢弃该行（这类校验字段通常不是协议有效数据项），可覆盖 CRC校验字/校验码/校验 等写法。
         # 仅作用于最后一项：若 CRC 行后面仍有有效数据行，则保留（见 content 居中的情况）。
         if self.remove_crc_tail:
-            crc_keywords = ('crc校验字', 'crc检验字', 'crc校验码', 'crc检验码')
+            crc_keywords = ('crc校验', 'crc检验')
             if data_rows:
                 last_row = data_rows[-1]
                 for header, value in last_row.items():

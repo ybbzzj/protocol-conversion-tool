@@ -2,6 +2,7 @@
 """集中式日志配置：同时输出到控制台与滚动文件，统一格式。"""
 import os
 import sys
+import re
 import logging
 from logging.handlers import RotatingFileHandler
 from backend.config import Config
@@ -13,12 +14,17 @@ _configured = False
 
 
 class _AccessLogNoiseFilter(logging.Filter):
-    """过滤前端高频轮询接口的成功访问日志，避免业务日志被 200 淹没。"""
-    QUIET_PATHS = ('/api/extract/status/',)
+    """屏蔽 werkzeug 成功访问日志(2xx/3xx)，只保留出错请求(4xx/5xx)。
+
+    favicon、静态资源、前端轮询等无用 GET 200/304 全部不再打印，
+    业务关键节点由各模块的业务日志覆盖；请求出错(404/500)仍可见。
+    """
+    # 匹配访问行结尾的 HTTP 状态码： ... "GET /favicon.ico HTTP/1.1" 200 -
+    _STATUS_RE = re.compile(r'"\s+(\d{3})\b')
 
     def filter(self, record):
-        msg = record.getMessage()
-        if any(p in msg for p in self.QUIET_PATHS) and (' 200 ' in msg or ' 304 ' in msg):
+        m = self._STATUS_RE.search(record.getMessage())
+        if m and m.group(1)[0] in ('2', '3'):
             return False
         return True
 

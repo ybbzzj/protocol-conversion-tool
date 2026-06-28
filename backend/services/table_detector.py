@@ -750,16 +750,29 @@ class TableDetector:
         id_field_candidates = ['消息ID', 'ID序号', 'ID定义', '消息标识']
         return any(c in headers_text for c in id_field_candidates)
     
-    def _log_table_status(self, t_idx, status, reason, table_type=None, msg_name=None):
-        """记录表格识别状态日志"""
+    def _log_table_status(self, t_idx, status, reason, table_type=None, msg_name=None, headers=None, preceding=None):
+        """记录表格识别状态日志。
+
+        headers/preceding 用于人工定位具体是哪张表（仅凭 #序号 很难判别），
+        会一并写入 log_records，最终进入提取报告。
+        """
+        clean_headers = [str(h).strip() for h in (headers or []) if str(h).strip()]
         self.log_records.append({
             'table_index': t_idx,
             'status': status,
             'reason': reason,
             'table_type': table_type,
-            'msg_name': msg_name
+            'msg_name': msg_name,
+            'headers': clean_headers,
+            'preceding_para': (preceding or '').strip(),
         })
-        logger.info(f"Table #{t_idx}: {status} - {reason} (type={table_type}, name={msg_name})")
+        # 表头过长时截断，避免日志行过宽
+        hdr_disp = '|'.join(clean_headers[:10])
+        if len(hdr_disp) > 80:
+            hdr_disp = hdr_disp[:80] + '…'
+        hdr_disp = hdr_disp or '无表头'
+        pre_disp = f', 前置段落="{preceding.strip()[:20]}"' if preceding and preceding.strip() else ''
+        logger.info(f"Table #{t_idx} [表头: {hdr_disp}]: {status} - {reason} (type={table_type}, name={msg_name}{pre_disp})")
 
     def extract_tables_from_docx(self, file_path: str) -> List[Dict]:
         """
@@ -848,13 +861,13 @@ class TableDetector:
         # 【例外】示例/目标格式表始终过滤，即使配置匹配也不提取
         row0_set = set(h.strip() for h in row0_unique if h.strip())
         if EXAMPLE_TABLE_HEADERS.issubset(row0_set):
-            self._log_table_status(t_idx, '过滤', '示例/目标格式表', 'skip')
+            self._log_table_status(t_idx, '过滤', '示例/目标格式表', 'skip', headers=row0_unique, preceding=preceding_para)
             return base
         
         config, matched_table_type = self._match_config(grid, row0_text)
         if config and matched_table_type:
             # 配置匹配成功，强制提取
-            self._log_table_status(t_idx, '配置匹配', f'命中配置: {matched_table_type}', matched_table_type)
+            self._log_table_status(t_idx, '配置匹配', f'命中配置: {matched_table_type}', matched_table_type, headers=row0_unique, preceding=preceding_para)
             
             if matched_table_type == 'field_def':
                 return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para)
@@ -870,7 +883,7 @@ class TableDetector:
         
         # 端口分配表识别（含信源系统码+信宿系统码）
         if '信源系统码' in row0_text and '信宿系统码' in row0_text:
-            self._log_table_status(t_idx, '智能识别', '端口分配表', 'port_allocation')
+            self._log_table_status(t_idx, '智能识别', '端口分配表', 'port_allocation', headers=row0_unique, preceding=preceding_para)
             return self._parse_port_allocation(grid, t_idx, preceding_para)
 
         # 消息ID表识别（兼容新旧格式 + 配置驱动）
@@ -898,17 +911,17 @@ class TableDetector:
         if is_id_table:
             unique_cols, _ = _dedup_headers(grid[0])
             if len(unique_cols) <= 8:
-                self._log_table_status(t_idx, '智能识别', '消息ID表', 'message_id')
+                self._log_table_status(t_idx, '智能识别', '消息ID表', 'message_id', headers=row0_unique, preceding=preceding_para)
                 return self._parse_message_id_table(grid, t_idx, preceding_para, config_id_roles)
 
         # bit位定义表识别（含位号+状态参数）
         if ('位号' in row0_text or '位号' in ' '.join(_dedup_row(grid[1])) if len(grid) > 1 else False) \
                 and '状态参数' in row0_text:
-            self._log_table_status(t_idx, '智能识别', 'bit位定义表', 'bit_def')
+            self._log_table_status(t_idx, '智能识别', 'bit位定义表', 'bit_def', headers=row0_unique, preceding=preceding_para)
             return self._parse_bit_def_table(grid, t_idx, preceding_para)
         # 也匹配只有"位号"列的情况
         if '位号' in row0_text and any(kw in row0_text for kw in ['状态参数', '取值说明']):
-            self._log_table_status(t_idx, '智能识别', 'bit位定义表', 'bit_def')
+            self._log_table_status(t_idx, '智能识别', 'bit位定义表', 'bit_def', headers=row0_unique, preceding=preceding_para)
             return self._parse_bit_def_table(grid, t_idx, preceding_para)
         
         # ── 修改点3：噪声过滤（最低优先级） ─────────────────────────────────────
@@ -916,7 +929,7 @@ class TableDetector:
         # 强制跳过（除非匹配目标名称）
         if force_skip:
             if not _match_target_message_name(grid, preceding_para, self.target_message_names):
-                self._log_table_status(t_idx, '过滤', '前置段落干扰词', 'skip')
+                self._log_table_status(t_idx, '过滤', '前置段落干扰词', 'skip', headers=row0_unique, preceding=preceding_para)
                 return base
 
         # 判断是否为干扰/无效表格
@@ -928,14 +941,14 @@ class TableDetector:
         if _is_noise_table(grid, preceding_para, config_field_names):
             # 检查是否匹配目标名称，如果匹配则强制提取
             if not _match_target_message_name(grid, preceding_para, self.target_message_names):
-                self._log_table_status(t_idx, '过滤', '噪声表', 'skip')
+                self._log_table_status(t_idx, '过滤', '噪声表', 'skip', headers=row0_unique, preceding=preceding_para)
                 return base
             else:
-                self._log_table_status(t_idx, '强制提取', '匹配目标名称，跳过噪声过滤', 'field_def')
+                self._log_table_status(t_idx, '强制提取', '匹配目标名称，跳过噪声过滤', 'field_def', headers=row0_unique, preceding=preceding_para)
                 logger.info(f"Table #{t_idx}: 匹配目标名称，强制跳过干扰表判断")
         
         # ── 字段定义表（最后处理） ──────────────────────────────────────────────
-        self._log_table_status(t_idx, '智能识别', '字段定义表', 'field_def')
+        self._log_table_status(t_idx, '智能识别', '字段定义表', 'field_def', headers=row0_unique, preceding=preceding_para)
         return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para)
 
     # ── 端口分配表 ────────────────────────────────────────────────────────────

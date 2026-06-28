@@ -753,10 +753,12 @@ class TableDetector:
     def _log_table_status(self, t_idx, status, reason, table_type=None, msg_name=None, headers=None, preceding=None):
         """记录表格识别状态日志。
 
-        headers/preceding 用于人工定位具体是哪张表（仅凭 #序号 很难判别），
-        会一并写入 log_records，最终进入提取报告。
+        preceding 即表格上方的"表N XXX"标题段落，作为人工定位的主标识
+        （列名高度雷同，仅凭表头难以区分具体是哪张表）；headers 作为辅助。
+        二者一并写入 log_records，最终进入提取报告。
         """
         clean_headers = [str(h).strip() for h in (headers or []) if str(h).strip()]
+        title = (preceding or '').strip()
         self.log_records.append({
             'table_index': t_idx,
             'status': status,
@@ -764,15 +766,20 @@ class TableDetector:
             'table_type': table_type,
             'msg_name': msg_name,
             'headers': clean_headers,
-            'preceding_para': (preceding or '').strip(),
+            'preceding_para': title,
         })
         # 表头过长时截断，避免日志行过宽
         hdr_disp = '|'.join(clean_headers[:10])
         if len(hdr_disp) > 80:
             hdr_disp = hdr_disp[:80] + '…'
-        hdr_disp = hdr_disp or '无表头'
-        pre_disp = f', 前置段落="{preceding.strip()[:20]}"' if preceding and preceding.strip() else ''
-        logger.info(f"Table #{t_idx} [表头: {hdr_disp}]: {status} - {reason} (type={table_type}, name={msg_name}{pre_disp})")
+        # 主标识优先用表标题；缺失时回退到表头
+        if title:
+            ident = title
+            extra = f', 表头: {hdr_disp}' if hdr_disp else ''
+        else:
+            ident = f'表头: {hdr_disp}' if hdr_disp else '无标题'
+            extra = ''
+        logger.info(f"Table #{t_idx} [{ident}]: {status} - {reason} (type={table_type}{extra})")
 
     def extract_tables_from_docx(self, file_path: str) -> List[Dict]:
         """

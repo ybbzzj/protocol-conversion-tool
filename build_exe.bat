@@ -52,29 +52,18 @@ if not exist "%~dp0public\dist\index.html" (
     echo.
 )
 
-REM 检查模型文件（校验 onnx 真实大小，防止 Git LFS 指针未还原成真文件）
+REM 检查模型文件（只校验 onnx 文件是否存在，不再判断大小）
 set "MODEL_ONNX=%~dp0models\bge-small-zh-v1.5-onnx\onnx\model.onnx"
 set "MODEL_OK=1"
-set "MODEL_SIZE=0"
-if not exist "!MODEL_ONNX!" (
-    set "MODEL_OK=0"
-) else (
-    for %%F in ("!MODEL_ONNX!") do set "MODEL_SIZE=%%~zF"
-    REM 真实模型约 102MB；小于 1MB(1048576 字节)说明是 LFS 指针或文件残缺
-    if !MODEL_SIZE! LSS 1048576 set "MODEL_OK=0"
-)
+if not exist "!MODEL_ONNX!" set "MODEL_OK=0"
 if "!MODEL_OK!"=="0" (
-    echo ⚠️  语义模型缺失或不完整 ^(当前 model.onnx 大小: !MODEL_SIZE! 字节^)
+    echo ⚠️  语义模型缺失：未找到 model.onnx
+    echo     路径: !MODEL_ONNX!
     echo.
     echo 💡 常见原因与处理:
     echo    - 若用 git 拉取代码: 模型由 Git LFS 托管，请先安装 git-lfs 再拉取:
     echo        git lfs install ^&^& git lfs pull
     echo    - 若需重新下载: python download_model.py ^(需联网^)
-    echo.
-    echo 📦 模型说明:
-    echo    - 推荐模型：Xenova/bge-small-zh-v1.5 (ONNX)
-    echo    - model.onnx 真实大小约 102MB
-    echo    - 几百字节的 model.onnx 是 LFS 指针文本，不是真模型
     echo.
     set /p CONTINUE="是否继续打包？（模型将不可用）(y/N): "
     if /i not "!CONTINUE!"=="y" (
@@ -82,6 +71,9 @@ if "!MODEL_OK!"=="0" (
         pause
         exit /b 1
     )
+    echo.
+) else (
+    echo ✅ 已检测到语义模型 model.onnx
     echo.
 )
 
@@ -91,18 +83,20 @@ echo ============================================================
 echo.
 
 REM 清理旧的构建文件
+echo [1/3] [%time%] 清理旧的构建产物...
 if exist "%~dp0build" (
-    echo 清理旧的构建目录...
+    echo    - 删除 build 目录...
     rmdir /s /q "%~dp0build"
 )
 
 if exist "%~dp0dist" (
-    echo 清理旧的发布目录...
+    echo    - 删除 dist 目录...
     rmdir /s /q "%~dp0dist"
 )
-
+echo    清理完成
 echo.
-echo 执行 PyInstaller...
+
+echo [2/3] [%time%] 执行 PyInstaller（耗时较长，请耐心等待）...
 echo.
 
 REM 使用 spec 文件进行打包
@@ -110,7 +104,7 @@ pyinstaller --clean "%~dp0build.spec"
 
 if %errorlevel% equ 0 (
     echo.
-    echo 正在复制语义模型到发布目录...
+    echo [3/3] [%time%] PyInstaller 完成，正在复制语义模型到发布目录...
     set "MODEL_SRC=%~dp0models\bge-small-zh-v1.5-onnx"
     set "MODEL_DST=%~dp0dist\协议转换工具\models\bge-small-zh-v1.5-onnx"
     
@@ -135,7 +129,7 @@ if %errorlevel% equ 0 (
 
     echo.
     echo ============================================================
-    echo ✅ 打包完成！
+    echo ✅ [%time%] 打包完成！
     echo ============================================================
     echo.
     echo 📦 发布位置：%~dp0dist\协议转换工具

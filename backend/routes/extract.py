@@ -592,10 +592,11 @@ def _write_extraction_report(task_id, upload_path, table_decisions, source_field
                 tag, len(table_decisions), len(kept), len(skipped))
     for d in skipped:
         hdrs = '|'.join(d.get('headers', [])) or '无表头'
-        pre = d.get('preceding_para', '')
-        pre_disp = f' 前置段落="{pre[:20]}"' if pre else ''
-        logger.info("[提取 %s] 跳过表 #%s [表头: %s]: %s%s",
-                    tag, d.get('table_index'), hdrs, d.get('reason'), pre_disp)
+        title = d.get('preceding_para', '')
+        ident = title if title else f'表头: {hdrs}'
+        extra = f' 表头: {hdrs}' if title else ''
+        logger.info("[提取 %s] 跳过表 #%s [%s]: %s%s",
+                    tag, d.get('table_index'), ident, d.get('reason'), extra)
     unmatched = [m['source'] for m in field_matches if not m['target']]
     if unmatched:
         logger.info("[提取 %s] 未匹配字段 %d 个: %s", tag, len(unmatched), unmatched)

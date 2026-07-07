@@ -337,14 +337,48 @@ def _is_noise_table(grid: List[List[str]], preceding_para: str, config_field_nam
     # 如果表头中的字段名与用户配置的字段名高度重合，说明是有效字段表，不过滤
     if config_field_names:
         config_field_set = set(f.strip() for f in config_field_names if f.strip())
-        header_match_count = sum(1 for h in row0_unique if h.strip() in config_field_set or
-                                 any(cf in h or h in cf for cf in config_field_set if len(cf) >= 2))
-        # 如果至少有3个表头字段匹配配置，或匹配比例超过50%，不过滤
-        non_empty_headers = [h for h in row0_unique if h.strip() and len(h.strip()) >= 2]
-        if non_empty_headers and (header_match_count >= 3 or
-                                   header_match_count / max(len(non_empty_headers), 1) >= 0.5):
-            logger.info(f"配置兜底: 表头与配置字段匹配({header_match_count}/{len(non_empty_headers)})，不过滤")
+
+        # 辅助函数：计算一行与配置字段的匹配情况
+        def _count_config_match(row_cells: List[str]) -> Tuple[int, int]:
+            """返回 (匹配数, 非空表头数)"""
+            non_empty = [h for h in row_cells if h.strip() and len(h.strip()) >= 2]
+            match_count = sum(1 for h in non_empty if h.strip() in config_field_set or
+                             any(cf in h or h in cf for cf in config_field_set if len(cf) >= 2))
+            return match_count, len(non_empty)
+
+        def _check_match_pass(match_count: int, total: int) -> bool:
+            """三档阈值：全部命中 OR >=70% OR >=3个绝对数量"""
+            if total == 0:
+                return False
+            if match_count >= total:
+                return True  # 全部命中
+            if match_count / total >= 0.70:
+                return True  # >=70%
+            if match_count >= 3:
+                return True  # 绝对数量兜底（避免表头列数多时比例稀释）
             return False
+
+        # 第一档：对 grid[0] 做匹配（适用于类型B/C简单表）
+        match_count, total_headers = _count_config_match(row0_unique)
+        if _check_match_pass(match_count, total_headers):
+            logger.info(f"配置兜底[行0]: 表头与配置字段匹配({match_count}/{total_headers})，不过滤")
+            return False
+
+        # 第二档：Type A 表兜底 —— 行0是元数据行（含"通信帧名称/信息名称"），
+        # 真正的字段表头在下面某行。向下扫描找候选行。
+        is_type_a_meta_row = any(kw in row0_text for kw in ['信息名称', '通信帧名称'])
+        if is_type_a_meta_row:
+            candidate_scan_keywords = {'序号', '内容', '参数', '长度', '单位', '说明',
+                                        '数据类型', '类型', '值域', '字节', '字节数'}
+            for cand_r_idx in range(1, min(8, len(grid))):
+                cand_ru = _dedup_row(grid[cand_r_idx])
+                cand_rt = ' '.join(cand_ru)
+                # 候选行必须含至少一个字段表头关键词
+                if any(kw in cand_rt for kw in candidate_scan_keywords):
+                    c_mc, c_total = _count_config_match(cand_ru)
+                    if _check_match_pass(c_mc, c_total):
+                        logger.info(f"配置兜底[行{cand_r_idx}]: TypeA候选行匹配({c_mc}/{c_total})，不过滤")
+                        return False
 
     # ── 以下才执行干扰过滤 ────────────────────────────────────────────────
     

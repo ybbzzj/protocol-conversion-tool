@@ -164,14 +164,10 @@ def _dump_processed_tables(processed_tables, doc_path):
     import os as _os
     from datetime import datetime as _dt
     
-    # 输出目录：打包后放在 exe 同级目录下；开发态放在项目根目录。
-    # 不再依赖被解析文档的路径，避免结果散落到 D:\ 等位置。
-    import sys as _sys
-    if getattr(_sys, 'frozen', False):
-        _base = _os.path.dirname(_sys.executable)
-    else:
-        _base = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
-    output_dir = _os.path.join(_base, 'table_recognition_results')
+    output_dir = _os.path.join(
+        _os.path.dirname(_os.path.dirname(_os.path.dirname(doc_path))),
+        'table_recognition_results'
+    )
     if not _os.path.exists(output_dir):
         _os.makedirs(output_dir)
     

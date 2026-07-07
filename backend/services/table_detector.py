@@ -1496,14 +1496,7 @@ class DocumentParser:
         import os
         from datetime import datetime
         
-        # 输出目录：打包后放在 exe 同级目录下；开发态放在项目根目录。
-        # 不再依赖被解析文档的路径，避免结果散落到 D:\ 等位置。
-        import sys as _sys
-        if getattr(_sys, 'frozen', False):
-            _base = os.path.dirname(_sys.executable)
-        else:
-            _base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        output_dir = os.path.join(_base, 'table_recognition_results')
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(doc_path))), 'table_recognition_results')
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
             print(f"-> 已创建输出目录: {output_dir}")

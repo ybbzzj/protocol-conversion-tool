@@ -95,14 +95,6 @@ added_datas = [
     (os.path.join(base_dir, 'backend', 'config_templates.json'), 'backend'),
 ]
 
-# 识别结果目录（1_分类日志 / 2_原始表 / 3_关联表 / 4_处理后表 / latest_综合摘要）
-# 随包发布；exe 每次识别文档都会在该目录重新生成最新结果。
-_recog_dir = os.path.join(base_dir, 'table_recognition_results')
-if os.path.isdir(_recog_dir):
-    added_datas.append((_recog_dir, 'table_recognition_results'))
-else:
-    print("Warning: 未找到 table_recognition_results 目录，跳过打包（exe 运行时将自动创建该目录）")
-
 datas.extend(added_datas)
 
 # --- 定义分析目标 ---

@@ -104,7 +104,7 @@ pyinstaller --clean "%~dp0build.spec"
 
 if %errorlevel% equ 0 (
     echo.
-    echo [3/3] [%time%] PyInstaller 完成，正在准备发布目录...
+    echo [3/3] [%time%] PyInstaller 完成，正在复制语义模型到发布目录...
     set "MODEL_SRC=%~dp0models\bge-small-zh-v1.5-onnx"
     set "MODEL_DST=%~dp0dist\协议转换工具\models\bge-small-zh-v1.5-onnx"
     
@@ -127,15 +127,6 @@ if %errorlevel% equ 0 (
         echo ⚠️  未找到模型目录，跳过自动复制：!MODEL_SRC!
     )
 
-    REM 确保识别结果目录存在于发布包（exe 每次识别文档都会在此重新生成结果）
-    set "RECOG_DST=%~dp0dist\协议转换工具\table_recognition_results"
-    if not exist "!RECOG_DST!" (
-        mkdir "!RECOG_DST!"
-        echo ✅ 已创建识别结果目录：!RECOG_DST!
-    ) else (
-        echo ✅ 识别结果目录已就绪：!RECOG_DST!
-    )
-
     echo.
     echo ============================================================
     echo ✅ [%time%] 打包完成！
@@ -156,12 +147,6 @@ if %errorlevel% equ 0 (
     echo 📂 部署结构:
     echo    协议转换工具/
     echo    ├── 协议转换工具.exe
-    echo    ├── table_recognition_results/   ← 每次识别文档自动生成的结果
-    echo    │   ├── 1_classification_log.json
-    echo    │   ├── 2_raw_tables.json
-    echo    │   ├── 3_linked_tables.json
-    echo    │   ├── 4_processed_tables.json
-    echo    │   └── latest_recognition.json
     echo    └── models/
     echo        └── bge-small-zh-v1.5-onnx/
     echo.

@@ -681,6 +681,20 @@ class TableDetector:
         2. 必须有类型/长度字段命中（数据类型/类型/数据长度等）
         3. 配置字段与表头的匹配度足够高
         """
+        # ── 强制匹配：用户配置了表的全部字段（全字段覆盖） ──
+        # 当用户明确给出该表的所有字段名时，即使不含标准关键词
+        # （内容/参数/类型/字节），也强制识别为字段定义表，绕过下方硬性要求。
+        # 这是"输入所有字段 → 强制识别非标准/自定义协议表"的通道。
+        if required_fields and header_fields:
+            req_set = set(f.strip() for f in required_fields if f.strip())
+            non_empty_hf = [hf for hf in header_fields if hf]
+            if len(non_empty_hf) >= 2:
+                covered = sum(1 for hf in non_empty_hf if hf in req_set)
+                # 表头所有列名都被配置字段覆盖 → 视为用户明确配置，强制匹配
+                if covered == len(non_empty_hf):
+                    logger.info("配置强制匹配(全字段覆盖): 跳过标准关键词要求，识别为字段定义表")
+                    return True
+
         # 检查内容字段
         content_candidates = ['内容', '参数', '信号名称', '信息内容', '数据含义', '字段']
         has_content_field = any(c in headers_text for c in content_candidates)
@@ -894,6 +908,12 @@ class TableDetector:
         if not grid or len(grid) < 1:
             return base
 
+        # 提前收集配置字段名（供配置匹配、噪声过滤、字段表解析共用）
+        config_field_names = []
+        for cfg in self.table_configs:
+            config_field_names.extend(cfg.get('required_fields', []))
+        config_field_names = [f.strip() for f in config_field_names if f.strip()]
+
         # 获取行0去重内容
         row0_unique = _dedup_row(grid[0])
         row0_text = ' '.join(row0_unique)
@@ -911,7 +931,7 @@ class TableDetector:
             self._log_table_status(t_idx, '配置匹配', f'命中配置: {matched_table_type}', matched_table_type, headers=row0_unique, preceding=preceding_para)
             
             if matched_table_type == 'field_def':
-                return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para)
+                return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para, config_field_names)
             elif matched_table_type == 'message_id':
                 config_roles = config.get('column_roles', {})
                 return self._parse_message_id_table(grid, t_idx, preceding_para, config_roles)
@@ -975,10 +995,6 @@ class TableDetector:
 
         # 判断是否为干扰/无效表格
         # 传入配置字段名列表，让噪声过滤函数知道哪些表头是用户期望的
-        config_field_names = []
-        for cfg in self.table_configs:
-            config_field_names.extend(cfg.get('required_fields', []))
-        
         if _is_noise_table(grid, preceding_para, config_field_names):
             # 检查是否匹配目标名称，如果匹配则强制提取
             if not _match_target_message_name(grid, preceding_para, self.target_message_names):
@@ -990,7 +1006,7 @@ class TableDetector:
         
         # ── 字段定义表（最后处理） ──────────────────────────────────────────────
         self._log_table_status(t_idx, '智能识别', '字段定义表', 'field_def', headers=row0_unique, preceding=preceding_para)
-        return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para)
+        return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para, config_field_names)
 
     # ── 端口分配表 ────────────────────────────────────────────────────────────
 
@@ -1098,8 +1114,10 @@ class TableDetector:
     # ── 字段定义表（A/B/C 三种类型 + 聚合式） ─────────────────────────────────
 
     def _parse_field_def_table(self, grid: List[List[str]], is_vmerge_cont: List[List[bool]],
-                                t_idx: int, preceding_para: str) -> Dict:
+                                t_idx: int, preceding_para: str,
+                                config_field_names: List[str] = None) -> Dict:
         n_rows = len(grid)
+        cfg_set = set(f.strip() for f in (config_field_names or []) if f.strip())
         skip_result = {
             'index': t_idx, 'msg_name': '', 'headers': [], 'data_rows': [],
             'meta': {}, 'table_type': 'skip', 'is_auxiliary': False,
@@ -1190,9 +1208,26 @@ class TableDetector:
                 
                 if is_metadata_row_pattern:
                     continue
-                
+
                 # 判断是否是表头行
-                if has_type or (has_content and has_seq) or (has_content and len(ru) >= 3) or has_aggregate_marker:
+                is_header_by_kw = has_type or (has_content and has_seq) or \
+                                  (has_content and len(ru) >= 3) or has_aggregate_marker
+
+                # ── 配置兜底：关键词未命中时，用配置字段完全覆盖判定 ──
+                # 用户配齐该表字段时，即使列名全是自定义词（编号/项目/规格…）
+                # 也能强制认定为表头行。条件：该行所有列名都在配置字段中，
+                # 或（命中≥3 且 覆盖率≥70%）。
+                is_header_by_cfg = False
+                if not is_header_by_kw and cfg_set:
+                    non_empty = [c for c in ru if c and c.strip()]
+                    if len(non_empty) >= 2:
+                        covered = sum(1 for c in non_empty if c.strip() in cfg_set)
+                        if covered == len(non_empty) or \
+                           (covered >= 3 and covered / len(non_empty) >= 0.7):
+                            is_header_by_cfg = True
+                            logger.info(f"配置兜底[行{r_idx}]: 表头全部由配置字段覆盖，强制认定为字段表头")
+
+                if is_header_by_kw or is_header_by_cfg:
                     header_row_idx = r_idx
                     break
 
@@ -1244,7 +1279,19 @@ class TableDetector:
                 # 消息名称来自前置段落标题
                 msg_name = _extract_name_from_para(preceding_para)
             else:
-                return skip_result
+                # 配置兜底：行0 列名全部在配置字段中 → 强制认定为字段表头
+                header_row_idx = -1
+                if cfg_set:
+                    row0_cells = [c for c in _dedup_row(grid[0]) if c and c.strip()]
+                    if len(row0_cells) >= 2:
+                        covered = sum(1 for c in row0_cells if c.strip() in cfg_set)
+                        if covered == len(row0_cells) or \
+                           (covered >= 3 and covered / len(row0_cells) >= 0.7):
+                            header_row_idx = 0
+                            msg_name = _extract_name_from_para(preceding_para)
+                            logger.info("配置兜底[B/C]: 行0 列名全部由配置字段覆盖，强制认定为字段表头")
+                if header_row_idx == -1:
+                    return skip_result
 
         if header_row_idx == -1:
             return skip_result

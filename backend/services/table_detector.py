@@ -347,13 +347,13 @@ def _is_noise_table(grid: List[List[str]], preceding_para: str, config_field_nam
             return match_count, len(non_empty)
 
         def _check_match_pass(match_count: int, total: int) -> bool:
-            """三档阈值：全部命中 OR >=70% OR >=3个绝对数量"""
+            """三档阈值：全部命中 OR >=60% OR >=3个绝对数量"""
             if total == 0:
                 return False
             if match_count >= total:
                 return True  # 全部命中
-            if match_count / total >= 0.70:
-                return True  # >=70%
+            if match_count / total >= 0.60:
+                return True  # >=60%
             if match_count >= 3:
                 return True  # 绝对数量兜底（避免表头列数多时比例稀释）
             return False
@@ -1216,14 +1216,14 @@ class TableDetector:
                 # ── 配置兜底：关键词未命中时，用配置字段完全覆盖判定 ──
                 # 用户配齐该表字段时，即使列名全是自定义词（编号/项目/规格…）
                 # 也能强制认定为表头行。条件：该行所有列名都在配置字段中，
-                # 或（命中≥3 且 覆盖率≥70%）。
+                # 或（命中≥3 且 覆盖率≥60%）。
                 is_header_by_cfg = False
                 if not is_header_by_kw and cfg_set:
                     non_empty = [c for c in ru if c and c.strip()]
                     if len(non_empty) >= 2:
                         covered = sum(1 for c in non_empty if c.strip() in cfg_set)
                         if covered == len(non_empty) or \
-                           (covered >= 3 and covered / len(non_empty) >= 0.7):
+                           (covered >= 3 and covered / len(non_empty) >= 0.6):
                             is_header_by_cfg = True
                             logger.info(f"配置兜底[行{r_idx}]: 表头全部由配置字段覆盖，强制认定为字段表头")
 
@@ -1286,7 +1286,7 @@ class TableDetector:
                     if len(row0_cells) >= 2:
                         covered = sum(1 for c in row0_cells if c.strip() in cfg_set)
                         if covered == len(row0_cells) or \
-                           (covered >= 3 and covered / len(row0_cells) >= 0.7):
+                           (covered >= 3 and covered / len(row0_cells) >= 0.6):
                             header_row_idx = 0
                             msg_name = _extract_name_from_para(preceding_para)
                             logger.info("配置兜底[B/C]: 行0 列名全部由配置字段覆盖，强制认定为字段表头")

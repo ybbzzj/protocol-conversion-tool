@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-import re
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+import re
+from typing import List, Dict, Optional, Tuple
+
 from docx import Document
 from docx.oxml.ns import qn
 
@@ -50,6 +51,19 @@ COL_REMARK_CANDIDATES = ['备注', '说明', '数据来源']
 COL_UNIT_CANDIDATES = ['单位']
 # 固定值列候选名（计算结果表中的"值"列）
 COL_VALUE_CANDIDATES = ['值']
+
+# Type A 候选行优先扫描词（含这些词的行优先作为候选行，但不再强制要求）
+_TYPE_A_PREFERRED_SCAN_KEYWORDS = {
+    '序号', '内容', '参数', '长度', '单位', '说明',
+    '数据类型', '类型', '值域', '字节', '字节数'
+}
+
+# Type A 元数据行特征词（用于识别并跳过元数据行，避免误把元数据行当字段表头）
+_TYPE_A_META_KEYWORDS = {
+    '信息名称', '通信帧名称', '信息标识', '上级信息名称',
+    '信息流向', '传输周期', '发起时机', '错误处理',
+    '传送周期', '发送周期', '组成分组', '其他'
+}
 
 
 # ─── 辅助函数 ─────────────────────────────────────────────────────────────────
@@ -366,19 +380,44 @@ def _is_noise_table(grid: List[List[str]], preceding_para: str, config_field_nam
 
         # 第二档：Type A 表兜底 —— 行0是元数据行（含"通信帧名称/信息名称"），
         # 真正的字段表头在下面某行。向下扫描找候选行。
+        #
+        # 【兜底策略 - 两阶段扫描】
+        #   Phase 1：优先匹配含标准候选词（序号/内容/说明等）的行（兼容老逻辑）
+        #   Phase 2：若 Phase1 未命中，扫描所有非元数据行做配置匹配（纯自定义词兜底）
+        #           这样即使表头全为自定义词（编号/项目/规格/量程等）也能走配置通道。
         is_type_a_meta_row = any(kw in row0_text for kw in ['信息名称', '通信帧名称'])
         if is_type_a_meta_row:
-            candidate_scan_keywords = {'序号', '内容', '参数', '长度', '单位', '说明',
-                                        '数据类型', '类型', '值域', '字节', '字节数'}
+            # Phase 1：含标准候选词的行（老逻辑，优先匹配）
             for cand_r_idx in range(1, min(8, len(grid))):
                 cand_ru = _dedup_row(grid[cand_r_idx])
                 cand_rt = ' '.join(cand_ru)
-                # 候选行必须含至少一个字段表头关键词
-                if any(kw in cand_rt for kw in candidate_scan_keywords):
+                if any(kw in cand_rt for kw in _TYPE_A_PREFERRED_SCAN_KEYWORDS):
                     c_mc, c_total = _count_config_match(cand_ru)
                     if _check_match_pass(c_mc, c_total):
-                        logger.info(f"配置兜底[行{cand_r_idx}]: TypeA候选行匹配({c_mc}/{c_total})，不过滤")
+                        logger.info(f"配置兜底[行{cand_r_idx}][Phase1-含候选词]: TypeA匹配({c_mc}/{c_total})，不过滤")
                         return False
+
+            # Phase 2：纯自定义词兜底 —— 扫描所有非元数据行
+            # 跳过：含元数据关键词的行 / 含标准候选词的行（Phase1已处理）/ 无效行
+            for cand_r_idx in range(1, min(8, len(grid))):
+                cand_ru = _dedup_row(grid[cand_r_idx])
+                cand_rt = ' '.join(cand_ru)
+                # 跳过含标准候选词的行（Phase1已处理过）
+                if any(kw in cand_rt for kw in _TYPE_A_PREFERRED_SCAN_KEYWORDS):
+                    continue
+                # 跳过含元数据关键词的行
+                if any(kw in cand_rt for kw in _TYPE_A_META_KEYWORDS):
+                    continue
+                # 有效字段行：至少有2个非空、长度>=2、非纯数字的单元格
+                valid_cells = [c for c in cand_ru
+                               if c.strip() and len(c.strip()) >= 2
+                               and not c.strip().lstrip('+-').replace('.', '').isdigit()]
+                if len(valid_cells) < 2:
+                    continue
+                c_mc, c_total = _count_config_match(cand_ru)
+                if _check_match_pass(c_mc, c_total):
+                    logger.info(f"配置兜底[行{cand_r_idx}][Phase2-纯自定义词]: TypeA匹配({c_mc}/{c_total})，不过滤")
+                    return False
 
     # ── 以下才执行干扰过滤 ────────────────────────────────────────────────
     
@@ -644,7 +683,7 @@ class TableDetector:
                 matched = self._match_field_def_config(headers_text, header_fields, required_fields, is_lenient)
                 if not matched:
                     continue
-            
+
             # ── ID表配置匹配 ──────────────────────────────────────────────
             elif table_type == 'message_id':
                 matched = self._match_message_id_config(headers_text, header_fields, required_fields, column_roles, config)
@@ -1474,8 +1513,6 @@ class DocumentParser:
         self.linker = TableLinker()
 
     def parse(self, path: str, options: Dict = None) -> Dict:
-        import json
-        import os
 
         # 应用输出控制选项
         options = options or {}

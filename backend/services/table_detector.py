@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # 信息名称行中不是消息名称的固定噪声词
 INFO_NAME_ROW_NOISE = {
-    '信息名称', '通信帧名称', '信息标识', '上级信息名称',
+    '信息名称', '通信帧名称', '通信帧名字', '信息标识', '上级信息名称',
     '信息流向', '—', '－', '-', '', 'xx', 'XX',
     '信源、信宿', '信源、信目', '信源', '信宿',
     '传输周期', '发起时机', '错误处理', '其他',
@@ -60,9 +60,17 @@ _TYPE_A_PREFERRED_SCAN_KEYWORDS = {
 
 # Type A 元数据行特征词（用于识别并跳过元数据行，避免误把元数据行当字段表头）
 _TYPE_A_META_KEYWORDS = {
-    '信息名称', '通信帧名称', '信息标识', '上级信息名称',
+    '信息名称', '通信帧名称', '通信帧名字', '信息标识', '上级信息名称',
     '信息流向', '传输周期', '发起时机', '错误处理',
-    '传送周期', '发送周期', '组成分组', '其他'
+    '传送周期', '发送周期', '组成分组', '其他',
+    '前置条件', '自检结果', '前置条件/非周期', '发送周期或次数',
+}
+
+# 混合表（聚合式）默认识别词：行0 含这些词即判定为“先寒暄再聊正事”的混合表。
+# 与 TableDetector.mixed_table_markers 保持一致；此处作为模块级默认值，
+# 供模块级函数（如 _is_noise_table）在无 self 时回退使用。
+DEFAULT_MIXED_MARKERS = {
+    '信息名称', '通信帧名称', '通信帧名字', '信息标识', '上级信息名称',
 }
 
 
@@ -300,7 +308,8 @@ def _parse_aggregate_meta(text: str) -> Dict:
     return meta
 
 
-def _is_noise_table(grid: List[List[str]], preceding_para: str, config_field_names: List[str] = None) -> bool:
+def _is_noise_table(grid: List[List[str]], preceding_para: str, config_field_names: List[str] = None,
+                   mixed_markers: set = None) -> bool:
     """
     判断是否为干扰/无效表格：
     1. 前置段落含干扰词
@@ -385,7 +394,7 @@ def _is_noise_table(grid: List[List[str]], preceding_para: str, config_field_nam
         #   Phase 1：优先匹配含标准候选词（序号/内容/说明等）的行（兼容老逻辑）
         #   Phase 2：若 Phase1 未命中，扫描所有非元数据行做配置匹配（纯自定义词兜底）
         #           这样即使表头全为自定义词（编号/项目/规格/量程等）也能走配置通道。
-        is_type_a_meta_row = any(kw in row0_text for kw in ['信息名称', '通信帧名称'])
+        is_type_a_meta_row = any(kw in row0_text for kw in (mixed_markers or DEFAULT_MIXED_MARKERS))
         if is_type_a_meta_row:
             # Phase 1：含标准候选词的行（老逻辑，优先匹配）
             for cand_r_idx in range(1, min(8, len(grid))):
@@ -489,7 +498,7 @@ class TableDetector:
     4. 配置兜底：字段表命中配置后必须提取，ID表命中后用于补ID
     """
 
-    def __init__(self, config=None, target_message_names=None):
+    def __init__(self, config=None, target_message_names=None, mixed_markers=None):
         # 输出控制：是否丢弃 data_rows 末尾的 CRC 校验字行（默认开启，保持既有行为）
         self.remove_crc_tail = True
         # 保留 keywords 等属性以兼容外部调用
@@ -510,7 +519,22 @@ class TableDetector:
         
         # 配置兜底：用户传入的表格配置
         self.table_configs = self._parse_config(config)
-        
+
+        # ── 混合表（Type A / 聚合式）识别词：可配置 ──────────────────────────
+        # 默认覆盖常见写法；用户可通过 config['mixed_table_markers'] 或
+        # 构造参数 mixed_markers 追加不常见的元数据表头词（如“通信帧名字”）。
+        # 这些词出现在表格首行即判定为“先寒暄再聊正事”的混合表，
+        # 程序会跳过前面的元数据行去找真正的字段表头。
+        cfg_markers = mixed_markers
+        if not cfg_markers and isinstance(config, dict):
+            cfg_markers = config.get('mixed_table_markers')
+        if cfg_markers:
+            self.mixed_table_markers = set(m.strip() for m in cfg_markers if str(m).strip())
+        else:
+            self.mixed_table_markers = {
+                '信息名称', '通信帧名称', '通信帧名字', '信息标识', '上级信息名称',
+            }
+
         # 日志记录器
         self.log_records = []
     
@@ -646,6 +670,15 @@ class TableDetector:
             })
         
         return configs
+    
+    def _config_field_names(self) -> set:
+        """汇总所有配置里的字段名，供元数据字段识别兜底使用。"""
+        names = set()
+        for cfg in self.table_configs:
+            for f in (cfg.get('required_fields') or []):
+                if isinstance(f, str) and f.strip():
+                    names.add(f.strip())
+        return names
     
     def _match_config(self, grid, headers_text):
         """
@@ -1034,7 +1067,7 @@ class TableDetector:
 
         # 判断是否为干扰/无效表格
         # 传入配置字段名列表，让噪声过滤函数知道哪些表头是用户期望的
-        if _is_noise_table(grid, preceding_para, config_field_names):
+        if _is_noise_table(grid, preceding_para, config_field_names, self.mixed_table_markers):
             # 检查是否匹配目标名称，如果匹配则强制提取
             if not _match_target_message_name(grid, preceding_para, self.target_message_names):
                 self._log_table_status(t_idx, '过滤', '噪声表', 'skip', headers=row0_unique, preceding=preceding_para)
@@ -1152,6 +1185,52 @@ class TableDetector:
 
     # ── 字段定义表（A/B/C 三种类型 + 聚合式） ─────────────────────────────────
 
+    def _record_rows_below(self, grid: List[List[str]], r: int) -> int:
+        """结构校验：统计候选表头行 r 下方“像记录”的行数。
+        记录行 = 至少 2 个非空非占位单元格，且列宽与候选表头接近。
+        作用：即使某行元数据长得像字段（如写了信源/信宿/周期），
+        只要它下方没有真实数据块，就不会被误判为字段表头。"""
+        n = len(grid)
+        h_cells = [c for c in _dedup_row(grid[r]) if c and c.strip()]
+        hw = len(h_cells)
+        if hw < 2:
+            return 0
+        cnt = 0
+        for r2 in range(r + 1, n):
+            rc = [c for c in _dedup_row(grid[r2]) if c and c.strip() and c.strip() not in ('—', '-')]
+            if len(rc) >= 2 and abs(len(rc) - hw) <= 3:
+                cnt += 1
+        return cnt
+
+    def _extract_meta_row(self, meta: Dict, row: List[str]) -> None:
+        """把横向“属性:值”元数据行抽进 meta（绝不进字段输出）。"""
+        ru = _dedup_row(row)
+        for i in range(0, len(ru) - 1, 2):
+            k = ru[i].strip()
+            v = ru[i + 1].strip() if i + 1 < len(ru) else ''
+            if not k or k in ('—', '-', ''):
+                continue
+            if not v:
+                continue
+            if k in ('信源、信宿', '信源、信目'):
+                meta['信源、信宿'] = v
+            elif '发起时机' in k:
+                meta.setdefault('发起时机', v)
+            elif '发送周期' in k or '发送周期或次数' in k:
+                meta.setdefault('发送周期', v)
+            elif '前置条件' in k:
+                meta.setdefault('前置条件', v)
+            elif '错误处理' in k:
+                meta.setdefault('错误处理', v)
+            elif '信息流向' in k:
+                meta.setdefault('信息流向', v)
+            elif '备注' in k:
+                meta.setdefault('备注', v)
+            elif k in self.mixed_table_markers:
+                meta.setdefault(k, v)
+            else:
+                meta.setdefault(k, v)
+
     def _parse_field_def_table(self, grid: List[List[str]], is_vmerge_cont: List[List[bool]],
                                 t_idx: int, preceding_para: str,
                                 config_field_names: List[str] = None) -> Dict:
@@ -1167,7 +1246,7 @@ class TableDetector:
         row0_unique = _dedup_row(grid[0])
         row0_text = ' '.join(row0_unique)
         # 聚合式表格识别：行0含特定关键词 或 前置段落含"聚合式"
-        has_info_name_row = any(kw in row0_text for kw in ['信息名称', '通信帧名称'])
+        has_info_name_row = any(kw in row0_text for kw in self.mixed_table_markers)
         is_aggregate_table = '聚合式' in preceding_para
 
         header_row_idx = -1
@@ -1221,7 +1300,7 @@ class TableDetector:
                 rt = ' '.join(ru)
                 has_type = any(kw in rt for kw in ['数据类型', '类型', '数据格式', '字节', '字节数', '长度', '数据长度'])
                 # 对于聚合式表格，需要更精确地识别内容列（排除元数据行）
-                has_content = any(kw in rt for kw in ['内容', '参数', '信号名称', '字段', '数据含义', '名称'])
+                has_content = any(kw in rt for kw in ['内容', '参数', '信号名称', '字段', '数据含义', '数据项名称', '参数名称'])
                 # 添加聚合式特有的表头标记
                 has_aggregate_marker = any(kw in rt for kw in ['计算结果', '消息类型', '消息序号']) and has_type
                 has_seq = '序号' in rt
@@ -1266,7 +1345,7 @@ class TableDetector:
                             is_header_by_cfg = True
                             logger.info(f"配置兜底[行{r_idx}]: 表头全部由配置字段覆盖，强制认定为字段表头")
 
-                if is_header_by_kw or is_header_by_cfg:
+                if (is_header_by_kw or is_header_by_cfg) and self._record_rows_below(grid, r_idx) >= 1:
                     header_row_idx = r_idx
                     break
 
@@ -1279,24 +1358,46 @@ class TableDetector:
                     row = _dedup_row(grid[r_idx])
                     row_text = ' '.join(row)
                     
-                    # ◄ 新增：横向元数据提取（键值对横向排列）
-                    # 特别处理这一行，假设列0=键1，列1=值1，列2=键2，列3=值2...
+                    # ◄ 横向元数据提取（键值对横向排列）
+                    # 假设列0=键1，列1=值1，列2=键2，列3=值2...
                     for col_idx in range(0, len(row) - 1, 2):
                         key_cell = row[col_idx].strip()
                         val_cell = row[col_idx + 1].strip() if col_idx + 1 < len(row) else ''
-                        
-                        if key_cell and val_cell and key_cell not in ('—', '-', ''):
+                        # 空值不写入 meta（避免“发送周期: ''”这类噪音）
+                        if not val_cell:
+                            continue
+
+                        if key_cell and key_cell not in ('—', '-', ''):
                             # 标准化元数据键
                             if key_cell in ['信源、信宿', '信源、信目']:
                                 meta['信源、信宿'] = val_cell
                             elif '发起时机' in key_cell:
                                 meta['发起时机'] = val_cell
-                            elif '发送周期' in key_cell:
+                            elif '发送周期' in key_cell or '发送周期或次数' in key_cell:
                                 meta['发送周期'] = val_cell
+                            elif '前置条件' in key_cell:
+                                meta['前置条件'] = val_cell
                             elif '错误处理' in key_cell:
                                 meta['错误处理'] = val_cell
+                            elif '信息流向' in key_cell:
+                                meta['信息流向'] = val_cell
                             elif '备注' in key_cell:
                                 meta['备注'] = val_cell
+                            elif '自检结果' in key_cell:
+                                # “自检结果”一般是信息名称行的值，已在 msg_name 处理，
+                                # 这里仅当它在元数据区重复出现时补充记录
+                                if val_cell:
+                                    meta.setdefault('自检结果', val_cell)
+                            else:
+                                # ── 通用兜底：用户配置里把这些元数据词当作字段，
+                                #    或本身就是已知元数据标记 → 也作为元数据字段保留 ──
+                                is_meta_field = (
+                                    key_cell in self.mixed_table_markers
+                                    or any(cfgf in key_cell for cfgf in self._config_field_names())
+                                    or key_cell in _TYPE_A_META_KEYWORDS
+                                )
+                                if is_meta_field and key_cell not in meta:
+                                    meta[key_cell] = val_cell
                     
                     # ◄ 原有逻辑：处理特殊格式（BCRT、SA等）
                     if any(kw in row_text for kw in ['BCRT', 'SA', '模式码', '→', 'BC']):
@@ -1308,29 +1409,56 @@ class TableDetector:
                             if '→' in cell or ':' in cell:
                                 meta['信源、信宿'] = cell
         else:
-            # 类型B / C：行0 就是列名行
-            row0_text = ' '.join(_dedup_row(grid[0]))
-            # 扩展类型字段检测：包含"数据长度"类字段（如"数据长度（字节）"）
-            has_type = any(kw in row0_text for kw in ['数据类型', '类型', '数据格式', '数据长度', '字节数'])
-            has_content = any(kw in row0_text for kw in ['内容', '参数', '信号名称', '字段', '数据含义', '名称'])
-            if has_type or has_content:
-                header_row_idx = 0
-                # 消息名称来自前置段落标题
+            # 类型B / C：默认行0 就是列名行，但也要向下扫描，
+            # 防止行0 是元数据/说明行而真正的字段表头在下面。
+            # 判定“表头”的两道关卡：
+            #   1) 结构校验：该行下方要有真实记录块（否则只是“长得像字段的元数据行”）；
+            #   2) 候选优先：多个候选都像表头时，优先选含“字段关键词”（序号/内容/类型）
+            #      的行，而不是只含“元数据词”（信源/信宿/周期）的行——
+            #      这正是“元数据有时和字段长得很像”时的破局点。
+            header_row_idx = -1
+            msg_name = ''
+            candidates = []
+            for scan_r in range(0, min(8, n_rows)):
+                ru = _dedup_row(grid[scan_r])
+                rt = ' '.join(ru)
+                has_type = any(kw in rt for kw in ['数据类型', '类型', '数据格式', '数据长度', '字节数', '长度', '字节'])
+                has_content = any(kw in rt for kw in ['内容', '参数', '信号名称', '字段', '数据含义', '数据项名称', '参数名称'])
+                has_seq = '序号' in rt
+                # 跳过明显是元数据行（含元数据标记且既无内容也无序号）
+                is_meta = (any(kw in rt for kw in _TYPE_A_META_KEYWORDS)
+                           and not has_content and not has_seq)
+                if is_meta:
+                    continue
+                is_header_by_kw = has_type or (has_content and has_seq) or \
+                                  (has_content and len(ru) >= 3)
+                is_header_by_cfg = False
+                if not is_header_by_kw and cfg_set:
+                    non_empty = [c for c in ru if c and c.strip()]
+                    if len(non_empty) >= 2:
+                        covered = sum(1 for c in non_empty if c.strip() in cfg_set)
+                        if covered == len(non_empty) or \
+                           (covered >= 3 and covered / len(non_empty) >= 0.6):
+                            is_header_by_cfg = True
+                # 结构校验：该行下方必须存在真实记录块（否则只是“长得像字段的元数据行”）
+                has_data_block = self._record_rows_below(grid, scan_r) >= 1
+                if (is_header_by_kw or is_header_by_cfg) and has_data_block:
+                    has_field_kw = has_type or has_content or has_seq
+                    candidates.append((scan_r, has_field_kw, self._record_rows_below(grid, scan_r)))
+            if candidates:
+                # 选：优先含字段关键词的行，其次数据块多，最后靠上
+                candidates.sort(key=lambda c: (c[1], c[2], -c[0]), reverse=True)
+                header_row_idx = candidates[0][0]
                 msg_name = _extract_name_from_para(preceding_para)
-            else:
-                # 配置兜底：行0 列名全部在配置字段中 → 强制认定为字段表头
-                header_row_idx = -1
-                if cfg_set:
-                    row0_cells = [c for c in _dedup_row(grid[0]) if c and c.strip()]
-                    if len(row0_cells) >= 2:
-                        covered = sum(1 for c in row0_cells if c.strip() in cfg_set)
-                        if covered == len(row0_cells) or \
-                           (covered >= 3 and covered / len(row0_cells) >= 0.6):
-                            header_row_idx = 0
-                            msg_name = _extract_name_from_para(preceding_para)
-                            logger.info("配置兜底[B/C]: 行0 列名全部由配置字段覆盖，强制认定为字段表头")
-                if header_row_idx == -1:
-                    return skip_result
+                if header_row_idx == 0:
+                    logger.info("表头定位[B/C]: 行0 即字段表头")
+                else:
+                    logger.info(f"表头定位[B/C]: 向下找到字段表头行{header_row_idx}（混合表）")
+                    # 表头之上的行视为元数据带，抽进 meta（不进字段输出）
+                    for r in range(0, header_row_idx):
+                        self._extract_meta_row(meta, grid[r])
+            if header_row_idx == -1:
+                return skip_result
 
         if header_row_idx == -1:
             return skip_result

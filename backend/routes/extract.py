@@ -383,6 +383,9 @@ def _build_processed_tables(linked_tables, user_overrides=None):
                     target = match_res.get('target') if isinstance(match_res, dict) else (match_res.target if hasattr(match_res, 'target') else field)
                     target = target if target else field
                 matched_row[target] = value
+                # 保留原始字段名，供导出器查找备注等列
+                if target != field:
+                    matched_row[field] = value
 
             # 保留格式化结果（值域、转换公式）
             for fkey, fval in proc_res.get('formatted', {}).items():

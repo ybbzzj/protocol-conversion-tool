@@ -408,8 +408,6 @@ class ExcelExporter:
         查找顺序（只取第一个有值的字段）：
         1. 备注 / 说明 / 数据来源 列
         2. 数据处理方法 列（若无专用备注列，把处理方法说明放入备注）
-        3. 判读公式 列（若值不是有效的公式/范围格式，说明是数据处理方法的描述文本，
-           因为知识库可能将"数据处理方法"映射到"判读公式"）
         """
         # 优先查专用备注字段
         for k, v in cleaned.items():
@@ -421,15 +419,6 @@ class ExcelExporter:
             if '数据处理方法' in k:
                 if v and str(v).strip() not in ('—', '-', ''):
                     return str(v).strip()
-        # 最后查判读公式列：如果值不是有效的范围/枚举/公式格式，
-        # 说明原本是数据处理方法的描述文本（被知识库映射成了判读公式）
-        for k, v in cleaned.items():
-            if '判读公式' in k and v and str(v).strip() not in ('—', '-', ''):
-                val = str(v).strip()
-                # 有效的判读公式格式：[数字,数字] 或 {枚举值}
-                if re.match(r'^\[.*\]$', val) or re.match(r'^\{.*\}$', val):
-                    continue  # 是有效格式，不当作备注
-                return val
         return ''
 
     def _extract_range(self, cleaned: Dict, formatted: Dict) -> Optional[tuple]:

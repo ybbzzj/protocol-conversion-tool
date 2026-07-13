@@ -68,7 +68,6 @@ class ExcelExporter:
     # 元数据键 → Excel 列名 映射
     META_TO_EXCEL: Dict[str, str] = {
         '消息ID':     'ID',
-        '信息标识':   'ID',
         '信息 ID':     'ID',
         '信息名称':   '名称',
         '信源系统码': '信源系统码',

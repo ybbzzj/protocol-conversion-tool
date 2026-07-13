@@ -78,10 +78,6 @@ class ExcelExporter:
         '子地址':     '子地址',
     }
 
-    # 这些元数据键不应映射到任何 Excel 列（避免模糊匹配误覆盖）
-    _META_NO_MAP = {'上级信息名称', '通信帧名字', '通信帧名称', '前置条件',
-                    '发送周期', '传输周期', '错误处理', '发起时机', '其他'}
-
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
@@ -274,6 +270,9 @@ class ExcelExporter:
                         excel_col = self._meta_key_to_excel_col(mk, template_headers)
                         src = meta_sources.get(mk, 'original')
                         if excel_col:
+                            # 不覆盖已有值（特别是名称列，msg_name 优先）
+                            if excel_col in fill_data and fill_data[excel_col]:
+                                continue
                             fill_data[excel_col] = mv
                             if src == 'linked':
                                 color_map[excel_col] = COLOR_BLUE
@@ -409,6 +408,8 @@ class ExcelExporter:
         查找顺序（只取第一个有值的字段）：
         1. 备注 / 说明 / 数据来源 列
         2. 数据处理方法 列（若无专用备注列，把处理方法说明放入备注）
+        3. 判读公式 列（若值不是有效的公式/范围格式，说明是数据处理方法的描述文本，
+           因为知识库可能将"数据处理方法"映射到"判读公式"）
         """
         # 优先查专用备注字段
         for k, v in cleaned.items():
@@ -420,6 +421,15 @@ class ExcelExporter:
             if '数据处理方法' in k:
                 if v and str(v).strip() not in ('—', '-', ''):
                     return str(v).strip()
+        # 最后查判读公式列：如果值不是有效的范围/枚举/公式格式，
+        # 说明原本是数据处理方法的描述文本（被知识库映射成了判读公式）
+        for k, v in cleaned.items():
+            if '判读公式' in k and v and str(v).strip() not in ('—', '-', ''):
+                val = str(v).strip()
+                # 有效的判读公式格式：[数字,数字] 或 {枚举值}
+                if re.match(r'^\[.*\]$', val) or re.match(r'^\{.*\}$', val):
+                    continue  # 是有效格式，不当作备注
+                return val
         return ''
 
     def _extract_range(self, cleaned: Dict, formatted: Dict) -> Optional[tuple]:
@@ -603,19 +613,18 @@ class ExcelExporter:
         """
         将元数据键名映射到 Excel 列名。
         先查精确映射表，再做模糊匹配。
+        模糊匹配要求列名是元数据键的子串（而非反过来），
+        避免短列名（如'名称'）被长元数据键（如'上级信息名称'）误匹配。
         """
-        # 不映射的键（避免模糊匹配误覆盖，如"上级信息名称"覆盖"名称"列）
-        if meta_key in self._META_NO_MAP:
-            return None
-
         # 精确映射
         col = self.META_TO_EXCEL.get(meta_key)
         if col and col in template_headers:
             return col
 
-        # 模糊：直接列名包含 key 或 key 包含列名
+        # 模糊：只允许列名是元数据键的子串（如 '子地址' in '信宿子地址'），
+        # 不允许元数据键是列名的子串（如 '名称' in '上级信息名称' 会误匹配）
         for h in template_headers:
-            if h and (meta_key in h or h in meta_key):
+            if h and h != meta_key and h in meta_key and len(h) >= 2:
                 return h
 
         return None

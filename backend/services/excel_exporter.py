@@ -70,12 +70,17 @@ class ExcelExporter:
         '消息ID':     'ID',
         '信息标识':   'ID',
         '信息 ID':     'ID',
+        '信息名称':   '名称',
         '信源系统码': '信源系统码',
         '信源机器码': '信源机器码',
         '信宿系统码': '信宿系统码',
         '信宿机器码': '信宿机器码',
         '子地址':     '子地址',
     }
+
+    # 这些元数据键不应映射到任何 Excel 列（避免模糊匹配误覆盖）
+    _META_NO_MAP = {'上级信息名称', '通信帧名字', '通信帧名称', '前置条件',
+                    '发送周期', '传输周期', '错误处理', '发起时机', '其他'}
 
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
@@ -599,6 +604,10 @@ class ExcelExporter:
         将元数据键名映射到 Excel 列名。
         先查精确映射表，再做模糊匹配。
         """
+        # 不映射的键（避免模糊匹配误覆盖，如"上级信息名称"覆盖"名称"列）
+        if meta_key in self._META_NO_MAP:
+            return None
+
         # 精确映射
         col = self.META_TO_EXCEL.get(meta_key)
         if col and col in template_headers:

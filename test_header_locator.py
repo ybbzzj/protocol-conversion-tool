@@ -329,11 +329,7 @@ TEST_CASES = [
         'config': None,
         'expected_tables': [
             {
-                'table_type': 'field_def',
-                'header_contains': ['序号', '位置状态'],
-                'data_rows_min': 2,
-                'data_rows_max': 4,
-                'header_row_idx': 0,
+                'table_type': 'skip',
             }
         ]
     },

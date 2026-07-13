@@ -1159,9 +1159,22 @@ class TableDetector:
             self._log_table_status(t_idx, '智能识别', 'bit位定义表', 'bit_def', headers=headers, preceding=preceding_para)
             return self._parse_bit_def_table(grid, t_idx, preceding_para)
 
-        # 5. 字段定义表（有强字段关键词即可）
-        has_strong = any(kw in headers_text for kw in self._STRONG_FIELD_KW)
-        if has_strong or cfg_set:
+        # 5. 字段定义表
+        #    要求：表头中命中至少 2 个强字段关键词，或命中 1 个强字段 + 1 个弱字段，
+        #    或有配置字段匹配。单独只有"序号"不算字段定义表（可能是设备列表等）。
+        header_cell_set = set(h.strip() for h in headers if h.strip())
+        strong_hits = header_cell_set & self._STRONG_FIELD_KW
+        weak_hits = header_cell_set & self._WEAK_FIELD_KW
+        has_cfg_match = False
+        if cfg_set:
+            non_empty = [h for h in header_cell_set if h]
+            if non_empty:
+                covered = sum(1 for h in non_empty if h in cfg_set)
+                if covered == len(non_empty) or (covered >= 3 and covered / len(non_empty) >= 0.6):
+                    has_cfg_match = True
+
+        is_field_def = (len(strong_hits) >= 2) or (strong_hits and weak_hits) or has_cfg_match
+        if is_field_def:
             self._log_table_status(t_idx, '智能识别', '字段定义表', 'field_def', headers=headers, preceding=preceding_para)
             return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para,
                                                 header_row_idx, config_field_names)

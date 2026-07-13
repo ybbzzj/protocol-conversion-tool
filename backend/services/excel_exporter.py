@@ -610,10 +610,12 @@ class ExcelExporter:
         if col and col in template_headers:
             return col
 
-        # 模糊：只允许列名是元数据键的子串（如 '子地址' in '信宿子地址'），
-        # 不允许元数据键是列名的子串（如 '名称' in '上级信息名称' 会误匹配）
+        # 模糊匹配：列名等于元数据键，或列名是元数据键的子串
+        # 但要求列名长度 >= 3，避免短列名（如'名称'）匹配到包含它的长元数据键（如'上级信息名称'）
         for h in template_headers:
-            if h and h != meta_key and h in meta_key and len(h) >= 2:
+            if h and h == meta_key:
+                return h
+            if h and len(h) >= 3 and h in meta_key:
                 return h
 
         return None

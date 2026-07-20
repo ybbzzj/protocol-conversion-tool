@@ -1,0 +1,510 @@
+{
+  "task_id": "1b2aaa38",
+  "file": "测试1.docx",
+  "timestamp": "2026-07-13T17:32:46.383914",
+  "mapping_quality": {
+    "score": 1.0,
+    "level": "excellent",
+    "auto_count": 12,
+    "manual_count": 0,
+    "unmatched_count": 0,
+    "total": 12,
+    "expected_count": 0,
+    "covered_count": 0,
+    "coverage": 0
+  },
+  "expected_fields": [],
+  "tables_scanned": 28,
+  "tables_kept": 11,
+  "tables_skipped": 17,
+  "table_decisions": [
+    {
+      "table_index": 0,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [],
+      "preceding_para": ""
+    },
+    {
+      "table_index": 1,
+      "status": "过滤",
+      "reason": "表头无有效字段",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "设备名称",
+        "1553B总线"
+      ],
+      "preceding_para": "总线节点地址分配"
+    },
+    {
+      "table_index": 2,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "消息名称",
+        "信号形式",
+        "信源",
+        "信宿",
+        "周期",
+        "消息内容"
+      ],
+      "preceding_para": "接口"
+    },
+    {
+      "table_index": 3,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "设备名称",
+        "IP地址",
+        "网关",
+        "子网掩码号"
+      ],
+      "preceding_para": "IP地址表"
+    },
+    {
+      "table_index": 4,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "信源",
+        "信宿",
+        "信息内容",
+        "接收组播地址",
+        "接收端口号",
+        "信源系统码",
+        "信源机器码",
+        "信宿系统码",
+        "信宿机器码"
+      ],
+      "preceding_para": "端口分配表"
+    },
+    {
+      "table_index": 5,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "字节号",
+        "字段"
+      ],
+      "preceding_para": "协议格式"
+    },
+    {
+      "table_index": 6,
+      "status": "智能识别",
+      "reason": "消息ID表",
+      "table_type": "message_id",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "信源",
+        "信宿",
+        "信息内容",
+        "消息ID"
+      ],
+      "preceding_para": "消息ID编码表"
+    },
+    {
+      "table_index": 7,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "接口名称",
+        "接口形式",
+        "信息流向",
+        "发送时机",
+        "周期",
+        "重传 要求",
+        "确认标志",
+        "通信控制字",
+        "接口内容"
+      ],
+      "preceding_para": "通信内容"
+    },
+    {
+      "table_index": 8,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "字节号",
+        "意义",
+        "说明"
+      ],
+      "preceding_para": "协议格式"
+    },
+    {
+      "table_index": 9,
+      "status": "智能识别",
+      "reason": "消息ID表",
+      "table_type": "message_id",
+      "msg_name": null,
+      "headers": [
+        "ID序号",
+        "ID定义",
+        "是否有数据"
+      ],
+      "preceding_para": "帧ID定义"
+    },
+    {
+      "table_index": 10,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "消息名称",
+        "信号形式",
+        "信号流向",
+        "发起时机",
+        "周期",
+        "消息内容"
+      ],
+      "preceding_para": "与仿真机接口"
+    },
+    {
+      "table_index": 11,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "场景",
+        "充分性要求",
+        "验证内容",
+        "验证形式"
+      ],
+      "preceding_para": "总线信息帧验收要求"
+    },
+    {
+      "table_index": 12,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "场景",
+        "充分性要求",
+        "验证内容",
+        "验证形式"
+      ],
+      "preceding_para": "网络信息帧验收要求"
+    },
+    {
+      "table_index": 13,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "场景",
+        "充分性要求",
+        "验证内容",
+        "验证形式"
+      ],
+      "preceding_para": "RS422信息帧验收要求"
+    },
+    {
+      "table_index": 14,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "内容",
+        "长度",
+        "值域",
+        "单位",
+        "说明"
+      ],
+      "preceding_para": "表A.2 自检结果"
+    },
+    {
+      "table_index": 15,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "内容",
+        "类型",
+        "值域",
+        "单位",
+        "数据处理方法"
+      ],
+      "preceding_para": "表A.9 测试结果"
+    },
+    {
+      "table_index": 16,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "D0",
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "preceding_para": "表A.10 故障码"
+    },
+    {
+      "table_index": 17,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "内容",
+        "类型",
+        "值域",
+        "单位",
+        "数据处理方法"
+      ],
+      "preceding_para": "表A.11 测量数据"
+    },
+    {
+      "table_index": 18,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "内容",
+        "类型",
+        "值域",
+        "单位",
+        "数据处理方法"
+      ],
+      "preceding_para": "表A.13 运行状态数据"
+    },
+    {
+      "table_index": 19,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "。"
+      ],
+      "preceding_para": "。"
+    },
+    {
+      "table_index": 20,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "位置状态",
+        "动作"
+      ],
+      "preceding_para": "。"
+    },
+    {
+      "table_index": 21,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "动作",
+        "位置状态"
+      ],
+      "preceding_para": "。"
+    },
+    {
+      "table_index": 22,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "参数",
+        "数据类型",
+        "数据长度（字节）",
+        "值域",
+        "单位",
+        "备注"
+      ],
+      "preceding_para": "B.1XX装置数据1"
+    },
+    {
+      "table_index": 23,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "参数",
+        "数据类型",
+        "数据长度（字节）",
+        "值域",
+        "单位",
+        "备注"
+      ],
+      "preceding_para": "B.3测试数据2"
+    },
+    {
+      "table_index": 24,
+      "status": "智能识别",
+      "reason": "bit位定义表",
+      "table_type": "bit_def",
+      "msg_name": null,
+      "headers": [
+        "类别",
+        "位号",
+        "参数",
+        "含义"
+      ],
+      "preceding_para": "B.4串口对外发送数据格式-自检数据包"
+    },
+    {
+      "table_index": 25,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "位数",
+        "备注"
+      ],
+      "preceding_para": "B.5标识"
+    },
+    {
+      "table_index": 26,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "参数",
+        "数据类型",
+        "数据长度（字节）",
+        "值域",
+        "单位",
+        "备注"
+      ],
+      "preceding_para": "C.1XX装置仿真输入数据"
+    },
+    {
+      "table_index": 27,
+      "status": "智能识别",
+      "reason": "bit位定义表",
+      "table_type": "bit_def",
+      "msg_name": null,
+      "headers": [
+        "位号",
+        "段名",
+        "说明"
+      ],
+      "preceding_para": "表D.1 校验和定义"
+    }
+  ],
+  "field_matches": [
+    {
+      "source": "值域",
+      "target": "值域",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "单位",
+      "target": "单位",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "说明",
+      "target": "备注",
+      "confidence": 0.95,
+      "match_type": "exact"
+    },
+    {
+      "source": "类型",
+      "target": "类型",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "数据类型",
+      "target": "数据类型",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "数据长度（字节）",
+      "target": "长度",
+      "confidence": 0.9,
+      "match_type": "exact"
+    },
+    {
+      "source": "备注",
+      "target": "备注",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "序号",
+      "target": "序号",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "长度",
+      "target": "长度",
+      "confidence": 1.0,
+      "match_type": "exact"
+    },
+    {
+      "source": "内容",
+      "target": "内容",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "参数",
+      "target": "参数",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "数据处理方法",
+      "target": "判读公式",
+      "confidence": 0.954,
+      "match_type": "exact"
+    }
+  ]
+}

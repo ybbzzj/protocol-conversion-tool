@@ -29,8 +29,14 @@ DATA_TYPE_KEYWORDS = {
 # 干扰表格前置段落关键词
 NOISE_PARA_MARKERS = ['干扰表格', '测试用', '不需要提取']
 
-# 干扰表格表头关键词
+# 干扰表格前置段落关键词（前置段落标题含这些词时，将该表识别为噪声表）
+NOISE_PARA_TITLE_KEYWORDS = ['验收要求', '验收标准', '接收要求', '测试要求', '测试验收', '验证要求']
+
+# 干扰表格表头关键词（表格首行含这些词时，将该表识别为噪声表）
 NOISE_HEADER_KEYWORDS = ['测试指令']
+
+# 验收/测试类表的表头特征词（含这些词的表格说明是验收/测试场景，而非协议字段定义）
+VERIFICATION_TABLE_HEADER_KEYWORDS = {'充分性要求', '验证内容', '验证形式', '验证方法', '测试方法', '验证手段', '合格判据'}
 
 # 示例/目标格式表标志（首行包含这些列名，说明是示例表，跳过）
 EXAMPLE_TABLE_HEADERS = {'名称', '信源系统码', '内容', '转换类型', '判读公式'}
@@ -64,13 +70,16 @@ _TYPE_A_META_KEYWORDS = {
     '信息流向', '传输周期', '发起时机', '错误处理',
     '传送周期', '发送周期', '组成分组', '其他',
     '前置条件', '自检结果', '前置条件/非周期', '发送周期或次数',
+    # 补充：实际文档中常见的其他元数据行标题词
+    '消息名称', '数据项名称', '信源、信宿', '信源、信目',
 }
 
-# 混合表（聚合式）默认识别词：行0 含这些词即判定为“先寒暄再聊正事”的混合表。
+# 混合表（聚合式）默认识别词：行0 含这些词即判定为"先寒暄再聊正事"的混合表。
 # 与 TableDetector.mixed_table_markers 保持一致；此处作为模块级默认值，
 # 供模块级函数（如 _is_noise_table）在无 self 时回退使用。
 DEFAULT_MIXED_MARKERS = {
     '信息名称', '通信帧名称', '通信帧名字', '信息标识', '上级信息名称',
+    '消息名称', '数据项名称',
 }
 
 
@@ -269,42 +278,172 @@ def _extract_name_from_para(para_text: str) -> str:
 
 def _parse_aggregate_meta(text: str) -> Dict:
     """
-    解析聚合式消息元数据字符串。
-    支持两种格式：
-    - BCRT格式: 'BCRT1-SA0-模式码0x03' → {信源机器码:'BC', 信宿机器码:'1', 子地址:'0', 数据段长度:'3'}
-    - RT-SA格式: 'RT13-SA15-8BC' → {信源机器码:'13', 子地址:'15', 数据段长度:'8', 信宿机器码:'BC'}
+    通用解析总线消息元数据字符串，兼容 1553B 及类似总线协议的各种写法。
+
+    核心思路：不依赖特定字母（BC/RT），而是识别结构：
+        <信源标识> [分隔符] <信宿标识> - SA<子地址> - <数据段长度或模式码>
+
+    支持格式示例（信源/信宿标识可以是任意字母+数字组合）：
+        带 → 分隔符（方向明确）:
+            'BC→RT22-SA4-3'           → 信源=BC,  信宿=22,   子地址=4, 数据段长度=3
+            'RT5→BC-SA1-8'            → 信源=RT5, 信宿=BC,   子地址=1, 数据段长度=8
+            'ABC→DEF3-SA7-2'          → 信源=ABC, 信宿=DEF3, 子地址=7, 数据段长度=2
+            'RT13-SA16-29→BC'         → 信源=13,  子地址=16, 数据段长度=29, 信宿=BC
+        紧凑写法（两端标识直接拼接，中间无分隔符）:
+            'BCRT5-SA7-2'             → 信源=BC,  信宿=RT5,  子地址=7, 数据段长度=2
+            'BCRT1-SA0-模式码0x03'    → 信源=BC,  信宿=RT1,  子地址=0, 数据段长度=3
+        末尾带信宿（信宿在最后）:
+            'RT13-SA15-8BC'           → 信源=13,  子地址=15, 数据段长度=8, 信宿=BC
+            'RT5-SA1-8→BC'            → 信源=RT5, 子地址=1,  数据段长度=8, 信宿=BC
+        仅含 SA（无数据段长度）:
+            'BCRT22-SA0-模式指令码...'→ 信源=BC,  信宿=RT22, 子地址=0（模式码另提取）
+
+    提取字段：信源机器码、信宿机器码、子地址、数据段长度
     """
     meta = {}
-    # 格式1: BCRT（信源机器码 BC，信宿机器码 RT后的数字）
-    m = re.search(r'(BC)\s*(?:→|->)?\s*RT\s*(\w+)', text, re.IGNORECASE)
-    if m:
-        meta['信源机器码'] = 'BC'
-        meta['信宿机器码'] = m.group(2)
 
-    # 格式2: RT-SA（信源机器码 RT后的数字，信宿机器码 末尾的字母）
-    # 示例: RT13-SA15-8BC 或 RT13-SA16-29→BC → 信源机器码=13, 子地址=15/16, 数据段长度=8/29, 信宿机器码=BC
+    # ── 端标识的通用模式：字母+数字的组合，允许纯字母或纯数字，长度1~8 ──
+    # 例如：BC, RT22, 5, ABC, BUS1, 13, 22 等
+    _ID = r'[A-Za-z]{1,6}\d{0,4}|\d{1,4}'  # 字母(+数字) 或 纯数字
+
+    # ── 箭头/分隔符的通用模式 ──
+    _SEP = r'\s*(?:→|->|→|-+>|\?)\s*'   # → 、-> 、乱码箭头（?）
+
+    # ── SA子地址的通用模式 ──
+    _SA = r'SA\s*(\d+)'
+
+    # ── 数据段长度的通用模式（纯数字，紧跟SA段之后） ──
+    _LEN = r'(\d+)'
+
+    # ════════════════════════════════════════════════════════════════════
+    # 策略1：有明确 → 箭头，方向清晰（信源→信宿-SAxx-N）
+    #   格式: <信源标识> → <信宿标识> - SA<子地址> - <数据段长度>
+    #   例: 'BC→RT22-SA4-3', 'ABC→DEF3-SA7-2', 'RT5→BC-SA1-8'
+    # ════════════════════════════════════════════════════════════════════
     if '信源机器码' not in meta:
-        m = re.search(r'RT(\d+)[-_]?SA(\d+)[-_]?(\d+)(?:→|->)?([A-Za-z]{2})', text, re.IGNORECASE)
+        m = re.search(
+            rf'({_ID}){_SEP}({_ID})\s*[-_]\s*{_SA}\s*[-_]\s*{_LEN}',
+            text, re.IGNORECASE
+        )
         if m:
-            meta['信源机器码'] = m.group(1)
-            meta['子地址'] = m.group(2)
-            meta['数据段长度'] = m.group(3)
-            meta['信宿机器码'] = m.group(4).upper()
+            meta['信源机器码'] = m.group(1).strip()
+            meta['信宿机器码'] = m.group(2).strip()
+            meta['子地址']    = m.group(3)
+            meta['数据段长度'] = m.group(4)
 
-    # 子地址 SA0（仅在格式2未设置时提取）
+    # ════════════════════════════════════════════════════════════════════
+    # 策略2：末尾带信宿箭头（信宿在末尾，信源+子地址+长度在前）
+    #   格式: <信源标识> - SA<子地址> - <数据段长度> [→] <信宿标识>
+    #   例: 'RT13-SA15-8BC', 'RT13-SA16-29→BC', 'RT5-SA1-8→BC'
+    # ════════════════════════════════════════════════════════════════════
+    if '信源机器码' not in meta:
+        m = re.search(
+            rf'({_ID})\s*[-_]\s*{_SA}\s*[-_]\s*{_LEN}\s*(?:{_SEP})?({_ID})\s*$',
+            text, re.IGNORECASE
+        )
+        if m:
+            meta['信源机器码'] = m.group(1).strip()
+            meta['子地址']    = m.group(2)
+            meta['数据段长度'] = m.group(3)
+            meta['信宿机器码'] = m.group(4).strip()
+
+    # ════════════════════════════════════════════════════════════════════
+    # 策略3：紧凑拼接格式（两端标识无分隔直接拼接），遍历所有切割点
+    #   例: 'BCRT5-SA7-2'（BC是信源，RT5是信宿）
+    #       'BCRT22-SA0-模式码0x03'（BC是信源，RT22是信宿）
+    #
+    #   拆分原则（通用，不依赖特定字母）：
+    #   对于纯字母前缀 XXYY5，枚举所有切割位置，选择满足以下条件的最优切割：
+    #     - 右侧（信宿）必须以字母开头（排除纯数字切法）
+    #     - 右侧包含数字（信宿通常有编号，如 RT5、NODE3）优先；
+    #       若右侧无数字，左侧也无数字，则两侧长度最平衡的切割优先
+    #     - 两侧长度均 ≥ 1
+    # ════════════════════════════════════════════════════════════════════
+    if '信源机器码' not in meta:
+        # 提取 -SAxx- 部分之前的整个前缀（拼接的"信源+信宿"部分）
+        m_prefix = re.search(
+            rf'^([A-Za-z0-9]{{2,12}}?)\s*[-_]\s*{_SA}',
+            text, re.IGNORECASE
+        )
+        if m_prefix:
+            prefix = m_prefix.group(1)
+            sa_val = m_prefix.group(2)
+
+            # 枚举所有可能的切割位置，找最优切割
+            best = None
+            for i in range(1, len(prefix)):
+                left  = prefix[:i]
+                right = prefix[i:]
+                # 右侧必须以字母开头（不允许右侧是纯数字）
+                if not right or not right[0].isalpha():
+                    continue
+                # 左侧至少1个字符
+                if not left:
+                    continue
+
+                left_letters  = re.sub(r'\d+', '', left)   # 左侧字母部分
+                right_letters = re.sub(r'\d+', '', right)  # 右侧字母部分
+                left_digits   = re.findall(r'\d+', left)
+                right_digits  = re.findall(r'\d+', right)
+                right_digit_len = len(right_digits[0]) if right_digits else 0
+                left_digit_len  = len(left_digits[0]) if left_digits else 0
+
+                # 评分（高分 = 更可能是正确切割）：
+                # ① 左侧纯字母 + 右侧"字母+数字"：最典型（如 BC + RT22）
+                #    数字位数越多越可信（22比5更能确定是编号）
+                # ② 左侧纯字母 + 右侧纯字母：次之，选较平衡的（如 BC + RT）
+                # ③ 其他：降权
+                score = 0
+                left_pure_alpha  = left_digit_len == 0
+                right_has_digit  = right_digit_len > 0
+
+                if left_pure_alpha and right_has_digit:
+                    # 最理想：左纯字母、右有数字。数字越多分越高，字母长度差越小分越高
+                    letter_balance = abs(len(left_letters) - len(right_letters))
+                    score = 200 + right_digit_len * 10 - letter_balance
+                elif left_pure_alpha and not right_has_digit:
+                    # 两侧都纯字母，选字母长度接近的
+                    letter_balance = abs(len(left) - len(right))
+                    score = 100 - letter_balance
+                elif not left_pure_alpha and right_has_digit:
+                    # 左有数字（信源也有编号），右也有数字，选右侧数字更多的
+                    score = 50 + right_digit_len - left_digit_len
+                else:
+                    score = 10  # 其他情况兜底
+
+                if best is None or score > best[2]:
+                    best = (left, right, score)
+
+            if best:
+                src_id, dst_id, _ = best
+                meta['信源机器码'] = src_id
+                meta['信宿机器码'] = dst_id
+                meta['子地址']    = sa_val
+                # 继续提取数据段长度
+                m_len = re.search(
+                    rf'[-_]\s*{_SA}\s*[-_]\s*{_LEN}', text, re.IGNORECASE
+                )
+                if m_len:
+                    meta['子地址']    = m_len.group(1)
+                    meta['数据段长度'] = m_len.group(2)
+
+    # ════════════════════════════════════════════════════════════════════
+    # 策略4：仅有 SA 和数据段长度，无法识别信源信宿（最宽松兜底）
+    # ════════════════════════════════════════════════════════════════════
+
+    # ── 补充：子地址（若未提取到）──
     if '子地址' not in meta:
         m = re.search(r'SA\s*(\d+)', text, re.IGNORECASE)
         if m:
             meta['子地址'] = m.group(1)
-    # 数据段长度（模式码0x03，仅在格式2未设置时提取）
+
+    # ── 补充：数据段长度（模式码格式，如 模式码0x03、模式码17）──
     if '数据段长度' not in meta:
         m = re.search(r'模式码\s*(0x[0-9A-Fa-f]+|\d+)', text)
         if m:
             val = m.group(1)
-            if val.upper().startswith('0X'):
-                meta['数据段长度'] = str(int(val, 16))
-            else:
-                meta['数据段长度'] = val
+            meta['数据段长度'] = str(int(val, 16)) if val.upper().startswith('0X') else val
+
     return meta
 
 
@@ -533,6 +672,7 @@ class TableDetector:
         else:
             self.mixed_table_markers = {
                 '信息名称', '通信帧名称', '通信帧名字', '信息标识', '上级信息名称',
+                '消息名称', '数据项名称',  # 补充：实际文档常见写法
             }
 
         # 日志记录器
@@ -954,8 +1094,10 @@ class TableDetector:
     # ── 统一表头定位 ─────────────────────────────────────────────────────────────
 
     # 强字段关键词：单独出现即可作为表头候选的强信号
+    # 注意：'数据项名称'/'消息名称' 不在这里——它们在 _TYPE_A_META_KEYWORDS 里，
+    # 是元数据行的标识词（表头标签），不是字段列名，不能作为表头候选的强信号。
     _STRONG_FIELD_KW = {
-        '序号', '内容', '参数', '信号名称', '字段', '数据含义', '数据项名称', '参数名称',
+        '序号', '内容', '参数', '信号名称', '字段', '数据含义', '参数名称',
         '数据类型', '类型', '数据格式',
         '字节', '字节号', '字节数', '长度', '数据长度', '数据长度（字节）',
     }
@@ -1003,12 +1145,15 @@ class TableDetector:
 
             # 配置兜底
             has_cfg = False
+            cfg_full_cover = False  # 所有非空格都被配置字段覆盖（高置信度表头行）
             if cfg_set:
                 non_empty = [c for c in ru if c and c.strip()]
                 if len(non_empty) >= 2:
                     covered = sum(1 for c in non_empty if c.strip() in cfg_set)
-                    if covered == len(non_empty) or \
-                       (covered >= 3 and covered / len(non_empty) >= 0.6):
+                    if covered == len(non_empty):
+                        has_cfg = True
+                        cfg_full_cover = True  # 100%命中：强烈提示这行是列名行
+                    elif covered >= 3 and covered / len(non_empty) >= 0.6:
                         has_cfg = True
 
             # 是否是表头候选：有强关键词 OR 有特殊表关键词 OR 有配置匹配
@@ -1031,11 +1176,20 @@ class TableDetector:
             # 评分
             score = data_block * 10
             if has_strong:
-                score += 5
+                # 强字段关键词越多越像真正的表头（序号+内容+类型+字节 > 只有序号）
+                strong_count = len(cell_set & self._STRONG_FIELD_KW)
+                score += 5 + strong_count * 3   # 每多一个强关键词 +3
             if has_cfg:
                 score += 3
+            if cfg_full_cover:
+                # 配置字段100%全覆盖：这行极有可能是列定义行（非数据行）
+                # 给予强力奖励，避免被"数据更多的数据行"压制
+                # 奖励量设为 200，足以抵消数据行多20行带来的200分优势
+                score += 200
             if has_port or has_id or has_bit:
                 score += 4
+            # 位置奖励：越靠上越可能是表头（元数据区通常在前几行）
+            score += max(0, 5 - scan_r)
 
             candidates.append((scan_r, score))
 
@@ -1095,6 +1249,17 @@ class TableDetector:
             return base
         if '帧格式' in preceding_para:
             self._log_table_status(t_idx, '过滤', '帧格式表(前置段落)', 'skip', headers=row0_unique, preceding=preceding_para)
+            return base
+
+        # ── 前置过滤：验收要求表 / 测试要求表 ────────────────────────────
+        # 1. 前置段落标题含验收/测试关键词
+        if any(kw in preceding_para for kw in NOISE_PARA_TITLE_KEYWORDS):
+            self._log_table_status(t_idx, '过滤', f'验收/测试类表（前置段落含关键词）', 'skip', headers=row0_unique, preceding=preceding_para)
+            return base
+        # 2. 表头含验收/测试特征词（充分性要求、验证内容、验证形式等）
+        all_header_cells = set(c.strip() for row in grid[:4] for c in _dedup_row(row) if c.strip())
+        if all_header_cells & VERIFICATION_TABLE_HEADER_KEYWORDS:
+            self._log_table_status(t_idx, '过滤', f'验收/测试类表（表头含验证特征词）', 'skip', headers=row0_unique, preceding=preceding_para)
             return base
 
         # 强制跳过（前置段落含干扰词）
@@ -1289,10 +1454,17 @@ class TableDetector:
     # ── 字段定义表（A/B/C 三种类型 + 聚合式） ─────────────────────────────────
 
     def _record_rows_below(self, grid: List[List[str]], r: int) -> int:
-        """结构校验：统计候选表头行 r 下方“像记录”的行数。
-        记录行 = 至少 2 个非空非占位单元格，且列宽与候选表头接近。
+        """结构校验：统计候选表头行 r 下方"像记录"的行数。
+
+        记录行的判定条件（满足任一即算）：
+        1. 非空单元格数 ≥ 2，且与表头列宽接近（abs差 ≤ 3）
+        2. 数据行因合并单元格可能只有少数几列有值（如序号+内容 2列），
+           只要非空单元格 ≥ 1 且表头宽度 ≥ 4，也算有效数据行
+           （这是"序号列+内容列"合并后仅2格非空的典型场景）
+
         作用：即使某行元数据长得像字段（如写了信源/信宿/周期），
-        只要它下方没有真实数据块，就不会被误判为字段表头。"""
+        只要它下方没有真实数据块，就不会被误判为字段表头。
+        """
         n = len(grid)
         h_cells = [c for c in _dedup_row(grid[r]) if c and c.strip()]
         hw = len(h_cells)
@@ -1301,7 +1473,20 @@ class TableDetector:
         cnt = 0
         for r2 in range(r + 1, n):
             rc = [c for c in _dedup_row(grid[r2]) if c and c.strip() and c.strip() not in ('—', '-')]
-            if len(rc) >= 2 and abs(len(rc) - hw) <= 3:
+            rc_len = len(rc)
+            # 条件1：列宽接近（容忍度 ≤ 表头宽度的一半，最少3）
+            tolerance = max(3, hw // 2)
+            if rc_len >= 2 and abs(rc_len - hw) <= tolerance:
+                cnt += 1
+            # 条件2：表头宽列数多但数据行因合并只有少量非空格
+            # 典型场景：hw=8列，但数据行只填了"内容/类型/值"3~4格（其余合并为空）
+            # 放宽为：hw>=4 且 rc_len>=2 且至少有1个非数字内容（排除纯数值行误判）
+            elif hw >= 4 and 2 <= rc_len and abs(rc_len - hw) > tolerance:
+                has_text = any(not c.strip().lstrip('+-').replace('.', '').isdigit() for c in rc)
+                if has_text:
+                    cnt += 1
+            # 条件3：超少格（仅1格）但表头很宽时（hw≥6），也算（最边缘兜底）
+            elif hw >= 6 and rc_len == 1:
                 cnt += 1
         return cnt
 
@@ -1379,8 +1564,16 @@ class TableDetector:
             # 横向键值对提取
             self._extract_meta_row(meta, row)
 
-            # 处理特殊格式（BCRT、SA等）
-            if any(kw in row_text for kw in ['BCRT', 'SA', '模式码', '→', 'BC']):
+            # 处理总线地址格式（信源信宿-SAxx-N 结构）
+            # 触发条件：含箭头分隔符、SA子地址标记、模式码，或含字母数字拼接的总线地址特征
+            _has_bus_addr = (
+                '→' in row_text or '->' in row_text       # 有箭头分隔符
+                or re.search(r'SA\s*\d+', row_text)       # 有SA子地址
+                or '模式码' in row_text                    # 有模式码
+                or re.search(r'[A-Za-z]{1,6}\d+\s*[-_]\s*SA', row_text)  # 字母+数字-SA 格式
+                or re.search(r'[A-Za-z]{2,6}[A-Za-z]{2,6}\d', row_text)  # 紧凑拼接格式（如BCRT5）
+            )
+            if _has_bus_addr:
                 meta.update(_parse_aggregate_meta(row_text))
 
             # 提取信源信宿（IP地址格式或RT-SA格式）
@@ -1532,19 +1725,30 @@ class TableDetector:
             data_rows.append(row_dict)
 
         # ◄ 末尾 CRC 校验字过滤（可由输出控制开关关闭）：
-        # 若最后一个有效数据行的内容字段包含 "CRC校验"/"CRC检验"（CRC 大小写不敏感），
-        # 则丢弃该行（这类校验字段通常不是协议有效数据项），可覆盖 CRC校验字/校验码/校验 等写法。
-        # 仅作用于最后一项：若 CRC 行后面仍有有效数据行，则保留（见 content 居中的情况）。
+        # 若最后一个有效数据行的内容字段包含 CRC 校验相关内容（CRC 大小写不敏感），
+        # 则丢弃该行（这类校验字段通常不是协议有效数据项）。
+        # 匹配规则：内容字段以 "crc" 开头，或包含 "crc校验"/"crc检验"/"校验和"/"校验码"
+        # 仅作用于最后一项：若 CRC 行后面仍有有效数据行，则保留。
         if self.remove_crc_tail:
-            crc_keywords = ('crc校验', 'crc检验')
-            if data_rows:
-                last_row = data_rows[-1]
-                for header, value in last_row.items():
+            import re as _re
+            def _is_crc_row(row: dict) -> bool:
+                """判断该行是否为 CRC 校验行"""
+                for header, value in row.items():
                     if header in content_field_names and value:
                         v = str(value).strip().lower()
-                        if any(kw in v for kw in crc_keywords):
-                            data_rows.pop()
-                            break
+                        # 匹配以 crc 开头的内容，如 "CRC16校验和"、"CRC校验字"
+                        if v.startswith('crc'):
+                            return True
+                        # 匹配含 "crc校验"/"crc检验" 的内容
+                        if 'crc' in v and ('校验' in v or '检验' in v):
+                            return True
+                        # 匹配纯校验类内容（不含其他有效字段名）
+                        if v in ('校验和', '校验码', '校验字'):
+                            return True
+                return False
+
+            if data_rows and _is_crc_row(data_rows[-1]):
+                data_rows.pop()
 
         return data_rows
 

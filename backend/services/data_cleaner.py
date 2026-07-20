@@ -422,26 +422,76 @@ class UnitExtractor:
     def extract_unit(self, text: str) -> Optional[str]:
         if not text or len(text) > 200: # 备注太长可能包含干扰，限制长度
             return None
-        
+
+        # 如果备注中含有"见表X.Y"、"详见附录"等表格引用，说明是引用说明，
+        # 其中的字母（如"表A.2"中的A）不应被提取为单位
+        if re.search(r'见表[A-Za-z]', text) or re.search(r'附录[A-Za-z]', text):
+            # 过滤掉单个大写字母单位（如 A/V/K），避免把表号中的字母误识别为单位
+            # 但保留复合单位（如 mA/kHz 等）
+            patterns_to_try = [p for p in self.UNIT_PATTERNS
+                               if not re.match(r'^[A-Za-z]$', p)]
         # 先检查是否包含"分辨率"、"量化单位"等关键字，如果包含则不提取 % 作为单位
         # 因为这些场景下 % 是转换公式的一部分，不是物理单位
-        if re.search(r'(?:分辨率 | 量化单位|LSB)', text, re.IGNORECASE):
+        elif re.search(r'(?:分辨率|量化单位|LSB)', text, re.IGNORECASE):
             # 过滤掉 % 单位，只尝试其他单位
             patterns_to_try = [p for p in self.UNIT_PATTERNS if p != r'%']
         else:
             patterns_to_try = self.UNIT_PATTERNS
         
-        # 匹配模式：(数字或空格后紧跟单位) 或者 (括号包裹的单位)
+        # 匹配模式：搜索单位出现的位置，然后通过上下文判断是否有效
+        # 注意：Python 的 \b 只对 ASCII \w 字符有效，中文不算 \w，
+        #       所以"最大电流3A"中 A 前面的 3 使得 \bA 不成立。
+        #       单字母单位全部用"是否独立出现"的上下文逻辑来判断，不靠 \b。
         for pattern in patterns_to_try:
-            # 搜索模式：匹配单位本身，且前后不应有中文字符（除非是"度"这种中文单位）
-            # 这里的正则比较保守，优先匹配独立出现的单位
-            full_pattern = r'(?i)(?<![\u4e00-\u9fff])\b' + pattern + r'\b(?![\u4e00-\u9fff])'
-            if pattern == r'°' or pattern == r'℃' or pattern == r'度' or pattern == r'%':
-                full_pattern = pattern # 特殊符号直接匹配
-            
+            if pattern in (r'°', r'℃', r'度', r'%'):
+                full_pattern = pattern  # 特殊符号直接匹配
+            elif len(pattern) == 1 and pattern.isalpha():
+                # 单字母：不用 \b，直接搜索字母本身；上下文校验在后面做
+                full_pattern = r'(?i)' + re.escape(pattern)
+            else:
+                # 多字母单位（ms/mA/kHz 等）：用 \b 防止把 "msl" 中的 "ms" 误匹配
+                # 但去掉 (?<!中文) 的 lookbehind，允许"单位为ms"、"32位整型ms"等中文前缀
+                full_pattern = r'(?i)' + pattern + r'(?![A-Za-z\d])'
+
             match = re.search(full_pattern, text)
             if match:
-                return match.group(0)
+                matched_unit = match.group(0)
+                # ── 单字母单位上下文校验 ─────────────────────────────────────────
+                if len(matched_unit) == 1 and matched_unit.isalpha():
+                    before = text[:match.start()]
+                    after  = text[match.end():]
+
+                    # ① 明确声明"单位为X / 单位是X / 单位：X / (X)"：直接通过
+                    #    例："单位为A" → A 前面是"为"，通过; "(A)" → 通过
+                    is_explicit_unit_decl = bool(
+                        re.search(r'单位\s*[为是：:]\s*$', before.rstrip()) or
+                        re.search(r'[（\(]\s*$', before)
+                    )
+
+                    # ② 数值上下文：数字紧邻前面，或前面是"/"（复合单位如 °/s）
+                    #    例："3A"、"5 A"、"12V"、"°/s"
+                    has_numeric_context = bool(
+                        re.search(r'[\d.]\s*$', before) or
+                        re.search(r'[/]\s*$', before)
+                    )
+
+                    # ③ 排除：后面紧跟中文（字母是中文句子的一部分）
+                    #    例："见表A中的"（A后面接中文"中"）、"图B所示"
+                    followed_by_chinese = bool(re.match(r'^\s*[\u4e00-\u9fff]', after))
+
+                    # ④ 排除：前面紧跟中文且无数字上下文且不是明确声明
+                    #    例："见表A"（A前面是中文"表"，后面是字符串结束）
+                    only_chinese_before = bool(
+                        re.search(r'[\u4e00-\u9fff]\s*$', before) and not has_numeric_context
+                    )
+
+                    if is_explicit_unit_decl:
+                        pass  # 明确声明，通过
+                    elif has_numeric_context and not followed_by_chinese:
+                        pass  # 数值上下文且后面不接中文，通过
+                    else:
+                        continue  # 其他（包括只有中文前缀无数字、后面接中文等）跳过
+                return matched_unit
         
         return None
 

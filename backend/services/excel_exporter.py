@@ -22,31 +22,58 @@ def _extract_unit_from_remark(remark: str) -> Optional[str]:
     """从备注中提取单位信息"""
     if not remark:
         return None
-        
+
+    # 如果备注含有"见表X.Y"、"附录X"等引用，说明是引用说明，
+    # 其中的字母（如"见表A.2"中的A）不应被提取为单位
+    has_table_ref = bool(re.search(r'见表[A-Za-z]', remark) or re.search(r'附录[A-Za-z]', remark))
+
     # 常见的单位提取模式（优先级从高到低）
     patterns = [
         # 最高优先级：明确标注"单位为/单位:/单位是"的形式
-        r'单位[为是：:]\s*([^\s，。,\.;；]+)',
+        (r'单位[为是：:]\s*([^\s，。,\.;；]+)', False),
         # LSB=N单位（如 LSB=1ms）
-        r'LSB\s*=\s*([\d.]+\s*(?:ms|s|μs|min|h|Hz|kHz|MHz|GHz|V|mV|A|mA|mW|W|dB|dBm|℃|°|°C|%|bit|byte|KB|MB))',
-        # 单位在括号内（如"(ms)"或"[Hz]"）
-        r'[（\(\[]([A-Za-z/°℃\u00b0\u2103]+)[）\)\]]',
-        # 行尾的单位符号（如 "数据处理...ms"）
-        r'([\wΩμ°%℃dBmVAsHzkHzMHzGHz]+)\s*$',
-        # 常见单位的单词边界匹配
-        r'\b(ms|μs|min|s|h|Hz|kHz|MHz|GHz|V|mV|A|mA|W|mW|dB|dBm|℃|°|°C|%|bit|byte|KB|MB)\b',
+        (r'LSB\s*=\s*([\d.]+\s*(?:ms|s|μs|min|h|Hz|kHz|MHz|GHz|V|mV|A|mA|mW|W|dB|dBm|℃|°|°C|%|bit|byte|KB|MB))', False),
+        # 单位在括号内（如"(ms)"或"[Hz]"）且不含中文
+        (r'[（\(\[]([A-Za-z/°℃\u00b0\u2103]+)[）\)\]]', False),
+        # 行尾的单位符号（要求前面有数字，避免中文末尾的字母被误识别）
+        (r'(\d+\s*(?:ms|μs|min|h|Hz|kHz|MHz|GHz|V|mV|A|mA|W|mW|dB|dBm|℃|°|°C|%|bit|byte|KB|MB))\s*$', False),
         # 组合单位（如 °/h, km/h, m/s 等）
-        r'(°/[hmin]|km/h|m/s[²2\^2]?|[°℃][/]?C)',
+        (r'(°/[hmin]|km/h|m/s[²2\^2]?|[°℃][/]?C)', False),
+        # 复合单位（数字后跟多字符单位，前面必须有数字）
+        (r'(?<=\d)\s*(ms|μs|min|h|Hz|kHz|MHz|GHz|mV|mA|mW|dB|dBm|°C|bit|byte|KB|MB)\b', False),
+        # 单字母单位（A/V/K 等）- 只有在数字紧邻前面时才匹配（不含中文表号引用）
+        (r'(?<=\d)\s*(A|V|K|W|s|m)\b(?![a-zA-Z])', True),  # True = 需要检查表格引用
     ]
     
-    for pattern in patterns:
+    for pattern, requires_no_ref in patterns:
+        # 如果有表格引用且该模式要求无引用，则跳过
+        if requires_no_ref and has_table_ref:
+            continue
+
         match = re.search(pattern, remark, re.IGNORECASE)
         if match:
             # 获取第一个捕获组，或者整个匹配（如果没有捕获组）
             unit = match.group(1) if len(match.groups()) > 0 else match.group(0)
+            unit = unit.strip()
             # 过滤掉太长或不合理的结果
-            if unit and len(unit) <= 15 and unit.strip() not in ['为', '是', '的', '', ' ']:
-                return unit.strip()
+            if not unit or len(unit) > 15 or unit in ['为', '是', '的', '', ' ']:
+                continue
+            # 额外过滤：单字母单位（A/V/s等）需要确保不是中文语境中的字母
+            if len(unit) == 1 and unit.isalpha():
+                # 检查匹配位置前后的上下文
+                start = match.start()
+                before = remark[:start]
+                after = remark[match.end():]
+                # 如果前面紧跟中文字符，说明是中文语境，不是单位
+                if re.search(r'[\u4e00-\u9fff]\s*$', before):
+                    continue
+                # 如果后面紧跟中文字符，说明是中文语境，不是单位
+                if re.match(r'^\s*[\u4e00-\u9fff]', after):
+                    continue
+                # 如果前面没有数字，说明不是物理单位
+                if not re.search(r'[\d.]\s*$', before):
+                    continue
+            return unit
     
     return None
 
@@ -540,58 +567,67 @@ class ExcelExporter:
         if not search_text.strip():
             return None
 
+        # 检查备注是否含有表格引用（如"见表A.2"），若有则不匹配单字母单位
+        has_table_ref = bool(re.search(r'见表[A-Za-z]', search_text) or re.search(r'附录[A-Za-z]', search_text))
+
         # 按优先级从高到低匹配，越具体的单位越靠前
+        # 每个元组：(正则模式, 单位名称, 是否为单字母单位需要检查表格引用)
         unit_patterns = [
             # 组合单位（最高优先级，在单个字符单位前提取）
-            (r'(?<![a-zA-Z\d])km/h(?![a-zA-Z])',  'km/h'),
-            (r'(?<![a-zA-Z\d])m/s[²2\^2]',        'm/s²'),
-            (r'(?<![a-zA-Z\d])m/s(?![²2a-zA-Z])', 'm/s'),
-            (r'[°∠]\s*/\s*h\b',                    '°/h'),    # 角速率
-            (r'[°∠]\s*/\s*min\b',                  '°/min'),  # 角速率/分钟
-            (r'[°∠]\s*/\s*s\b',                    '°/s'),    # 角速率/秒
+            (r'(?<![a-zA-Z\d])km/h(?![a-zA-Z])',  'km/h', False),
+            (r'(?<![a-zA-Z\d])m/s[²2\^2]',        'm/s²', False),
+            (r'(?<![a-zA-Z\d])m/s(?![²2a-zA-Z])', 'm/s',  False),
+            (r'[°∠]\s*/\s*h\b',                    '°/h',  False),    # 角速率
+            (r'[°∠]\s*/\s*min\b',                  '°/min',False),    # 角速率/分钟
+            (r'[°∠]\s*/\s*s\b',                    '°/s',  False),    # 角速率/秒
             # LSB 相关单位（从"LSB=1ms"中提取，需要捕获 °/h 等组合单位）
-            (r'LSB\s*=\s*[\d.]*\s*(?:ms|μs|s|°/h|km/h|m/s)',  'ms'),  # 这里简化处理
+            (r'LSB\s*=\s*[\d.]*\s*(?:ms|μs|s|°/h|km/h|m/s)',  'ms', False),
             # 频率单位
-            (r'\b(kHz|千赫)\b',            'kHz'),
-            (r'\b(MHz|兆赫)\b',            'MHz'),
-            (r'\b(GHz)\b',                'GHz'),
-            (r'\b(Hz|赫兹)\b',             'Hz'),
+            (r'\b(kHz|千赫)\b',            'kHz', False),
+            (r'\b(MHz|兆赫)\b',            'MHz', False),
+            (r'\b(GHz)\b',                'GHz',  False),
+            (r'\b(Hz|赫兹)\b',             'Hz',  False),
             # 毫秒，需要特别小心与其他单位混淆
-            (r'(?<![a-zA-Z])ms(?![a-zA-Z\d])', 'ms'),
+            (r'(?<![a-zA-Z])ms(?![a-zA-Z\d])', 'ms', False),
             # 微秒
-            (r'(?<![a-zA-Z])μs\b',        'μs'),
-            (r'(?<![a-zA-Z])us\b',        'μs'),     # us 也表示微秒
+            (r'(?<![a-zA-Z])μs\b',        'μs', False),
+            (r'(?<![a-zA-Z])us\b',        'μs', False),    # us 也表示微秒
             # 温度
-            (r'(℃|°C|摄氏度)',             '℃'),
+            (r'(℃|°C|摄氏度)',             '℃', False),
             # 角度（仅在不是斜杠形式的时候提取）
-            (r'(?<![/分])°(?![/hmsC])',    '°'),
+            (r'(?<![/分])°(?![/hmsC])',    '°',  False),
             # 电压
-            (r'\b(mV|毫伏)\b',             'mV'),
-            (r'(?<![a-zA-Z])V(?![a-zA-Z])', 'V'),
+            (r'\b(mV|毫伏)\b',             'mV', False),
+            # 单字母V：需要前面是数字且不在中文语境，且不是表格引用中的字母
+            (r'(?<=[\d.])(?:\s*)(V)(?![a-zA-Z])',  'V',  True),
             # 电流
-            (r'\b(mA|毫安)\b',             'mA'),
-            (r'(?<![a-zA-Z])A(?![a-zA-Z])', 'A'),
+            (r'\b(mA|毫安)\b',             'mA', False),
+            # 单字母A：需要前面是数字且不在中文语境
+            (r'(?<=[\d.])(?:\s*)(A)(?![a-zA-Z\u4e00-\u9fff])',  'A',  True),
             # 功率
-            (r'\b(mW|毫瓦)\b',             'mW'),
-            (r'\b(W|瓦)\b',                'W'),
+            (r'\b(mW|毫瓦)\b',             'mW', False),
+            (r'\b(W|瓦)\b',                'W',  False),
             # 增益
-            (r'\b(dB|分贝)\b',             'dB'),
-            (r'\b(dBm)\b',                 'dBm'),
+            (r'\b(dB|分贝)\b',             'dB', False),
+            (r'\b(dBm)\b',                 'dBm',False),
             # 数据大小
-            (r'\b(bit|位)\b',              'bit'),
-            (r'\b(byte|字节)\b',           'byte'),
-            (r'\b(KB)\b',                  'KB'),
-            (r'\b(MB)\b',                  'MB'),
+            (r'\b(bit|位)\b',              'bit',False),
+            (r'\b(byte|字节)\b',           'byte',False),
+            (r'\b(KB)\b',                  'KB', False),
+            (r'\b(MB)\b',                  'MB', False),
             # 时间单位
-            (r'(?<![a-zA-Z])min\b',        'min'),   # 分钟，要求 min 后边界清晰
-            (r'\b(h|小时)\b',              'h'),
-            (r'(?<![a-zA-Z])s(?![a-zA-Z])', 's'),   # 秒，排除其他字母组合
+            (r'(?<![a-zA-Z])min\b',        'min',False),   # 分钟，要求 min 后边界清晰
+            (r'\b(h|小时)\b',              'h',  False),
+            (r'(?<![a-zA-Z])s(?![a-zA-Z])', 's', False),  # 秒，排除其他字母组合
             # 百分比
-            (r'(%)',                        '%'),
+            (r'(%)',                        '%',  False),
             # 欧姆（电阻）
-            (r'(Ω|ohm)',                   'Ω'),
+            (r'(Ω|ohm)',                   'Ω',  False),
         ]
-        for pattern, unit_name in unit_patterns:
+        for pattern, unit_name, is_single_letter in unit_patterns:
+            # 单字母单位：如果备注含表格引用，跳过（避免把"见表A"中的A识别为安培）
+            if is_single_letter and has_table_ref:
+                continue
             if re.search(pattern, search_text, re.IGNORECASE):
                 return unit_name, 'extracted'
 

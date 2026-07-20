@@ -1,0 +1,191 @@
+{
+  "task_id": "d7843ad7-93d2-4e75-8193-01e8ce5259e7",
+  "file": "d7843ad7-93d2-4e75-8193-01e8ce5259e7_总线通信协议5.docx",
+  "timestamp": "2026-07-20T14:42:20.552943",
+  "mapping_quality": {
+    "score": 0.875,
+    "level": "good",
+    "auto_count": 7,
+    "manual_count": 1,
+    "unmatched_count": 0,
+    "total": 8,
+    "expected_count": 6,
+    "covered_count": 4,
+    "coverage": 0.6666666666666666
+  },
+  "expected_fields": [
+    "名称",
+    "内容",
+    "数据类型",
+    "备注",
+    "说明",
+    "数据处理方法"
+  ],
+  "tables_scanned": 8,
+  "tables_kept": 4,
+  "tables_skipped": 4,
+  "table_decisions": [
+    {
+      "table_index": 0,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "格式10"
+      ],
+      "preceding_para": ""
+    },
+    {
+      "table_index": 1,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "消息名称",
+        "信源",
+        "信宿",
+        "周期 （ms）",
+        "消息内容",
+        "传输 策略"
+      ],
+      "preceding_para": "消息类型定义"
+    },
+    {
+      "table_index": 2,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "场景",
+        "充分性要求",
+        "验证内容",
+        "验证形式",
+        "提交材料"
+      ],
+      "preceding_para": "某总线通信接口验收要求"
+    },
+    {
+      "table_index": 3,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "信息名称",
+        "某指令",
+        "信息标识",
+        "xxx"
+      ],
+      "preceding_para": "表B. 1 某指令"
+    },
+    {
+      "table_index": 4,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "信息名称",
+        "某指令",
+        "信息标识",
+        "xxxx"
+      ],
+      "preceding_para": "表B. 2 某指令"
+    },
+    {
+      "table_index": 5,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "信息名称",
+        "xxx回令",
+        "信息标识"
+      ],
+      "preceding_para": "表B. 3 xxx回令"
+    },
+    {
+      "table_index": 6,
+      "status": "过滤",
+      "reason": "噪声表",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "内容",
+        "数据处理方法",
+        "正常范围"
+      ],
+      "preceding_para": "表B. 4 xxx编码"
+    },
+    {
+      "table_index": 7,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "信息名称",
+        "xxxx指令",
+        "信息标识",
+        "xxxxx"
+      ],
+      "preceding_para": "表B. 5 xxxx指令"
+    }
+  ],
+  "field_matches": [
+    {
+      "source": "单位",
+      "target": "单位",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "备注",
+      "target": "备注",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "字序号",
+      "target": "序号",
+      "confidence": 0.8,
+      "match_type": "fuzzy"
+    },
+    {
+      "source": "类型",
+      "target": "类型",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "数据处理方法",
+      "target": "判读公式",
+      "confidence": 0.954,
+      "match_type": "exact"
+    },
+    {
+      "source": "值域",
+      "target": "值域",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "内容",
+      "target": "内容",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "格式",
+      "target": "数据类型",
+      "confidence": 0.95,
+      "match_type": "alias"
+    }
+  ]
+}

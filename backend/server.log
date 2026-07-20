@@ -1,20 +1,44 @@
- * Serving Flask app 'app'
+2026-07-20 14:41:54 | INFO    | backend.logging_config | 日志系统已初始化，日志目录: /Users/yyq/code/protocol-conversion-tool/logs
+None of PyTorch, TensorFlow >= 2.0, or Flax have been found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+Traceback (most recent call last):
+  File "/Users/yyq/code/protocol-conversion-tool/backend/services/embedding_service.py", line 84, in __init__
+    self._session = ort.InferenceSession(
+  File "/Users/yyq/Library/Python/3.9/lib/python/site-packages/onnxruntime/capi/onnxruntime_inference_collection.py", line 360, in __init__
+    self._create_inference_session(providers, provider_options, disabled_optimizers)
+  File "/Users/yyq/Library/Python/3.9/lib/python/site-packages/onnxruntime/capi/onnxruntime_inference_collection.py", line 397, in _create_inference_session
+    sess = C.InferenceSession(session_options, self._model_path, True, self._read_config_from_model)
+onnxruntime.capi.onnxruntime_pybind11_state.InvalidProtobuf: [ONNXRuntimeError] : 7 : INVALID_PROTOBUF : Load model from /Users/yyq/code/protocol-conversion-tool/models/bge-small-zh-v1.5-onnx/onnx/model.onnx failed:Protobuf parsing failed.
+[EmbeddingService] 模型目录：/Users/yyq/code/protocol-conversion-tool/models/bge-small-zh-v1.5-onnx
+[EmbeddingService] 正在加载 Tokenizer...
+[EmbeddingService] 正在加载 ONNX 模型...
+[EmbeddingService] ❌ 模型加载失败：[ONNXRuntimeError] : 7 : INVALID_PROTOBUF : Load model from /Users/yyq/code/protocol-conversion-tool/models/bge-small-zh-v1.5-onnx/onnx/model.onnx failed:Protobuf parsing failed.
+2026-07-20 14:41:55 | INFO    | backend.routes.extract | [任务系统] 已从磁盘加载 50 条历史记录
+2026-07-20 14:41:55 | INFO    | __main__ | [App] 启动模式: 集成托管
+2026-07-20 14:41:55 | INFO    | __main__ | [App] 静态目录：/Users/yyq/code/protocol-conversion-tool/public/dist
+2026-07-20 14:41:55 | INFO    | __main__ | [App] index.html: 存在
+2026-07-20 14:41:55 | WARNING | __main__ | [App] 未检测到可用语义模型，已降级为规则匹配
+ * Serving Flask app 'app' (lazy loading)
+ * Environment: production
+   WARNING: This is a development server. Do not use it in a production deployment.
+   Use a production WSGI server instead.
  * Debug mode: off
-[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
- * Running on all addresses (0.0.0.0)
- * Running on http://127.0.0.1:5001
- * Running on http://11.64.68.248:5001
-[33mPress CTRL+C to quit[0m
-127.0.0.1 - - [28/Feb/2026 17:01:18] "GET /health HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:01:32] "POST /api/extract/start HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:01:34] "GET /api/extract/status/301823fd-cd93-41a9-b32b-34c873b425b5 HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:01:35] "GET /api/mapping/preview/301823fd-cd93-41a9-b32b-34c873b425b5 HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:01:35] "POST /api/mapping/batch-suggest HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:01:50] "POST /api/mapping/apply HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:01:50] "GET /api/extract/download/301823fd-cd93-41a9-b32b-34c873b425b5 HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:05:35] "POST /api/extract/start HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:05:37] "GET /api/extract/status/4c2f0541-f747-4ed5-b73f-853a334c6f2e HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:05:39] "GET /api/mapping/preview/4c2f0541-f747-4ed5-b73f-853a334c6f2e HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:05:39] "POST /api/mapping/batch-suggest HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:05:41] "POST /api/mapping/apply HTTP/1.1" 200 -
-127.0.0.1 - - [28/Feb/2026 17:05:42] "GET /api/extract/download/4c2f0541-f747-4ed5-b73f-853a334c6f2e HTTP/1.1" 200 -
+Traceback (most recent call last):
+  File "/Users/yyq/code/protocol-conversion-tool/backend/app.py", line 109, in <module>
+    app.run(host='0.0.0.0', port=5001, debug=False)
+  File "/Users/yyq/Library/Python/3.9/lib/python/site-packages/flask/app.py", line 920, in run
+    run_simple(t.cast(str, host), port, self, **options)
+  File "/Users/yyq/Library/Python/3.9/lib/python/site-packages/werkzeug/serving.py", line 1017, in run_simple
+    inner()
+  File "/Users/yyq/Library/Python/3.9/lib/python/site-packages/werkzeug/serving.py", line 957, in inner
+    srv = make_server(
+  File "/Users/yyq/Library/Python/3.9/lib/python/site-packages/werkzeug/serving.py", line 789, in make_server
+    return ThreadedWSGIServer(
+  File "/Users/yyq/Library/Python/3.9/lib/python/site-packages/werkzeug/serving.py", line 693, in __init__
+    super().__init__(server_address, handler)  # type: ignore
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+OSError: [Errno 48] Address already in use

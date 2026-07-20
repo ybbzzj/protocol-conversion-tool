@@ -1,0 +1,360 @@
+{
+  "task_id": "42b5707e-b7ec-446a-accd-6d1a8b5e6bcf",
+  "file": "42b5707e-b7ec-446a-accd-6d1a8b5e6bcf_某软件接口协议2.docx",
+  "timestamp": "2026-07-20T14:57:51.736317",
+  "mapping_quality": {
+    "score": 0.7777777777777778,
+    "level": "good",
+    "auto_count": 7,
+    "manual_count": 2,
+    "unmatched_count": 2,
+    "total": 9,
+    "expected_count": 5,
+    "covered_count": 3,
+    "coverage": 0.6
+  },
+  "expected_fields": [
+    "名称",
+    "内容",
+    "数据类型",
+    "备注",
+    "说明"
+  ],
+  "tables_scanned": 18,
+  "tables_kept": 3,
+  "tables_skipped": 15,
+  "table_decisions": [
+    {
+      "table_index": 0,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "格式10"
+      ],
+      "preceding_para": ""
+    },
+    {
+      "table_index": 1,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "名称",
+        "值域",
+        "类型",
+        "单位",
+        "说明"
+      ],
+      "preceding_para": "飞行监测控制指令"
+    },
+    {
+      "table_index": 2,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "名称",
+        "值域",
+        "类型",
+        "单位",
+        "说明"
+      ],
+      "preceding_para": "某接口测试数据"
+    },
+    {
+      "table_index": 3,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "信号名称",
+        "周期",
+        "备注"
+      ],
+      "preceding_para": "某信号表"
+    },
+    {
+      "table_index": 4,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "信号名称",
+        "备注"
+      ],
+      "preceding_para": "某信号表"
+    },
+    {
+      "table_index": 5,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "设备名称",
+        "子网掩码",
+        "IP地址"
+      ],
+      "preceding_para": "分配表"
+    },
+    {
+      "table_index": 6,
+      "status": "配置匹配",
+      "reason": "命中配置: field_def",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "内容",
+        "类型",
+        "值",
+        "单位",
+        "值域",
+        "数据转换方法",
+        "说明"
+      ],
+      "preceding_para": "“某操作”格式"
+    },
+    {
+      "table_index": 7,
+      "status": "配置匹配",
+      "reason": "命中配置: field_def",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "内容",
+        "类型",
+        "值",
+        "单位",
+        "值域",
+        "数据转换方法",
+        "说明"
+      ],
+      "preceding_para": "“某”格式"
+    },
+    {
+      "table_index": 8,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "消息名称",
+        "某",
+        "信源、信目"
+      ],
+      "preceding_para": "“某”格式"
+    },
+    {
+      "table_index": 9,
+      "status": "过滤",
+      "reason": "表头无有效字段",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "数据项名称",
+        "column_2",
+        "column_3",
+        "column_4",
+        "column_5",
+        "column_6",
+        "信源、信目",
+        "column_9",
+        "column_10"
+      ],
+      "preceding_para": "“某”格式"
+    },
+    {
+      "table_index": 10,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "消息名称",
+        "信源、信目"
+      ],
+      "preceding_para": "“某”格式"
+    },
+    {
+      "table_index": 11,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "文件名称",
+        "文件格式",
+        "文件内容"
+      ],
+      "preceding_para": "某包含内容"
+    },
+    {
+      "table_index": 12,
+      "status": "过滤",
+      "reason": "未找到有效表头",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "序号",
+        "子流程名称",
+        "流程号",
+        "待装订ZY文件名称",
+        "信息交互工作",
+        "备注"
+      ],
+      "preceding_para": "xxx要求"
+    },
+    {
+      "table_index": 13,
+      "status": "过滤",
+      "reason": "表头无有效字段",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "数据项名称",
+        "xxx计算结果",
+        "信源、信目",
+        "xxx→xxx"
+      ],
+      "preceding_para": "xxx计算结果"
+    },
+    {
+      "table_index": 14,
+      "status": "过滤",
+      "reason": "表头无有效字段",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "数据项名称",
+        "xxx状态",
+        "信源、信目",
+        "xxx→xxx"
+      ],
+      "preceding_para": "xxx状态"
+    },
+    {
+      "table_index": 15,
+      "status": "过滤",
+      "reason": "表头无有效字段",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "column_0",
+        "xxx标识",
+        "字节",
+        "xxx",
+        "column_7",
+        "column_8",
+        "column_9",
+        "需确认。"
+      ],
+      "preceding_para": "命令"
+    },
+    {
+      "table_index": 16,
+      "status": "过滤",
+      "reason": "表头无有效字段",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "column_0",
+        "xxx标识",
+        "字节",
+        "xxx",
+        "column_7",
+        "column_8",
+        "column_9",
+        "不需确认"
+      ],
+      "preceding_para": "xxx状态信息"
+    },
+    {
+      "table_index": 17,
+      "status": "过滤",
+      "reason": "表头无有效字段",
+      "table_type": "skip",
+      "msg_name": null,
+      "headers": [
+        "column_0",
+        "xxx序号",
+        "字节",
+        "xxx",
+        "column_6",
+        "column_7",
+        "[0，255]",
+        "column_9",
+        "column_10"
+      ],
+      "preceding_para": "xxx信息"
+    }
+  ],
+  "field_matches": [
+    {
+      "source": "说明",
+      "target": "备注",
+      "confidence": 0.95,
+      "match_type": "exact"
+    },
+    {
+      "source": "值域",
+      "target": "值域",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "值",
+      "target": null,
+      "confidence": 0.0,
+      "match_type": "unmatched"
+    },
+    {
+      "source": "数据转换方法",
+      "target": null,
+      "confidence": 0.0,
+      "match_type": "unmatched"
+    },
+    {
+      "source": "名称",
+      "target": "信号名称",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "类型",
+      "target": "类型",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "单位",
+      "target": "单位",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "内容",
+      "target": "内容",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "序号",
+      "target": "序号",
+      "confidence": 1,
+      "match_type": "exact"
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "task_id": "ce389b2a-b0e5-46c9-9364-13528b24aa9e",
+  "file": "ce389b2a-b0e5-46c9-9364-13528b24aa9e_表号（公开）.docx",
+  "timestamp": "2026-07-20T14:52:17.419762",
+  "mapping_quality": {
+    "score": 0.36363636363636365,
+    "level": "poor",
+    "auto_count": 4,
+    "manual_count": 7,
+    "unmatched_count": 6,
+    "total": 11,
+    "expected_count": 8,
+    "covered_count": 5,
+    "coverage": 0.625
+  },
+  "expected_fields": [
+    "参数表号",
+    "参数编码",
+    "信息名称",
+    "数据类型",
+    "类型",
+    "单位",
+    "值域",
+    "备注"
+  ],
+  "tables_scanned": 1,
+  "tables_kept": 1,
+  "tables_skipped": 0,
+  "table_decisions": [
+    {
+      "table_index": 0,
+      "status": "智能识别",
+      "reason": "字段定义表",
+      "table_type": "field_def",
+      "msg_name": null,
+      "headers": [
+        "表号",
+        "编号",
+        "信息名称",
+        "信息代号",
+        "单位",
+        "下限",
+        "上限",
+        "信息类型",
+        "数据类型",
+        "值域",
+        "备注"
+      ],
+      "preceding_para": "某指令"
+    }
+  ],
+  "field_matches": [
+    {
+      "source": "信息名称",
+      "target": "信号名称",
+      "confidence": 0.75,
+      "match_type": "fuzzy"
+    },
+    {
+      "source": "信息类型",
+      "target": null,
+      "confidence": 0.0,
+      "match_type": "unmatched"
+    },
+    {
+      "source": "上限",
+      "target": null,
+      "confidence": 0.0,
+      "match_type": "unmatched"
+    },
+    {
+      "source": "值域",
+      "target": "值域",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "数据类型",
+      "target": "数据类型",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "信息代号",
+      "target": null,
+      "confidence": 0.0,
+      "match_type": "unmatched"
+    },
+    {
+      "source": "下限",
+      "target": null,
+      "confidence": 0.0,
+      "match_type": "unmatched"
+    },
+    {
+      "source": "编号",
+      "target": null,
+      "confidence": 0.0,
+      "match_type": "unmatched"
+    },
+    {
+      "source": "备注",
+      "target": "备注",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "单位",
+      "target": "单位",
+      "confidence": 1,
+      "match_type": "exact"
+    },
+    {
+      "source": "表号",
+      "target": null,
+      "confidence": 0.0,
+      "match_type": "unmatched"
+    }
+  ]
+}

@@ -335,6 +335,153 @@ def download_result(task_id):
         return error_response(50001, f"下载失败: {str(e)}")
 
 
+def _apply_override_special_processing(cleaned: dict, user_overrides: dict,
+                                        matched_row: dict, processor) -> None:
+    """
+    人工映射特殊列处理（优先级最高）。
+
+    当用户把某源列手动映射到"转换公式"/"值域"/"单位"等需要特殊处理的目标列时，
+    对该列的原始文本调用对应的处理器，并将结果写入 matched_row 的 _fmt_* 键，
+    覆盖程序自动提取的结果（人工映射意图明确，优先级最高）。
+
+    支持的特殊目标列：
+      - 转换公式：调用 FormulaStandardizer，如 "物理值=ADC值×0.1+20" → "0.1×X+20"
+      - 值域 / 判读公式：调用 RangeValueFormatter，如 "0~255" → "[0,255]"
+      - 单位：调用 UnitExtractor，如 "单位为m/s" → "m/s"
+
+    非特殊列（如内容、数据类型等）不在此处理，仍由 ExcelExporter 的 override_cols 逻辑处理。
+    """
+    from backend.services.data_cleaner import (
+        FormulaStandardizer, RangeValueFormatter, UnitExtractor, DataProcessor
+    )
+    formula_std = FormulaStandardizer()
+    range_fmt   = RangeValueFormatter()
+    unit_ext    = UnitExtractor()
+
+    # 需要特殊处理的目标列 → 处理函数
+    # 返回值为 (处理后的值, _fmt_键名) 或 None（无法解析，保留原始值/自动提取）
+    SPECIAL_TARGET_HANDLERS = {
+        '转换公式': lambda txt: _handle_override_formula(txt, formula_std),
+        '值域':    lambda txt: _handle_override_range(txt, range_fmt),
+        '判读公式': lambda txt: _handle_override_range(txt, range_fmt),
+        '单位':    lambda txt: _handle_override_unit(txt, unit_ext),
+    }
+
+    for src_field, raw_val in cleaned.items():
+        target = user_overrides.get(src_field)
+        if not target or target not in SPECIAL_TARGET_HANDLERS:
+            continue  # 非特殊目标列，跳过
+
+        txt = str(raw_val).strip() if raw_val else ''
+        if not txt or txt in ('—', '-'):
+            continue
+
+        handler = SPECIAL_TARGET_HANDLERS[target]
+        result = handler(txt)
+        if result is not None:
+            # 写入 _fmt_ 键，优先级高于自动提取（ExcelExporter 直接取 formatted.get(key)）
+            matched_row[f'_fmt_{target}'] = result
+            import logging
+            logging.getLogger(__name__).info(
+                "[人工映射] %s → %s: %r → %r", src_field, target, txt, result
+            )
+
+
+def _handle_override_formula(txt: str, std) -> 'Optional[str]':
+    """
+    尝试从人工映射的原始文本中提取并标准化转换公式。
+
+    支持格式：
+      - 直接等式：物理值=0.01×X, Y=0.001×X, 物理值=100/65535*X
+      - 变量×系数：ADC值×0.1+20
+      - 标准公式：0.01×X+5, 0.01*x
+      - 括号复杂表达式：(模拟量/2^12)×21
+    """
+    import re
+    from backend.services.data_cleaner import FormulaStandardizer
+    std = FormulaStandardizer()
+
+    # 1. 括号除法表达式：(A/B)×C
+    m = re.search(r'[\(（][^）)]*[/÷][^）)]*[\)）]\s*[×*]\s*[\d.]+', txt)
+    if m:
+        return std.standardize(m.group(0))
+
+    # 2. 等式格式：物理值=0.01×X, 物理值=100/65535*X（提取右侧公式部分）
+    m = re.search(
+        r'(?:[\u4e00-\u9fffA-Za-z][\w\u4e00-\u9fff]*\s*=\s*)'
+        r'(([\d.]+(?:/[\d.]+)?)\s*[×*]\s*[XxA-Z](?:\s*[+\-]\s*[\d.]+)?)',
+        txt
+    )
+    if m:
+        return std.standardize(m.group(1))
+
+    # 3. 变量×系数格式：ADC值×0.1+20（无等号）
+    m = re.search(
+        r'([\u4e00-\u9fffA-Za-z][\w\u4e00-\u9fff]*)\s*[×*]\s*([\d.]+)'
+        r'(?:\s*([+\-])\s*([\d.]+))?',
+        txt
+    )
+    if m and m.group(1) not in {'LSB', 'bit', 'byte', 'Byte'}:
+        coef   = m.group(2)
+        b_sign = m.group(3) or ''
+        b_val  = m.group(4) or ''
+        return std.standardize(f'{coef}×X{b_sign}{b_val}')
+
+    # 4. 直接尝试标准化（适用于已是 "0.01×X" 这类格式的文本）
+    result = std.standardize(txt)
+    import re as _re
+    # 有效公式包含 X（支持 ×X, *X, xX 等大小写和 Unicode×）
+    if _re.search(r'[\u00d7*][Xx]|[Xx][+\-]|[\d.][Xx][\+\-\d]', result):
+        return result
+
+    return None  # 无法解析，不覆盖
+
+
+def _handle_override_range(txt: str, fmt) -> 'Optional[str]':
+    """
+    从人工映射的原始文本中提取并格式化值域。
+
+    支持格式：
+      - 直接范围：0~255, -100~100
+      - 带前缀：值域：-10~10, 范围：0~65535, 取值0~255
+      - 带单位：-100~100m/s（提取数字部分）
+      - 枚举：0x01:允许;0x02:禁止
+    """
+    import re
+    from backend.services.data_cleaner import RangeValueFormatter
+    fmt = RangeValueFormatter()
+
+    # 1. 优先从文本中提取纯数字范围段（去掉前缀词和单位）
+    # 匹配 "数字~数字" 核心模式（支持负数、十六进制）
+    range_match = re.search(
+        r'(-?(?:0[xX][\da-fA-F]+|\d[\d.]*)'
+        r'\s*[~～\-]\s*'
+        r'-?(?:0[xX][\da-fA-F]+|\d[\d.]*))',
+        txt
+    )
+    if range_match:
+        pure_range = range_match.group(1).strip()
+        result = fmt.format_range(pure_range)
+        if result and re.match(r'^\[[\d\s,.\-xa-fA-F]+\]$', result):
+            return result
+
+    # 2. 尝试直接 format_range（适用于纯范围文本）
+    result = fmt.format_range(txt)
+    if result and re.match(r'^\[[\d\s,.\-xa-fA-F]+\]$|^\{[^}]+\}$', result):
+        return result
+
+    return None  # 无法解析成有效值域
+
+
+def _handle_override_unit(txt: str, ext) -> 'Optional[str]':
+    """
+    从人工映射的原始文本中提取单位。
+    """
+    from backend.services.data_cleaner import UnitExtractor
+    ext = UnitExtractor()
+    return ext.extract_unit(txt)  # 返回 None 表示无法提取
+
+
 def _build_processed_tables(linked_tables, user_overrides=None):
     """
     将关联后的表格处理为可导出的结构。
@@ -387,9 +534,17 @@ def _build_processed_tables(linked_tables, user_overrides=None):
                 if target != field:
                     matched_row[field] = value
 
-            # 保留格式化结果（值域、转换公式）
+            # 保留格式化结果（值域、转换公式）——程序自动提取的结果
             for fkey, fval in proc_res.get('formatted', {}).items():
                 matched_row[f'_fmt_{fkey}'] = fval
+
+            # ── 人工映射特殊列处理（优先级最高，覆盖自动提取结果）────────────
+            # 当用户把某源列手动映射到特殊目标列（转换公式/值域/单位）时，
+            # 需要对该列的原始文本调用对应处理器，并将结果写入 _fmt_ 键，
+            # 确保人工映射的语义（如"数据之源→转换公式"）能正确触发特殊处理。
+            _apply_override_special_processing(
+                proc_res['cleaned'], user_overrides, matched_row, processor
+            )
 
             # 位数对齐
             if '位数' in proc_res['converted']:

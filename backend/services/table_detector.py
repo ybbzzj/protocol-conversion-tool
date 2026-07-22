@@ -444,6 +444,23 @@ def _parse_aggregate_meta(text: str) -> Dict:
             val = m.group(1)
             meta['数据段长度'] = str(int(val, 16)) if val.upper().startswith('0X') else val
 
+    # ── 后处理：剥离总线协议字母前缀，只保留机器码数字 ──
+    # 1553B 协议中 RT 是远程终端标识，真正的机器码是其后跟的数字。
+    # 例：'RT13' → '13'，'RT5' → '5'；纯字母标识（'BC'）保留原样。
+    # 规则：若值为"字母前缀 + 数字后缀"，则只保留数字部分作为机器码。
+    def _strip_bus_prefix(val: str) -> str:
+        """去掉 RT/BRT/NODE 等总线前缀，只保留数字机器码。纯字母（BC）原样返回。"""
+        if not val:
+            return val
+        m_num = re.match(r'^[A-Za-z]+(\d+)$', val)
+        if m_num:
+            return m_num.group(1)
+        return val
+
+    for key in ('信源机器码', '信宿机器码'):
+        if key in meta:
+            meta[key] = _strip_bus_prefix(meta[key])
+
     return meta
 
 
@@ -1113,92 +1130,160 @@ class TableDetector:
     # bit位定义表关键词
     _BIT_KW = {'位号', '状态参数'}
 
+    # 配置强制识别的覆盖率阈值：非空列中命中配置字段的比例达到此值即强制识别
+    # 强制识别会跳过 data_block 检查，并在多候选时优先选靠后的行
+    _CFG_FORCE_THRESHOLD = 0.5   # 50% 以上命中即触发
+
     def _locate_header(self, grid: List[List[str]], cfg_set: set = None) -> int:
-        """统一表头定位：扫描行0~7，找到最佳表头候选行。
+        """统一表头定位：扫描全表（有配置）或前15行（无配置），找到最佳表头候选行。
 
         判定标准（不区分混合表/普通表，统一扫描）：
         1. 行内含强字段关键词（序号/内容/类型/参数/长度等）
         2. 行内含特殊表类型关键词（信源系统码/ID序号/位号等）
-        3. 行内列名与配置字段高度匹配（≥60%或全命中）
-        4. 下方有规整数据块（列数接近、非空单元格≥2）
-        5. 排除纯元数据行（只含元数据词，无任何字段词）
+        3. 行内列名与配置字段匹配度 ≥ _CFG_FORCE_THRESHOLD（50%）且非空列 ≥ 2
+           → 配置强制模式：跳过 data_block 检查，多候选时优先选靠后的行
+        4. 下方有规整数据块（配置强制模式下不要求此项）
+        5. 排除纯元数据行（只含元数据词，无任何字段词，且非配置强制）
 
         返回：表头行索引，或 -1（未找到）
         """
         n_rows = len(grid)
         candidates = []
 
-        for scan_r in range(min(8, n_rows)):
+        # 扫描范围：有配置时扫全表（混合表元数据区可能很长），无配置时扫前15行
+        max_scan = n_rows if cfg_set else min(15, n_rows)
+
+        for scan_r in range(max_scan):
             ru = _dedup_row(grid[scan_r])
             rt = ' '.join(ru)
             # 精确单元格集合（去空去占位）
             cell_set = set(c.strip() for c in ru if c and c.strip())
 
-            # 检查各类关键词（强字段/端口/ID/bit 用精确匹配，避免子串误伤）
+            # ── 配置覆盖率计算 ──────────────────────────────────────────────
+            cfg_cover_ratio = 0.0
+            cfg_non_empty_count = 0
+            cfg_covered_count = 0
+            is_config_forced = False   # 配置强制识别标志
+            has_cfg = False            # 宽松配置命中（原有逻辑）
+            cfg_full_cover = False     # 100% 覆盖（原有逻辑，兼容保留）
+
+            # ── 关键词检查（先于配置计算，让配置强制可以引用 has_meta） ────
             has_strong = bool(cell_set & self._STRONG_FIELD_KW)
-            has_weak = bool(cell_set & self._WEAK_FIELD_KW)
             has_port = bool(cell_set & self._PORT_KW)
             has_id = bool(cell_set & self._ID_KW)
             has_bit = bool(cell_set & self._BIT_KW)
             # 元数据词用子串匹配（更宽松，宁可多判为元数据）
             has_meta = any(kw in rt for kw in _TYPE_A_META_KEYWORDS)
 
-            # 配置兜底
-            has_cfg = False
-            cfg_full_cover = False  # 所有非空格都被配置字段覆盖（高置信度表头行）
             if cfg_set:
-                non_empty = [c for c in ru if c and c.strip()]
-                if len(non_empty) >= 2:
-                    covered = sum(1 for c in non_empty if c.strip() in cfg_set)
-                    if covered == len(non_empty):
-                        has_cfg = True
-                        cfg_full_cover = True  # 100%命中：强烈提示这行是列名行
-                    elif covered >= 3 and covered / len(non_empty) >= 0.6:
+                non_empty_cells = [c for c in ru if c and c.strip()]
+                cfg_non_empty_count = len(non_empty_cells)
+                if cfg_non_empty_count >= 2:  # 至少 2 列非空才有意义
+                    cfg_covered_count = sum(
+                        1 for c in non_empty_cells if c.strip() in cfg_set
+                    )
+                    cfg_cover_ratio = cfg_covered_count / cfg_non_empty_count
+
+                    # 配置强制守护条件：行不能是"含元数据关键词 且 没有强字段词"的纯元数据行。
+                    #   防止"错误处理 + 备注"这类行因 '备注' 命中配置字段而误触强制识别。
+                    #   直接复用已算好的 has_meta / has_strong（关键词检查在配置计算之前完成）
+                    is_row_pure_meta = has_meta and not has_strong
+
+                    # 配置强制：覆盖率达到阈值 且 行本身不是纯元数据行
+                    if cfg_cover_ratio >= self._CFG_FORCE_THRESHOLD and not is_row_pure_meta:
+                        is_config_forced = True
                         has_cfg = True
 
-            # 是否是表头候选：有强关键词 OR 有特殊表关键词 OR 有配置匹配
-            # （弱关键词单独不算，避免"位数|备注"被误判）
-            is_candidate = has_strong or has_port or has_id or has_bit or has_cfg
+                    # 兼容原有的严格判断（仍用于非强制路径的评分）
+                    if cfg_cover_ratio == 1.0:
+                        cfg_full_cover = True
+                    elif cfg_covered_count >= 3 and cfg_cover_ratio >= 0.6:
+                        has_cfg = True
+
+            # ── 是否是表头候选 ──────────────────────────────────────────────
+            is_candidate = (has_strong or has_port or has_id or has_bit
+                            or has_cfg or is_config_forced)
             if not is_candidate:
                 continue
 
-            # 排除纯元数据行（含元数据词但不含任何字段/特殊词/配置匹配）
+            # ── 排除纯元数据行（配置强制时不排除） ─────────────────────────
             is_pure_meta = (has_meta and not has_strong and not has_port
                             and not has_id and not has_bit and not has_cfg)
-            if is_pure_meta:
+            if is_pure_meta and not is_config_forced:
                 continue
 
-            # 结构校验：下方有规整数据块
-            data_block = self._record_rows_below(grid, scan_r)
-            if data_block < 1:
-                continue
+            # ── 评分 ────────────────────────────────────────────────────────
+            if is_config_forced:
+                # 配置强制模式：
+                #   - 基础分 5000（远高于普通候选，确保优先）
+                #   - 覆盖率越高越好（0~1000 分）
+                #   - 位置越靠后越好（* scan_r）：
+                #     混合表中元数据在上、表头在中、数据在下，
+                #     多个配置命中行中最靠后的最可能是真正的表头
+                #   - 列数合理（3~12 列）额外加分
+                score = 5000 + int(cfg_cover_ratio * 1000) + scan_r * 10
+                col_count = cfg_non_empty_count
+                if 3 <= col_count <= 12:
+                    score += 200  # 列数合理 → 像标准表头
 
-            # 评分
-            score = data_block * 10
-            if has_strong:
-                # 强字段关键词越多越像真正的表头（序号+内容+类型+字节 > 只有序号）
-                strong_count = len(cell_set & self._STRONG_FIELD_KW)
-                score += 5 + strong_count * 3   # 每多一个强关键词 +3
-            if has_cfg:
-                score += 3
-            if cfg_full_cover:
-                # 配置字段100%全覆盖：这行极有可能是列定义行（非数据行）
-                # 给予强力奖励，避免被"数据更多的数据行"压制
-                # 奖励量设为 200，足以抵消数据行多20行带来的200分优势
-                score += 200
-            if has_port or has_id or has_bit:
-                score += 4
-            # 位置奖励：越靠上越可能是表头（元数据区通常在前几行）
-            score += max(0, 5 - scan_r)
+                logger.debug(
+                    f"  行{scan_r:2d} [配置强制] 非空{cfg_non_empty_count}列 "
+                    f"命中{cfg_covered_count}/{cfg_non_empty_count} "
+                    f"({cfg_cover_ratio:.0%}) score={score} "
+                    f"cells={list(cell_set)[:6]}"
+                )
+            else:
+                # 普通模式：原有逻辑不变，仍需验证 data_block
+                data_block = self._record_rows_below(grid, scan_r)
+                if data_block < 1:
+                    continue
+
+                score = data_block * 10
+                if has_strong:
+                    strong_count = len(cell_set & self._STRONG_FIELD_KW)
+                    score += 5 + strong_count * 3
+                if has_cfg:
+                    score += 3
+                if cfg_full_cover:
+                    score += 200
+                if has_port or has_id or has_bit:
+                    score += 4
+                # 位置奖励：普通模式越靠上越好（元数据区通常在前几行）
+                score += max(0, 5 - scan_r)
+
+                logger.debug(
+                    f"  行{scan_r:2d} [普通]     data_block={data_block} "
+                    f"strong={has_strong} cfg={has_cfg} score={score} "
+                    f"cells={list(cell_set)[:6]}"
+                )
 
             candidates.append((scan_r, score))
 
         if not candidates:
-            return -1
+            logger.info(f"_locate_header: 未找到候选表头行（扫描0~{max_scan-1}行）")
+            return -1, False
 
-        # 排序：评分最高，同分优先靠上
+        # ── 排序 ─────────────────────────────────────────────────────────────
+        # 配置强制候选：score 高（5000+），自动排在普通候选前面
+        # 同为配置强制时：scan_r 越大 score 越高 → 选最靠后的行
+        # 普通候选内部：score 高且靠上优先（保持原有行为）
         candidates.sort(key=lambda c: (c[1], -c[0]), reverse=True)
-        return candidates[0][0]
+        best_row, best_score = candidates[0]
+
+        # ── 诊断日志：输出所有候选行和最终选择 ──────────────────────────────
+        is_forced = best_score >= 5000
+        mode_tag = '配置强制' if is_forced else '普通'
+        logger.info(
+            f"_locate_header: 选定行{best_row} [{mode_tag}] score={best_score} "
+            f"headers={[c.strip() for c in _dedup_row(grid[best_row]) if c.strip()]}"
+        )
+        if len(candidates) > 1:
+            others = [(r, s) for r, s in candidates[1:]]
+            logger.info(
+                f"_locate_header: 其余候选 {others}"
+            )
+
+        return best_row, is_forced
 
     def _parse_single_table(self, table, t_idx: int, preceding_para: str, force_skip: bool) -> Dict:
         """
@@ -1269,7 +1354,7 @@ class TableDetector:
                 return base
 
         # ── 统一表头定位 ──────────────────────────────────────────────────
-        header_row_idx = self._locate_header(grid, cfg_set)
+        header_row_idx, header_is_config_forced = self._locate_header(grid, cfg_set)
 
         if header_row_idx == -1:
             # 表头定位失败 → 噪声表
@@ -1291,7 +1376,8 @@ class TableDetector:
             self._log_table_status(t_idx, '配置匹配', f'命中配置: {matched_table_type}', matched_table_type, headers=headers, preceding=preceding_para)
             if matched_table_type == 'field_def':
                 return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para,
-                                                    header_row_idx, config_field_names)
+                                                    header_row_idx, config_field_names,
+                                                    is_config_forced=header_is_config_forced)
             elif matched_table_type == 'message_id':
                 config_roles = config.get('column_roles', {})
                 return self._parse_message_id_table(grid, t_idx, preceding_para, config_roles)
@@ -1342,7 +1428,8 @@ class TableDetector:
         if is_field_def:
             self._log_table_status(t_idx, '智能识别', '字段定义表', 'field_def', headers=headers, preceding=preceding_para)
             return self._parse_field_def_table(grid, is_vmerge_cont, t_idx, preceding_para,
-                                                header_row_idx, config_field_names)
+                                                header_row_idx, config_field_names,
+                                                is_config_forced=header_is_config_forced)
 
         # 6. 都不匹配 → 噪声表
         self._log_table_status(t_idx, '过滤', '表头无有效字段', 'skip', headers=headers, preceding=preceding_para)
@@ -1522,11 +1609,15 @@ class TableDetector:
     def _parse_field_def_table(self, grid: List[List[str]], is_vmerge_cont: List[List[bool]],
                                 t_idx: int, preceding_para: str,
                                 header_row_idx: int,
-                                config_field_names: List[str] = None) -> Dict:
+                                config_field_names: List[str] = None,
+                                is_config_forced: bool = False) -> Dict:
         """解析字段定义表（重构版）。
 
         不再区分 Type A/B/C。表头行由 _locate_header 统一定位后传入。
         表头之上的行统一作为元数据区，用横向键值对方式提取。
+
+        is_config_forced：若为 True，则即使 data_rows 为空也不 skip，
+        改为返回仅含元数据的 field_def 结果（兼容"只有元数据/占位符"的指令表）。
         """
         skip_result = {
             'index': t_idx, 'msg_name': '', 'headers': [], 'data_rows': [],
@@ -1546,7 +1637,15 @@ class TableDetector:
                                              is_vmerge_cont=is_vmerge_cont)
 
         if not data_rows:
-            return skip_result
+            # 配置强制识别时，即使数据区为空（如指令全为"—"），也保留表格（含元数据）
+            if is_config_forced and header_row_idx > 0:
+                logger.info(
+                    f"_parse_field_def_table: Table #{t_idx} 数据行为空但配置强制，"
+                    f"保留为 field_def（仅含元数据），preceding='{preceding_para}'"
+                )
+                # 继续向下提取元数据，不 return skip_result
+            else:
+                return skip_result
 
         # ── 提取元数据（表头之上的行） ─────────────────────────────────────────
         meta = {}
@@ -1574,7 +1673,19 @@ class TableDetector:
                 or re.search(r'[A-Za-z]{2,6}[A-Za-z]{2,6}\d', row_text)  # 紧凑拼接格式（如BCRT5）
             )
             if _has_bus_addr:
-                meta.update(_parse_aggregate_meta(row_text))
+                # 从行中提取最可能包含总线地址信息的单元格作为解析输入
+                # 优先选含 → / SA / 模式码 / 紧凑拼接(如BCRT) 的单元格
+                bus_addr_input = row_text  # 默认用整行文本
+                for cell in row_unique:
+                    if ('→' in cell or '->' in cell
+                        or re.search(r'SA\s*\d+', cell)
+                        or '模式码' in cell
+                        or re.search(r'[A-Za-z]{2,6}[A-Za-z]{2,6}\d', cell)
+                        or re.search(r'[A-Za-z]\d+[-_]SA', cell)):
+                        bus_addr_input = cell
+                        break
+                parsed = _parse_aggregate_meta(bus_addr_input)
+                meta.update(parsed)
 
             # 提取信源信宿（IP地址格式或RT-SA格式）
             if '信源、信宿' in row_text or '信源、信目' in row_text:
@@ -1722,33 +1833,51 @@ class TableDetector:
             if not has_non_content_data:
                 continue
 
+            # 记录原始 grid 行号，供 CRC 过滤时判断合并单元格
+            row_dict['_grid_row_idx'] = r_idx
             data_rows.append(row_dict)
 
         # ◄ 末尾 CRC 校验字过滤（可由输出控制开关关闭）：
-        # 若最后一个有效数据行的内容字段包含 CRC 校验相关内容（CRC 大小写不敏感），
-        # 则丢弃该行（这类校验字段通常不是协议有效数据项）。
-        # 匹配规则：内容字段以 "crc" 开头，或包含 "crc校验"/"crc检验"/"校验和"/"校验码"
-        # 仅作用于最后一项：若 CRC 行后面仍有有效数据行，则保留。
+        # 满足以下全部条件时过滤：
+        # 1. 内容字段包含 CRC/CRC16 + 校验和/检验码/校验 等关键词
+        # 2. 该行是非合并单元格的独立行（is_vmerge_cont 为 False）
+        # 3. 是 data_rows 的最后一行
         if self.remove_crc_tail:
-            import re as _re
             def _is_crc_row(row: dict) -> bool:
                 """判断该行是否为 CRC 校验行"""
                 for header, value in row.items():
+                    if header.startswith('_'):
+                        continue
                     if header in content_field_names and value:
                         v = str(value).strip().lower()
-                        # 匹配以 crc 开头的内容，如 "CRC16校验和"、"CRC校验字"
+                        # 匹配以 crc 开头的内容，如 "CRC16校验和"、"CRC校验字"、"CRC16检验码"
                         if v.startswith('crc'):
                             return True
                         # 匹配含 "crc校验"/"crc检验" 的内容
                         if 'crc' in v and ('校验' in v or '检验' in v):
                             return True
                         # 匹配纯校验类内容（不含其他有效字段名）
-                        if v in ('校验和', '校验码', '校验字'):
+                        if v in ('校验和', '校验码', '校验字', '校验'):
                             return True
                 return False
 
-            if data_rows and _is_crc_row(data_rows[-1]):
+            def _is_merged_row(row: dict) -> bool:
+                """判断该行在原始表格中是否为合并单元格续行（跨行合并的非首行）"""
+                if is_vmerge_cont is None:
+                    return False
+                r_idx = row.get('_grid_row_idx')
+                if r_idx is None:
+                    return False
+                # 检查任意一列是否是合并续行
+                row_vmerge = is_vmerge_cont[r_idx] if r_idx < len(is_vmerge_cont) else []
+                return any(row_vmerge)
+
+            if data_rows and _is_crc_row(data_rows[-1]) and not _is_merged_row(data_rows[-1]):
                 data_rows.pop()
+
+        # 清理临时标记
+        for row in data_rows:
+            row.pop('_grid_row_idx', None)
 
         return data_rows
 

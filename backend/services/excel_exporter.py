@@ -23,9 +23,15 @@ def _extract_unit_from_remark(remark: str) -> Optional[str]:
     if not remark:
         return None
 
-    # 如果备注含有"见表X.Y"、"附录X"等引用，说明是引用说明，
-    # 其中的字母（如"见表A.2"中的A）不应被提取为单位
-    has_table_ref = bool(re.search(r'见表[A-Za-z]', remark) or re.search(r'附录[A-Za-z]', remark))
+    # 如果备注含有表格/章节/附录等引用，说明是引用说明，
+    # 其中的孤立字母（如"见表A.2"中的A、"B.5"中的B）不应被提取为单位
+    # 覆盖格式：见表A.2 / B.5 / 附表2 / 图3.1 / 附录C / 见第X章 等
+    has_table_ref = bool(
+        re.search(r'见[表附图][A-Za-z0-9.、.\-\u4e00-\u9fff]+', remark)
+        or re.search(r'[表附图][A-Za-z0-9.、.\-]+\d', remark)
+        or re.search(r'附录[A-Za-z]', remark)
+        or re.search(r'第[一二三四五六七八九十\d]+[章节]', remark)
+    )
 
     # 常见的单位提取模式（优先级从高到低）
     patterns = [
@@ -311,10 +317,19 @@ class ExcelExporter:
 
                 # ── 用户手动映射（程序计算列条件覆盖，普通列直接覆盖）────
                 # _override_cols 中列出的目标列由用户在前端手动映射指定。
-                # 对判读公式/转换公式：只有当原始值能被标准化器正确解析时才覆盖，
-                # 否则保留程序从正确源列提取并标准化的结果。
+                # 优先级规则：
+                #   1. 已由 _apply_override_special_processing 处理并写入 _fmt_ 键的目标列
+                #      → 已在"转换公式/值域/单位"填充步骤（上方）中生效，此处跳过，避免覆盖。
+                #   2. 未经特殊处理的目标列（判读公式/转换公式）：条件覆盖（须能解析才写入）。
+                #   3. 普通列：直接覆盖。
+                # 特殊列集合（已由 _fmt_ 路径处理，无需在此再处理）
+                _special_cols_handled_by_fmt = {'转换公式', '值域', '判读公式', '单位'}
                 override_cols = row.get('_override_cols') or []
                 for ocol in override_cols:
+                    # 若该列已由人工映射特殊处理路径在 _fmt_ 键中写入并生效，跳过
+                    if ocol in _special_cols_handled_by_fmt and ocol in fill_data:
+                        continue
+
                     raw_val = row.get(ocol)
                     if raw_val in (None, ''):
                         continue
@@ -567,8 +582,14 @@ class ExcelExporter:
         if not search_text.strip():
             return None
 
-        # 检查备注是否含有表格引用（如"见表A.2"），若有则不匹配单字母单位
-        has_table_ref = bool(re.search(r'见表[A-Za-z]', search_text) or re.search(r'附录[A-Za-z]', search_text))
+        # 检查备注是否含有表格/章节/附录等引用，若有则不匹配单字母单位
+        # 覆盖格式：见表A.2 / B.5 / 附表2 / 图3.1 / 附录C / 见第X章 等
+        has_table_ref = bool(
+            re.search(r'见[表附图][A-Za-z0-9.、.\-\u4e00-\u9fff]+', search_text)
+            or re.search(r'[表附图][A-Za-z0-9.、.\-]+\d', search_text)
+            or re.search(r'附录[A-Za-z]', search_text)
+            or re.search(r'第[一二三四五六七八九十\d]+[章节]', search_text)
+        )
 
         # 按优先级从高到低匹配，越具体的单位越靠前
         # 每个元组：(正则模式, 单位名称, 是否为单字母单位需要检查表格引用)

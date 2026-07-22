@@ -408,14 +408,22 @@ class UnitExtractor:
     """
     
     # 常见单位列表（支持大小写感知的正则匹配）
+    # 注意：复合单位（m/s, km/h 等）必须放在前面，优先于单字母 m/s/km 匹配
     UNIT_PATTERNS = [
+        r'm/s²', r'm/s2', r'm/s',                  # 复合速度/加速度单位（长 → 短，防止m/s被m误匹配）
+        r'km/h',                                   # 速度
+        r'rad/s²', r'rad/s2', r'rad/s',            # 复合角速度（必须在 rad 和 s 之前）
+        r'°/s',                                    # 角速度（度/秒）
         r'ms', r'us', r'ns', r's', r'min', r'h',   # 时间
         r'mV', r'kV', r'V', r'mA', r'uA', r'A',   # 电压电流
-        r'℃', r'°C', r'K',                        # 温度
+        r'℃', r'°C',                               # 温度（K 单独后置，避免被 kg/kPa 的 k 抢先匹配）
         r'Hz', r'kHz', r'MHz', r'GHz',             # 频率
-        r'rad', r'°', r'度',                       # 角度
+        r'rad', r'°', r'度',                       # 角度（单独，在复合角速度之后）
         r'%', r'dB', r'dBm',                       # 比例/增益
         r'km', r'cm', r'mm', r'um', r'nm', r'm',   # 长度
+        r'kg', r'mg', r'ug',                       # 质量（必须在 K 之前，否则 K 的(?i)会误匹配 kg 的 k）
+        r'kPa', r'MPa', r'Pa',                     # 压力（kPa 先于 Pa，Pa 先于 P/A 单字母）
+        r'K',                                      # 开尔文温度（单字母，放在 kg/kPa 之后）
         r'byte', r'bits', r'bit',                  # 数据量
     ]
 
@@ -423,9 +431,13 @@ class UnitExtractor:
         if not text or len(text) > 200: # 备注太长可能包含干扰，限制长度
             return None
 
-        # 如果备注中含有"见表X.Y"、"详见附录"等表格引用，说明是引用说明，
-        # 其中的字母（如"表A.2"中的A）不应被提取为单位
-        if re.search(r'见表[A-Za-z]', text) or re.search(r'附录[A-Za-z]', text):
+        # 如果备注中含有表格/章节/附录等引用，说明是引用说明，
+        # 其中的孤立字母（如"见表A.2"中的A、"B.5"中的B）不应被提取为单位
+        # 覆盖格式：见表A.2 / B.5 / 附表2 / 图3.1 / 附录C / 见第X章 等
+        if (re.search(r'见[表附图][A-Za-z0-9.、.\-\u4e00-\u9fff]+', text)
+            or re.search(r'[表附图][A-Za-z0-9.、.\-]+\d', text)
+            or re.search(r'附录[A-Za-z]', text)
+            or re.search(r'第[一二三四五六七八九十\d]+[章节]', text)):
             # 过滤掉单个大写字母单位（如 A/V/K），避免把表号中的字母误识别为单位
             # 但保留复合单位（如 mA/kHz 等）
             patterns_to_try = [p for p in self.UNIT_PATTERNS
@@ -464,9 +476,20 @@ class UnitExtractor:
                     # ① 明确声明"单位为X / 单位是X / 单位：X / (X)"：直接通过
                     #    例："单位为A" → A 前面是"为"，通过; "(A)" → 通过
                     is_explicit_unit_decl = bool(
-                        re.search(r'单位\s*[为是：:]\s*$', before.rstrip()) or
-                        re.search(r'[（\(]\s*$', before)
+                        re.search(r'单位\s*[为是：:]\s*$', before.rstrip())
                     )
+                    # (X) 格式：仅当括号内是单位且后面紧跟标点或结束时才算明确声明
+                    # 例："(A)"后面如果还有"表示选项"则不算明确声明
+                    if re.search(r'[（\(]\s*$', before):
+                        paren_after = text[match.end():]
+                        # 括号内容后面紧跟 ) 且 ) 后面是标点/结束/数字，才算明确声明
+                        if re.match(r'^\s*[）\)]', paren_after):
+                            close_paren_pos = paren_after.find(')') if ')' in paren_after else paren_after.find('）')
+                            after_close = paren_after[close_paren_pos+1:].strip() if close_paren_pos >= 0 else ''
+                            # ) 后面如果是逗号、句号、分号或空白/结束，算明确声明
+                            if not after_close or re.match(r'^[,，。；;\s]', after_close):
+                                is_explicit_unit_decl = True
+                    
 
                     # ② 数值上下文：数字紧邻前面，或前面是"/"（复合单位如 °/s）
                     #    例："3A"、"5 A"、"12V"、"°/s"
@@ -752,6 +775,19 @@ class DataProcessor:
             # 典型 aX+b 模式（数字+X+符号+数字）
             if re.search(r'(?<![a-zA-Z\u4e00-\u9fff])[\d.]+\s*\*?\s*[xX]\s*[+\-]\s*[\d.]', txt):
                 return True
+            # 等式格式：物理值=aX, Y=0.01×X, 分数系数=100/65535*X（物理量标定公式）
+            if re.search(
+                r'(?:[\u4e00-\u9fffA-Za-z][\w\u4e00-\u9fff]*\s*=\s*)'
+                r'[\d.]+(?:/[\d.]+)?\s*[×*]\s*[XxA-Z]',
+                txt
+            ):
+                return True
+            # 变量×系数格式：ADC值×0.1+20（无等号，变量名在左×数字在右）
+            if re.search(
+                r'[\u4e00-\u9fffA-Za-z][\w\u4e00-\u9fff]*\s*[×*]\s*[\d.]+(?:\s*[+\-]\s*[\d.]+)?',
+                txt
+            ):
+                return True
             return False
 
         # 先收集所有备注/说明列的文本（用于后续判断"数据处理"是否是干扰项）
@@ -825,9 +861,10 @@ class DataProcessor:
                         remaining_txt = remaining_txt.replace(bracket_unit_match.group(0), '', 1)
             
             # ========== 步骤 3：提取转换公式 ==========
-            # 只提取两种格式：
+            # 支持格式：
             # 1. 复杂表达式：(变量/常数或 2^N)×常数，如 (模拟量采集数据/2^12)×21
-            # 2. 中文描述：乘以/除以 A±B（支持中文"加""减"和符号"+""-"）
+            # 2. 等式格式：物理值=aX, Y=0.01×X, Y=aX+b（物理量标定公式）
+            # 3. 中文描述：乘以/除以 A±B（支持中文"加""减"和符号"+""-"）
             
             # 其他类型（LSB、量化单位、分辨率等）都不提取为转换公式
             
@@ -838,34 +875,61 @@ class DataProcessor:
                 result['转换公式'] = FormulaStandardizer().standardize(formula_val)
                 remaining_txt = remaining_txt.replace(complex_formula_match.group(0), '', 1)
             else:
-                # 3.1 中文描述：乘以/除以 N±M（支持中文"加""减"和符号"+""-"）
-                chinese_formula_with_offset = re.search(r'[乘除×÷]\s*[以]?\s*([\d.]+)\s*(?:[+\-]|加减 | 减去 | 减 | 加上 | 加)\s*([\d.]+)', txt)
-                if chinese_formula_with_offset:
-                    a = chinese_formula_with_offset.group(1)
-                    op = '×' if '乘' in txt or '×' in txt else '÷'
-                    # 判断是加还是减
-                    sign_str = chinese_formula_with_offset.group(0)
-                    if any(c in sign_str for c in ['-', '减', '减去']):
-                        sign = '-'
-                    else:
-                        sign = '+'
-                    b = chinese_formula_with_offset.group(2)
-                    if op == '÷':
-                        result['转换公式'] = f'{1/float(a):.6g}x{sign}{b}'
-                    else:
-                        result['转换公式'] = f'{a}x{sign}{b}'
-                    remaining_txt = remaining_txt.replace(chinese_formula_with_offset.group(0), '', 1)
+                # 3.05 等式格式："物理值=0.01×X" / "Y=aX" / "Y=aX+b"
+                # 也支持分数系数 "物理值=100/65535*X"、汉字+英文变量名
+                eq_formula_match = re.search(
+                    r'(?:[\u4e00-\u9fffA-Za-z][\w\u4e00-\u9fff]*\s*=\s*)'
+                    r'(([\d.]+(?:/[\d.]+)?)\s*[×*]\s*[XxA-Z](?:\s*[+\-]\s*[\d.]+)?)',
+                    txt
+                )
+                if eq_formula_match:
+                    formula_expr = eq_formula_match.group(1).strip()
+                    result['转换公式'] = FormulaStandardizer().standardize(formula_expr)
+                    remaining_txt = remaining_txt.replace(eq_formula_match.group(0), '', 1)
                 else:
-                    # 3.2 简单中文描述：乘以/除以 N
-                    chinese_formula_simple = re.search(r'[乘除×÷]\s*[以]?\s*([\d.]+)', txt)
-                    if chinese_formula_simple:
-                        a = chinese_formula_simple.group(1)
+                    # 3.06 变量×系数格式："ADC值×0.1+20"（无等号，变量名×数字）
+                    var_coef_match = re.search(
+                        r'([\u4e00-\u9fffA-Za-z][\w\u4e00-\u9fff]*)\s*[×*]\s*([\d.]+)(?:\s*([+\-])\s*([\d.]+))?',
+                        txt
+                    )
+                    if var_coef_match and var_coef_match.group(1) not in {'LSB', 'bit', 'byte', 'Byte'}:
+                        coef   = var_coef_match.group(2)
+                        b_sign = var_coef_match.group(3) or ''
+                        b_val  = var_coef_match.group(4) or ''
+                        formula_expr = f'{coef}×X{b_sign}{b_val}'
+                        result['转换公式'] = FormulaStandardizer().standardize(formula_expr)
+                        remaining_txt = remaining_txt.replace(var_coef_match.group(0), '', 1)
+                    else:
+                        pass  # 继续下一步
+                if '转换公式' not in result:
+                    # 3.1 中文描述：乘以/除以 N±M（支持中文"加""减"和符号"+""-"）
+                    chinese_formula_with_offset = re.search(r'[乘除×÷]\s*[以]?\s*([\d.]+)\s*(?:[+\-]|加减 | 减去 | 减 | 加上 | 加)\s*([\d.]+)', txt)
+                    if chinese_formula_with_offset:
+                        a = chinese_formula_with_offset.group(1)
                         op = '×' if '乘' in txt or '×' in txt else '÷'
-                        if op == '÷':
-                            result['转换公式'] = f'{1/float(a):.6g}x+0'
+                        # 判断是加还是减
+                        sign_str = chinese_formula_with_offset.group(0)
+                        if any(c in sign_str for c in ['-', '减', '减去']):
+                            sign = '-'
                         else:
-                            result['转换公式'] = f'{a}x+0'
-                        remaining_txt = remaining_txt.replace(chinese_formula_simple.group(0), '', 1)
+                            sign = '+'
+                        b = chinese_formula_with_offset.group(2)
+                        if op == '÷':
+                            result['转换公式'] = f'{1/float(a):.6g}x{sign}{b}'
+                        else:
+                            result['转换公式'] = f'{a}x{sign}{b}'
+                        remaining_txt = remaining_txt.replace(chinese_formula_with_offset.group(0), '', 1)
+                    else:
+                        # 3.2 简单中文描述：乘以/除以 N
+                        chinese_formula_simple = re.search(r'[乘除×÷]\s*[以]?\s*([\d.]+)', txt)
+                        if chinese_formula_simple:
+                            a = chinese_formula_simple.group(1)
+                            op = '×' if '乘' in txt or '×' in txt else '÷'
+                            if op == '÷':
+                                result['转换公式'] = f'{1/float(a):.6g}x+0'
+                            else:
+                                result['转换公式'] = f'{a}x+0'
+                            remaining_txt = remaining_txt.replace(chinese_formula_simple.group(0), '', 1)
             
             # ========== 步骤 4：从剩余文本中智能识别 ==========
             # 4.1 识别枚举值描述（支持备注中的"0x1701:供电 0x1702:断电"格式）
@@ -972,14 +1036,19 @@ class DataProcessor:
                     formula_source = k
                     break
         
-        # 优先级 3：数据处理/数据处理方法列（中文描述，如"乘以 10"）
-        # 只提取明确含有转换公式的内容，避免把描述性文本（如"32 位整型数..."）误识别
+        # 优先级 3：数据处理/数据处理方法/数据来源列（含转换公式或值域描述）
+        # 同时提取公式和值域（如"物理值=0.01×X；值域：-100~100m/s"可同时提取两者）
         if not formula_val:
             for k, v in cleaned.items():
-                if any(kw in k for kw in ['数据处理方法', '数据处理', '数据转换方法']):
+                if any(kw in k for kw in ['数据处理方法', '数据处理', '数据转换方法', '数据来源']):
                     txt = str(v).strip() if v else ''
                     if not txt or txt in ('—', '-', ''):
                         continue
+                    # 无论是否有公式，都尝试从数据来源列提取值域（避免丢失值域信息）
+                    if '值域' not in result['formatted']:
+                        classified_src = _classify_remark_content(txt)
+                        if '值域' in classified_src:
+                            result['formatted']['值域'] = classified_src['值域']
                     if not _has_formula_content(txt):
                         continue
                     # 过滤枚举值描述
@@ -987,6 +1056,30 @@ class DataProcessor:
                         continue
                     if _is_simple_multiply_description(txt):
                         continue
+                    # 对数据来源列：尝试提取等式中的公式部分（如"物理值=0.01×X"→"0.01×X"）
+                    # 支持分数系数 "物理值=100/65535*X" 和汉字变量名
+                    if '数据来源' in k:
+                        eq_m = re.search(
+                            r'(?:[\u4e00-\u9fffA-Za-z][\w\u4e00-\u9fff]*\s*=\s*)'
+                            r'(([\d.]+(?:/[\d.]+)?)\s*[×*]\s*[XxA-Z](?:\s*[+\-]\s*[\d.]+)?)',
+                            txt
+                        )
+                        if eq_m:
+                            formula_val = eq_m.group(1).strip()
+                            formula_source = k
+                            break
+                        # 变量×系数格式："ADC值×0.1+20"（无等号）
+                        var_m = re.search(
+                            r'([\u4e00-\u9fffA-Za-z][\w\u4e00-\u9fff]*)\s*[×*]\s*([\d.]+)(?:\s*([+\-])\s*([\d.]+))?',
+                            txt
+                        )
+                        if var_m and var_m.group(1) not in {'LSB', 'bit', 'byte', 'Byte'}:
+                            coef   = var_m.group(2)
+                            b_sign = var_m.group(3) or ''
+                            b_val  = var_m.group(4) or ''
+                            formula_val = f'{coef}×X{b_sign}{b_val}'
+                            formula_source = k
+                            break
                     formula_val = txt
                     formula_source = k
                     break

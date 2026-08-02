@@ -10,16 +10,22 @@ from difflib import SequenceMatcher
 from backend.config import Config
 from backend.services.embedding_service import embedding_service
 
+
+# 这两个通用列名在不同协议中含义不稳定。允许人工选择“参数编码”，
+# 但禁止知识库、语义或模糊匹配把它们自动绑定到该目标。
+MANUAL_PARAMETER_CODE_SOURCES = {'编号', '信息代号'}
+
 class EnhancedFieldMatcher:
     """增强字段匹配器"""
     
-    def __init__(self):
+    def __init__(self, standard_fields: Optional[List[str]] = None):
         self.knowledge_base_file = Config.KNOWLEDGE_BASE_PATH
         self.knowledge_base = self._load_knowledge_base()
         self.similarity_threshold = 0.7
         self.semantic_threshold = 0.82  # 语义匹配阈值（自动命中）
         self.semantic_suggestion_threshold = 0.72  # 语义建议阈值
-        self.standard_fields = self._get_standard_fields()
+        self.restrict_to_standard_fields = standard_fields is not None
+        self.standard_fields = list(dict.fromkeys(standard_fields or self._get_standard_fields()))
         self.semantic_enabled = embedding_service.is_available()
 
         # 预计算标准字段向量以加速匹配（可选）
@@ -213,6 +219,12 @@ class EnhancedFieldMatcher:
         # 在知识库中查找
         for item in self.knowledge_base:
             if item.get('source') == field and item.get('confidence', 0) >= 0.9:
+                if (field in MANUAL_PARAMETER_CODE_SOURCES
+                        and item.get('target') == '参数编码'):
+                    continue
+                if (self.restrict_to_standard_fields
+                        and item.get('target') not in self.standard_fields):
+                    continue
                 return {
                     'target': item['target'],
                     'confidence': item['confidence'],
@@ -229,6 +241,8 @@ class EnhancedFieldMatcher:
         best_score = 0.0
 
         for std_field in self.standard_fields:
+            if field in MANUAL_PARAMETER_CODE_SOURCES and std_field == '参数编码':
+                continue
             score = embedding_service.calculate_similarity(field, std_field)
             if score > best_score and score >= self.semantic_threshold:
                 best_score = score
@@ -246,6 +260,8 @@ class EnhancedFieldMatcher:
         best_similarity = 0
         
         for std_field in self.standard_fields:
+            if field in MANUAL_PARAMETER_CODE_SOURCES and std_field == '参数编码':
+                continue
             similarity = SequenceMatcher(None, field, std_field).ratio()
             # 如果字段完全相同，视为精确匹配
             if field == std_field:
@@ -280,15 +296,22 @@ class EnhancedFieldMatcher:
             '类型说明': '数据类型',
             '格式': '数据类型',
             '数据格式': '数据类型',
+            '文件名称': '名称',
+            '文件内容': '内容',
+            '文件格式': '数据类型',
             '单位说明': '单位',
             '备注说明': '备注',
             '说明': '备注',
             '取值范围': '值域',
-            '范围': '值域'
+            '范围': '值域',
+            # 低歧义别名；“编号/信息代号→参数编码”存在一对多歧义，不能自动化。
+            '表号': '参数表号',
         }
         
         # 直接别名匹配
         if field in aliases:
+            if self.restrict_to_standard_fields and aliases[field] not in self.standard_fields:
+                return None
             return {
                 'target': aliases[field],
                 'confidence': 0.95,
@@ -297,6 +320,8 @@ class EnhancedFieldMatcher:
         
         # 模糊别名匹配
         for alias, target in aliases.items():
+            if self.restrict_to_standard_fields and target not in self.standard_fields:
+                continue
             if SequenceMatcher(None, field, alias).ratio() > 0.8:
                 return {
                     'target': target,
@@ -309,6 +334,14 @@ class EnhancedFieldMatcher:
     def _get_suggestions_for_field(self, field: str) -> List[Dict]:
         """为未匹配字段获取建议"""
         suggestions = []
+
+        if field in MANUAL_PARAMETER_CODE_SOURCES and '参数编码' in self.standard_fields:
+            suggestions.append({
+                'field': '参数编码',
+                'similarity': 0.0,
+                'confidence': 0.0,
+                'source': 'manual_candidate',
+            })
         
         # 基于相似度的建议
         for std_field in self.standard_fields:

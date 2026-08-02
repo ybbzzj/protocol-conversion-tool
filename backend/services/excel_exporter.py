@@ -173,7 +173,12 @@ class ExcelExporter:
                 # ── 普通字段行 ──────────────────────────────────────────────
                 # 如果 row 中含有 _fmt_ 前缀的预处理结果（来自 extract.py），直接使用
                 # 否则在此重新处理
-                if any(k.startswith('_fmt_') for k in row):
+                is_preprocessed = (
+                    any(k.startswith('_fmt_') for k in row)
+                    or '类型（bit）' in row
+                    or '_override_cols' in row
+                )
+                if is_preprocessed:
                     # 已在 extract.py 处理过，直接拆分
                     raw_cleaned = {k: v for k, v in row.items() if not k.startswith('_fmt_') and not k.startswith('_')}
                     cleaned = raw_cleaned
@@ -186,6 +191,8 @@ class ExcelExporter:
                     # 从 cleaned 重新跑一次类型标准化
                     type_val = ''
                     for k, v in raw_cleaned.items():
+                        if k == '类型（bit）':
+                            continue
                         if any(kw in k for kw in ['类型', 'TYPE', '数据格式', '转换类型']):
                             type_val = str(v) if v else ''
                             break
@@ -208,11 +215,32 @@ class ExcelExporter:
                 if content_val:
                     fill_data['内容'] = content_val
 
+                # 同一行同时具有映射后的“名称”和“内容”时，二者是两个独立业务字段
+                # （例如文件清单：文件名称 + 文件内容），不能再把“名称”当作内容兜底。
+                row_name = str(cleaned.get('名称', '') or '').strip()
+                explicit_content = str(cleaned.get('内容', '') or '').strip()
+                if (row_name and row_name not in ('—', '-')
+                        and explicit_content and explicit_content not in ('—', '-')):
+                    fill_data['名称'] = row_name
+
                 # 2. 类型列
+                raw_type_val = ''
+                for k, v in cleaned.items():
+                    if k == '类型（bit）' or any(ex in k for ex in ['字节', '长度']):
+                        continue
+                    if any(kw in k for kw in ['类型', 'TYPE', '数据格式', '转换类型']):
+                        raw_type_val = str(v).strip() if v else ''
+                        if raw_type_val:
+                            break
+
                 # 首先检查是否有嵌套表格引用标记（"见表B.X..."）
                 if row.get('_has_nested_ref'):
                     # 保留原始的嵌套引用文本，并标红
                     fill_data['转换类型'] = row.get('_nested_ref_text', '')
+                    color_map['转换类型'] = COLOR_RED
+                elif conv_info.get('类型状态') == 'warning' and raw_type_val:
+                    # 文件格式等非数值型类型无法标准化，但仍是用户明确选择的有效信息。
+                    fill_data['转换类型'] = raw_type_val
                     color_map['转换类型'] = COLOR_RED
                 elif '标准类型' in conv_info:
                     std_type = conv_info['标准类型']
@@ -251,7 +279,9 @@ class ExcelExporter:
                             fill_data['转换类型'] = type_val
                             color_map['转换类型'] = COLOR_RED
                 
-                if '位数' in conv_info:
+                if ('位数' in conv_info
+                        and not (conv_info.get('类型状态') == 'warning'
+                                 and not conv_info.get('位数'))):
                     fill_data['类型（bit）'] = conv_info['位数']
                     # 如果类型是推断出来的，位数也标红
                     if conv_info.get('类型状态') == 'inferred':
@@ -293,7 +323,8 @@ class ExcelExporter:
                 # 8. 主行：注入消息名称和元数据
                 if first_row:
                     # 直接使用原始消息名称，不添加序号
-                    fill_data['名称'] = msg_name
+                    if not fill_data.get('名称'):
+                        fill_data['名称'] = msg_name
                 
                     # 注入元数据（来自端口表/ID 表等）
                     for mk, mv in meta.items():
@@ -313,7 +344,8 @@ class ExcelExporter:
                     first_row = False
                 else:
                     # 子行：名称为空
-                    fill_data['名称'] = ''
+                    if not fill_data.get('名称'):
+                        fill_data['名称'] = ''
 
                 # ── 用户手动映射（程序计算列条件覆盖，普通列直接覆盖）────
                 # _override_cols 中列出的目标列由用户在前端手动映射指定。
@@ -426,12 +458,15 @@ class ExcelExporter:
     def _find_content_value(self, cleaned: Dict) -> str:
         """从清洗数据中提取内容/参数/信号名称列的值"""
         candidates = ['内容', '数据含义', '字段', '参数', '信号名称', '名称']
-        for k in cleaned:
-            for cand in candidates:
-                if cand in k:
-                    v = cleaned[k]
-                    if v and v not in ('—', '-'):
-                        return str(v).strip()
+        # 按语义优先级找列，而不是按字典插入顺序找列；否则同一行的“名称”
+        # 会抢在后面的明确“内容”列之前被返回。
+        for cand in candidates:
+            exact_value = cleaned.get(cand)
+            if exact_value and exact_value not in ('—', '-'):
+                return str(exact_value).strip()
+            for k, v in cleaned.items():
+                if cand in k and v and v not in ('—', '-'):
+                    return str(v).strip()
         return ''
 
     def _find_seq_value(self, cleaned: Dict) -> str:
@@ -460,6 +495,15 @@ class ExcelExporter:
             if '数据处理方法' in k:
                 if v and str(v).strip() not in ('—', '-', ''):
                     return str(v).strip()
+
+        # 非结构化“值域”不是判读公式，但仍是有意义的说明，保留到备注。
+        from backend.services.data_cleaner import RangeValueFormatter
+        formatter = RangeValueFormatter()
+        for k, v in cleaned.items():
+            if any(kw in k for kw in ['值域', '取值范围', '区间']):
+                raw = str(v).strip() if v else ''
+                if raw and raw not in ('—', '－', '-', '') and not formatter.format_range(raw):
+                    return raw
         return ''
 
     def _extract_range(self, cleaned: Dict, formatted: Dict) -> Optional[tuple]:
@@ -477,7 +521,9 @@ class ExcelExporter:
                 val = str(v).strip() if v else ''
                 if val and val not in ('—', '-', ''):
                     from backend.services.data_cleaner import RangeValueFormatter
-                    return RangeValueFormatter().format_range(val), 'original'
+                    formatted_range = RangeValueFormatter().format_range(val)
+                    if formatted_range:
+                        return formatted_range, 'original'
 
         # 从备注中提取
         remark = ''

@@ -71,7 +71,8 @@ def preview_extraction(task_id: str):
         extracted_fields, table_data = _extract_fields_and_data_from_raw_tables(raw_tables)
         
         # 获取字段匹配建议
-        matcher = FieldMatcher()
+        expected_fields = status.get('expected_fields', [])
+        matcher = FieldMatcher(standard_fields=expected_fields or None)
         mapping_suggestions = matcher.match_with_context(extracted_fields)
         
         # 分离已匹配和未匹配字段
@@ -85,7 +86,7 @@ def preview_extraction(task_id: str):
             'matched_fields': matched_fields,
             'unmatched_fields': unmatched_fields,
             'total_fields': len(extracted_fields),
-            'expected_fields': status.get('expected_fields', [])
+            'expected_fields': expected_fields
         })
         
     except Exception as e:

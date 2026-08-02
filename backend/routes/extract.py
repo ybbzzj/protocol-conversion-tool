@@ -8,7 +8,7 @@ import threading
 from datetime import datetime
 from backend.utils import success_response, error_response
 from backend.config import Config
-from backend.services.table_detector import DocumentParser
+from backend.services.table_detector import DocumentParser, parse_checksum_field_names
 from backend.services.table_linker import TableLinker
 from backend.services.excel_exporter import ExcelExporter
 from backend.services.data_cleaner import DataProcessor
@@ -86,8 +86,14 @@ def start_extraction():
     field_names = request.form.getlist('field_names')
     id_field_names = request.form.getlist('id_field_names')  # 用户标记的ID表头字段
 
-    # 输出控制选项：是否删除末尾 CRC 校验字行（默认开启）
+    # 输出控制选项：是否删除与完整名称配置一致的校验字段（默认开启）
     remove_crc = request.form.get('remove_crc', 'true').lower() != 'false'
+    try:
+        checksum_field_names = parse_checksum_field_names(
+            request.form.get('checksum_field_names')
+        )
+    except ValueError as exc:
+        return error_response(40001, str(exc))
 
     # 获取目标消息名称（用于兜底提取）
     target_message_names = request.form.getlist('target_message_names')
@@ -132,7 +138,8 @@ def start_extraction():
         'message': '',
         'field_ids': field_ids,
         'expected_fields': expected_fields,  # 期望字段
-        'remove_crc': remove_crc,  # 输出控制：是否删除末尾 CRC 校验字行
+        'remove_crc': remove_crc,
+        'checksum_field_names': checksum_field_names,
         'target_message_names': target_message_names,  # 目标消息名称（用于兜底提取）
         'table_configs': table_configs,  # 用户配置（用于配置匹配）
         'mapping_quality': None  # 映射质量评分
@@ -150,7 +157,12 @@ def start_extraction():
         return error_response(40002, f"文件保存失败: {e}")
 
     # 提取过程放入后台线程执行，路由立即返回，使前端可通过轮询观察进度
-    t = threading.Thread(target=_run_extraction, args=(task_id, upload_path, remove_crc, target_message_names, table_configs), daemon=True)
+    t = threading.Thread(
+        target=_run_extraction,
+        args=(task_id, upload_path, remove_crc, checksum_field_names,
+              target_message_names, table_configs),
+        daemon=True,
+    )
     t.start()
 
     return success_response({
@@ -199,14 +211,18 @@ def _dump_processed_tables(processed_tables, doc_path):
         logger.exception("[ERROR] 保存处理后表格失败: %s", e)
 
 
-def _run_extraction(task_id, upload_path, remove_crc, target_message_names=None, table_configs=None):
+def _run_extraction(task_id, upload_path, remove_crc, checksum_field_names=None,
+                    target_message_names=None, table_configs=None):
     """后台线程：执行解析、关联、导出与映射质量计算，并实时更新进度。"""
     tag = task_id[:8]
     logger.info("[提取 %s] 开始，文件: %s", tag, os.path.basename(upload_path))
     try:
         # 执行提取（传入目标消息名称和配置用于兜底提取）
         parser = DocumentParser(config=table_configs, target_message_names=target_message_names)
-        result = parser.parse(upload_path, options={'remove_crc_tail': remove_crc})
+        parser_options = {'remove_crc_tail': remove_crc}
+        if checksum_field_names is not None:
+            parser_options['checksum_field_names'] = checksum_field_names
+        result = parser.parse(upload_path, options=parser_options)
         tasks_status[task_id]['progress'] = 50
         logger.info("[提取 %s] 解析完成，识别表格 %d 张", tag, len(result.get('tables', [])))
 
@@ -463,7 +479,9 @@ def _handle_override_range(txt: str, fmt) -> 'Optional[str]':
         pure_range = range_match.group(1).strip()
         result = fmt.format_range(pure_range)
         if result and re.match(r'^\[[\d\s,.\-xa-fA-F]+\]$', result):
-            return result
+            # 人工映射的源文本可能同时包含多个范围，不能只取第一个。
+            all_ranges = fmt.format_ranges_in_text(txt)
+            return all_ranges or result
 
     # 2. 尝试直接 format_range（适用于纯范围文本）
     result = fmt.format_range(txt)
@@ -653,8 +671,8 @@ def _calculate_mapping_quality(source_fields, expected_fields=None):
       - covered_count  : 这些字段中、能在提取到的源字段里找到 >=0.9 相似项的数量（分子）；
       - coverage       : covered_count / expected_count，反映“想要的字段文档提供了多少”。
     """
-    matcher = FieldMatcher()
     expected_fields = expected_fields or []
+    matcher = FieldMatcher(standard_fields=expected_fields or None)
 
     # —— 维度一：映射质量（基于提取到的源字段）——
     auto_count = 0       # 置信度 >= 0.9，自动映射
@@ -678,11 +696,14 @@ def _calculate_mapping_quality(source_fields, expected_fields=None):
     level = 'excellent' if score > 0.9 else 'good' if score > 0.7 else 'poor'
 
     # —— 维度二：期望覆盖（基于用户勾选的协议字段）——
-    # 对每个期望字段，若提取到的源字段中存在相似度 >=0.9 的项，则视为被覆盖。
-    covered_count = 0
-    for exp in expected_fields:
-        if any(matcher._calculate_similarity(exp, src) >= 0.9 for src in source_fields):
-            covered_count += 1
+    # 复用与自动映射相同的任务级候选和别名规则计算覆盖，避免质量统计与
+    # 人工映射页口径不一致（例如“表号→参数表号”）。
+    covered_targets = set()
+    for source in source_fields:
+        match = matcher.match_field(source)
+        if match.get('target') and match.get('confidence', 0) >= 0.9:
+            covered_targets.add(match['target'])
+    covered_count = sum(1 for exp in expected_fields if exp in covered_targets)
     expected_count = len(expected_fields)
     coverage = covered_count / expected_count if expected_count > 0 else 0
 
@@ -708,7 +729,7 @@ def _write_extraction_report(task_id, upload_path, table_decisions, source_field
       - 期望覆盖与映射质量统计。
     """
     tag = task_id[:8]
-    matcher = FieldMatcher()
+    matcher = FieldMatcher(standard_fields=expected_fields or None)
     field_matches = []
     for field in source_fields:
         r = matcher.match_field(field)

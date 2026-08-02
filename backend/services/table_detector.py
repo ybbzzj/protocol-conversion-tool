@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import logging
 import re
 from typing import List, Dict, Optional, Tuple
@@ -13,10 +14,47 @@ logger = logging.getLogger(__name__)
 # 信息名称行中不是消息名称的固定噪声词
 INFO_NAME_ROW_NOISE = {
     '信息名称', '通信帧名称', '通信帧名字', '信息标识', '上级信息名称',
+    '消息名称', '数据项名称',
     '信息流向', '—', '－', '-', '', 'xx', 'XX',
     '信源、信宿', '信源、信目', '信源', '信宿',
     '传输周期', '发起时机', '错误处理', '其他',
 }
+
+# 仅用于表头角色识别的复合列名别名。只有同一行至少命中两个别名时才启用，
+# 避免把正文或单个元数据标签误判成字段表头。
+HEADER_ROLE_ALIASES = {
+    '文件名称': '名称',
+    '文件内容': '内容',
+    '文件格式': '数据类型',
+}
+
+PLACEHOLDER_CELL_VALUES = {'—', '－', '-', '/'}
+
+# 默认校验字段名称。浏览器可为单次提取传入完整名称列表覆盖该默认值。
+# 匹配时只去除单元格首尾空白，不做包含、模糊或正则匹配。
+DEFAULT_CHECKSUM_FIELD_NAMES = (
+    'CRC校验字', 'CRC校验码', 'CRC16校验字', 'CRC16校验码',
+    'CRC校验', 'CRC16校验', 'CRC校验和', 'CRC16校验和', 'CKS校验和',
+)
+
+
+def parse_checksum_field_names(raw_value):
+    """解析完整校验字段名列表；未传时返回 None 以使用默认配置。"""
+    if raw_value is None:
+        return None
+    try:
+        values = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("checksum_field_names 必须是 JSON 字符串数组") from exc
+    if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+        raise ValueError("checksum_field_names 必须是 JSON 字符串数组")
+
+    result = []
+    for value in values:
+        name = value.strip()
+        if name and name not in result:
+            result.append(name)
+    return result
 
 # 数据类型关键字（用于识别字段定义表）
 DATA_TYPE_KEYWORDS = {
@@ -237,12 +275,36 @@ def _extract_msg_name_from_info_row(row_unique: List[str]) -> str:
     从"信息名称行"（行0）的去重单元格列表中提取消息名称。
     过滤掉 INFO_NAME_ROW_NOISE 中所有固定噪声词，取第一个有效值。
     """
+    labels = {
+        '信息名称', '通信帧名称', '通信帧名字', '消息名称', '数据项名称',
+        '信息标识', '上级信息名称',
+    }
+
+    # 优先按“标签 → 后续值”提取，避免把“消息名称”标签本身当成消息名。
+    for idx, cell in enumerate(row_unique):
+        if cell.strip() not in labels:
+            continue
+        for value in row_unique[idx + 1:]:
+            value_clean = value.strip()
+            if (value_clean and value_clean not in INFO_NAME_ROW_NOISE
+                    and len(value_clean) >= 2 and not value_clean.isdigit()):
+                return value_clean
+
+    # 兼容没有显式标签的旧格式。
     for cell in row_unique:
         cell_clean = cell.strip()
         if cell_clean and cell_clean not in INFO_NAME_ROW_NOISE:
             if len(cell_clean) >= 2 and not cell_clean.isdigit():
                 return cell_clean
     return ''
+
+
+def _normalize_header_cells_for_detection(cell_set: set) -> set:
+    """在有足够上下文时，为复合表头补充标准字段角色。"""
+    alias_hits = [cell for cell in cell_set if cell in HEADER_ROLE_ALIASES]
+    if len(alias_hits) < 2:
+        return set(cell_set)
+    return set(cell_set) | {HEADER_ROLE_ALIASES[cell] for cell in alias_hits}
 
 
 def _extract_name_from_para(para_text: str) -> str:
@@ -655,8 +717,9 @@ class TableDetector:
     """
 
     def __init__(self, config=None, target_message_names=None, mixed_markers=None):
-        # 输出控制：是否丢弃 data_rows 末尾的 CRC 校验字行（默认开启，保持既有行为）
+        # 输出控制：是否删除与完整名称配置一致的校验字段（默认开启，保持既有行为）
         self.remove_crc_tail = True
+        self.checksum_field_names = set(DEFAULT_CHECKSUM_FIELD_NAMES)
         # 保留 keywords 等属性以兼容外部调用
         self.keywords = ['序号', '参数', '内容', '信号名称', '信息内容', '数据类型', '类型',
                          '长度', '单位', '备注', '值域', '信源', '信宿', '消息ID']
@@ -1058,6 +1121,72 @@ class TableDetector:
             extra = ''
         logger.info(f"Table #{t_idx} [{ident}]: {status} - {reason} (type={table_type}{extra})")
 
+    @staticmethod
+    def _build_numbering_specs(doc) -> Dict[Tuple[str, str], Tuple[int, str]]:
+        """读取 Word 编号定义，返回 (numId, ilvl) → (start, lvlText)。"""
+        try:
+            root = doc.part.numbering_part.element
+        except Exception:
+            return {}
+
+        abstract_by_id = {
+            elem.get(qn('w:abstractNumId')): elem
+            for elem in root.findall(qn('w:abstractNum'))
+        }
+        specs = {}
+        for num in root.findall(qn('w:num')):
+            num_id = num.get(qn('w:numId'))
+            abstract_id_node = num.find(qn('w:abstractNumId'))
+            if abstract_id_node is None:
+                continue
+            abstract = abstract_by_id.get(abstract_id_node.get(qn('w:val')))
+            if abstract is None:
+                continue
+            for level in abstract.findall(qn('w:lvl')):
+                ilvl = level.get(qn('w:ilvl'), '0')
+                start_node = level.find(qn('w:start'))
+                text_node = level.find(qn('w:lvlText'))
+                if text_node is None:
+                    continue
+                start = int(start_node.get(qn('w:val'), '1')) if start_node is not None else 1
+                specs[(num_id, ilvl)] = (start, text_node.get(qn('w:val'), ''))
+        return specs
+
+    @staticmethod
+    def _advance_table_number(elem, specs, counters) -> str:
+        """推进段落编号，并在其编号是表号时返回规范化表号。"""
+        ppr = elem.find(qn('w:pPr'))
+        num_pr = ppr.find(qn('w:numPr')) if ppr is not None else None
+        if num_pr is None:
+            return ''
+        num_id_node = num_pr.find(qn('w:numId'))
+        ilvl_node = num_pr.find(qn('w:ilvl'))
+        if num_id_node is None:
+            return ''
+        num_id = num_id_node.get(qn('w:val'))
+        ilvl = ilvl_node.get(qn('w:val')) if ilvl_node is not None else '0'
+        spec = specs.get((num_id, ilvl))
+        if not spec:
+            return ''
+
+        start, level_text = spec
+        key = (num_id, ilvl)
+        current = counters.get(key, start - 1) + 1
+        counters[key] = current
+        rendered = level_text.replace(f'%{int(ilvl) + 1}', str(current))
+        match = re.search(r'表\s*([A-Za-z]+(?:[.．。]\d+)+|\d+)', rendered)
+        if not match:
+            return ''
+        return match.group(1).replace('．', '.').replace('。', '.').upper()
+
+    @staticmethod
+    def _explicit_table_ref(para_text: str) -> str:
+        """提取段首显式写出的表号；正文中的“参见表X”不作为当前表号。"""
+        match = re.match(r'^\s*表\s*([A-Za-z]+(?:[.．。]\d+)+|\d+)', para_text or '')
+        if not match:
+            return ''
+        return match.group(1).replace('．', '.').replace('。', '.').upper()
+
     def extract_tables_from_docx(self, file_path: str) -> List[Dict]:
         """
         主入口：解析 docx 文件，返回结构化表格列表。
@@ -1076,6 +1205,9 @@ class TableDetector:
         # 遍历 body 元素，建立段落-表格位置关系
         table_idx = 0
         last_para = ''
+        pending_table_ref = ''
+        numbering_specs = self._build_numbering_specs(doc)
+        numbering_counters = {}
         noise_next = False  # 前置段落含干扰词时，标记后续表格为干扰
 
         for elem in doc.element.body:
@@ -1085,6 +1217,10 @@ class TableDetector:
                 para_text = _get_para_text(elem)
                 if para_text:
                     last_para = para_text
+                    numbered_ref = self._advance_table_number(
+                        elem, numbering_specs, numbering_counters
+                    )
+                    pending_table_ref = self._explicit_table_ref(para_text) or numbered_ref
                     if any(marker in para_text for marker in NOISE_PARA_MARKERS):
                         noise_next = True
                     # 注意：不重置 noise_next，因为后续连续表格也要跳过
@@ -1097,7 +1233,9 @@ class TableDetector:
 
                 table = doc.tables[table_idx]
                 parsed = self._parse_single_table(table, table_idx, last_para, noise_next)
+                parsed['table_ref'] = pending_table_ref
                 extracted_tables.append(parsed)
+                pending_table_ref = ''
 
                 # 如果当前表格是干扰表，且前置段落也是干扰，保持 noise_next
                 # 否则重置（只有明确标记才跳过）
@@ -1158,6 +1296,7 @@ class TableDetector:
             rt = ' '.join(ru)
             # 精确单元格集合（去空去占位）
             cell_set = set(c.strip() for c in ru if c and c.strip())
+            role_cell_set = _normalize_header_cells_for_detection(cell_set)
 
             # ── 配置覆盖率计算 ──────────────────────────────────────────────
             cfg_cover_ratio = 0.0
@@ -1168,7 +1307,7 @@ class TableDetector:
             cfg_full_cover = False     # 100% 覆盖（原有逻辑，兼容保留）
 
             # ── 关键词检查（先于配置计算，让配置强制可以引用 has_meta） ────
-            has_strong = bool(cell_set & self._STRONG_FIELD_KW)
+            has_strong = bool(role_cell_set & self._STRONG_FIELD_KW)
             has_port = bool(cell_set & self._PORT_KW)
             has_id = bool(cell_set & self._ID_KW)
             has_bit = bool(cell_set & self._BIT_KW)
@@ -1235,13 +1374,16 @@ class TableDetector:
             else:
                 # 普通模式：原有逻辑不变，仍需验证 data_block
                 data_block = self._record_rows_below(grid, scan_r)
-                if data_block < 1:
+                placeholder_only = self._has_placeholder_row_below(grid, scan_r)
+                if data_block < 1 and not placeholder_only:
                     continue
 
-                score = data_block * 10
+                score = max(data_block, 1) * 10
                 if has_strong:
-                    strong_count = len(cell_set & self._STRONG_FIELD_KW)
+                    strong_count = len(role_cell_set & self._STRONG_FIELD_KW)
                     score += 5 + strong_count * 3
+                if placeholder_only:
+                    score -= 1
                 if has_cfg:
                     score += 3
                 if cfg_full_cover:
@@ -1414,8 +1556,9 @@ class TableDetector:
         #    要求：表头中命中至少 2 个强字段关键词，或命中 1 个强字段 + 1 个弱字段，
         #    或有配置字段匹配。单独只有"序号"不算字段定义表（可能是设备列表等）。
         header_cell_set = set(h.strip() for h in headers if h.strip())
-        strong_hits = header_cell_set & self._STRONG_FIELD_KW
-        weak_hits = header_cell_set & self._WEAK_FIELD_KW
+        header_role_set = _normalize_header_cells_for_detection(header_cell_set)
+        strong_hits = header_role_set & self._STRONG_FIELD_KW
+        weak_hits = header_role_set & self._WEAK_FIELD_KW
         has_cfg_match = False
         if cfg_set:
             non_empty = [h for h in header_cell_set if h]
@@ -1540,6 +1683,14 @@ class TableDetector:
 
     # ── 字段定义表（A/B/C 三种类型 + 聚合式） ─────────────────────────────────
 
+    def _has_placeholder_row_below(self, grid: List[List[str]], r: int) -> bool:
+        """候选表头下方是否存在一整行占位符，而不是实际数据。"""
+        for row in grid[r + 1:]:
+            values = [str(cell).strip() for cell in row if str(cell).strip()]
+            if len(values) >= 2 and all(v in PLACEHOLDER_CELL_VALUES for v in values):
+                return True
+        return False
+
     def _record_rows_below(self, grid: List[List[str]], r: int) -> int:
         """结构校验：统计候选表头行 r 下方"像记录"的行数。
 
@@ -1635,10 +1786,18 @@ class TableDetector:
         data_rows = self._extract_data_rows(grid, headers, kept_indices,
                                              start_row=header_row_idx + 1,
                                              is_vmerge_cont=is_vmerge_cont)
+        placeholder_only = (
+            not data_rows and self._has_placeholder_row_below(grid, header_row_idx)
+        )
 
         if not data_rows:
             # 配置强制识别时，即使数据区为空（如指令全为"—"），也保留表格（含元数据）
-            if is_config_forced and header_row_idx > 0:
+            if placeholder_only:
+                logger.info(
+                    f"_parse_field_def_table: Table #{t_idx} 数据区仅含占位符，"
+                    f"保留为 field_def（无可导出字段），preceding='{preceding_para}'"
+                )
+            elif is_config_forced and header_row_idx > 0:
                 logger.info(
                     f"_parse_field_def_table: Table #{t_idx} 数据行为空但配置强制，"
                     f"保留为 field_def（仅含元数据），preceding='{preceding_para}'"
@@ -1650,6 +1809,9 @@ class TableDetector:
         # ── 提取元数据（表头之上的行） ─────────────────────────────────────────
         meta = {}
         msg_name = ''
+
+        if placeholder_only:
+            meta['empty_reason'] = 'placeholder_only'
 
         for r in range(0, header_row_idx):
             row = grid[r]
@@ -1706,7 +1868,7 @@ class TableDetector:
                     if not any(kw in first_col for kw in ['发起时机', '错误处理', '传输周期', '序号']):
                         msg_name = first_col
 
-        return {
+        result = {
             'index': t_idx,
             'msg_name': msg_name,
             'headers': headers,
@@ -1716,6 +1878,9 @@ class TableDetector:
             'is_auxiliary': False,
             'preceding_para': preceding_para,
         }
+        if placeholder_only:
+            result['empty_reason'] = 'placeholder_only'
+        return result
 
     # ── 通用数据行提取 ─────────────────────────────────────────────────────────
 
@@ -1733,7 +1898,7 @@ class TableDetector:
         # 注意：只匹配精确的元数据行标记，避免误匹配包含这些词的字段名（如"消息序号"不应被当作"序号"元数据）
         metadata_row_keywords = {
             '聚合式的信息流表征示意', '信息名称行', '信息标识行', '信源、信宿', '信源、信目',
-            '传输周期', '发起时机', '错误处理', '^序号$',  # 用正则表达式匹配单独的"序号"
+            '传输周期', '发起时机', '错误处理',
             '检查结果', '非周期', '按实际操作流程'
         }
 
@@ -1780,12 +1945,27 @@ class TableDetector:
                     prev[header] = (prev_v + '\n' + v) if prev_v else v
                 continue
 
-            # 过滤注释行
-            if any(row_all.startswith(p) for p in ['注：', '注:', '说明：', '说明:']):
+            row_values = [
+                str(value).strip()
+                for value in row_dict.values()
+                if value and str(value).strip() not in ('—', '-', '')
+            ]
+            unique_row_values = list(dict.fromkeys(row_values))
+
+            # 仅过滤整行注释。正常字段的备注即使以“注1”开头，也不能导致整行丢失。
+            is_note_row = (
+                len(unique_row_values) == 1
+                and re.match(r'^(?:注\s*\d*|说明)\s*[：:]', unique_row_values[0])
+            )
+            if is_note_row:
                 continue
 
-            # 过滤噪声（参见附录等）
-            if any(m in row_all for m in self.noise_markers):
+            # 仅过滤整行都是“参见附录”等引用的噪声行。有效字段的备注允许引用附录。
+            is_noise_reference_row = (
+                len(unique_row_values) == 1
+                and any(m in unique_row_values[0] for m in self.noise_markers)
+            )
+            if is_noise_reference_row:
                 continue
 
             # 至少要有1个有实际意义的字段
@@ -1837,27 +2017,17 @@ class TableDetector:
             row_dict['_grid_row_idx'] = r_idx
             data_rows.append(row_dict)
 
-        # ◄ 末尾 CRC 校验字过滤（可由输出控制开关关闭）：
-        # 满足以下全部条件时过滤：
-        # 1. 内容字段包含 CRC/CRC16 + 校验和/检验码/校验 等关键词
-        # 2. 该行是非合并单元格的独立行（is_vmerge_cont 为 False）
-        # 3. 是 data_rows 的最后一行
+        # ◄ 校验字段过滤（可由输出控制开关关闭）：
+        # 按完整字段名称判断，不依赖校验字段是否位于数据区最后一行。
+        # 因此 CRC 后即使还有“注1”等注释，也能正确删除 CRC；关闭开关时则完整保留。
         if self.remove_crc_tail:
-            def _is_crc_row(row: dict) -> bool:
-                """判断该行是否为 CRC 校验行"""
+            def _is_checksum_row(row: dict) -> bool:
+                """判断该行是否为明确的 CRC/CKS 校验字段。"""
                 for header, value in row.items():
                     if header.startswith('_'):
                         continue
                     if header in content_field_names and value:
-                        v = str(value).strip().lower()
-                        # 匹配以 crc 开头的内容，如 "CRC16校验和"、"CRC校验字"、"CRC16检验码"
-                        if v.startswith('crc'):
-                            return True
-                        # 匹配含 "crc校验"/"crc检验" 的内容
-                        if 'crc' in v and ('校验' in v or '检验' in v):
-                            return True
-                        # 匹配纯校验类内容（不含其他有效字段名）
-                        if v in ('校验和', '校验码', '校验字', '校验'):
+                        if str(value).strip() in self.checksum_field_names:
                             return True
                 return False
 
@@ -1872,8 +2042,10 @@ class TableDetector:
                 row_vmerge = is_vmerge_cont[r_idx] if r_idx < len(is_vmerge_cont) else []
                 return any(row_vmerge)
 
-            if data_rows and _is_crc_row(data_rows[-1]) and not _is_merged_row(data_rows[-1]):
-                data_rows.pop()
+            data_rows = [
+                row for row in data_rows
+                if not (_is_checksum_row(row) and not _is_merged_row(row))
+            ]
 
         # 清理临时标记
         for row in data_rows:
@@ -1904,6 +2076,12 @@ class DocumentParser:
         options = options or {}
         if 'remove_crc_tail' in options:
             self.detector.remove_crc_tail = bool(options['remove_crc_tail'])
+        if 'checksum_field_names' in options:
+            self.detector.checksum_field_names = {
+                value.strip()
+                for value in options['checksum_field_names']
+                if isinstance(value, str) and value.strip()
+            }
 
         raw_tables = self.detector.extract_tables_from_docx(path)
         linked_tables = self.linker.link_tables(raw_tables)

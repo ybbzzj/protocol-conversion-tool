@@ -68,6 +68,28 @@ def _infer_type_from_bytes(byte_count: int) -> Optional[str]:
     return byte_to_type.get(byte_count)
 
 
+def _normalize_table_ref(value: str) -> str:
+    """将“表 A．5。”等写法规范化为“A.5”。"""
+    text = str(value or '').strip().upper()
+    text = text.replace('．', '.').replace('。', '.').replace('表', '')
+    match = re.search(r'([A-Z]+(?:\.\d+)+|\d+)', text)
+    return match.group(1) if match else ''
+
+
+def _extract_table_refs(text: str) -> List[str]:
+    """从“见/参见/详见表X”中提取明确表号，保持出现顺序并去重。"""
+    refs = []
+    pattern = re.compile(
+        r'(?:参见|详见|见)\s*表\s*([A-Za-z]+(?:[.．。]\d+)+|\d+)',
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(str(text or '')):
+        normalized = _normalize_table_ref(match.group(1))
+        if normalized and normalized not in refs:
+            refs.append(normalized)
+    return refs
+
+
 class TableLinker:
     def __init__(self):
         # 保留旧接口的名称映射（兼容）
@@ -304,24 +326,26 @@ class TableLinker:
         bit_rows = []
 
         # 获取字段的数据类型、字节数和备注文本
-        type_text = ''
-        remark_text = ''
+        type_texts = []
+        remark_texts = []
         byte_count_str = ''
         original_type_text = ''  # 保留原始的数据类型文本（可能含"见表"）
         
         for k, v in field_row.items():
             k_lower = k
             if any(kw in k_lower for kw in ['类型', '数据格式', 'TYPE']):
-                type_text = str(v)
+                type_texts.append(str(v))
                 original_type_text = str(v)  # 保存原始值
             if any(kw in k_lower for kw in ['备注', '说明', '数据来源']):
-                remark_text = str(v)
+                remark_texts.append(str(v))
             if any(kw in k_lower for kw in ['字节数', '字节', '长度']):
                 byte_count_str = str(v).strip() if v else ''
 
-        has_bit_ref = '见表' in type_text or '见表' in remark_text
+        type_text = ' '.join(type_texts)
+        remark_text = ' '.join(remark_texts)
+        referenced_ids = _extract_table_refs(f'{type_text} {remark_text}')
 
-        if not has_bit_ref:
+        if not referenced_ids:
             return []
         
         # 标记主行有嵌套表格引用，需要标红
@@ -329,38 +353,13 @@ class TableLinker:
             field_row['_has_nested_ref'] = True
             field_row['_nested_ref_text'] = original_type_text
 
-        # 查找对应的 bit 定义表（优先使用紧跟在后面的 bit_def 表格）
-        matched_bit_table = None
-        for bt in bit_tables:
-            bt_idx = bt.get('index', -1)
-            # 取紧跟在字段定义表后面的 bit_def 表（索引接近且更大）
-            if bt_idx > field_table_idx:
-                matched_bit_table = bt
-                break
-
-        if not matched_bit_table:
-            return []
-
-        headers = matched_bit_table.get('headers', [])
-        data_rows = matched_bit_table.get('data_rows', [])
-
-        # 找位号列和状态参数列
-        col_bit = col_state = None
-        for idx, h in enumerate(headers):
-            if '位号' in h or 'bit' in h.lower():
-                col_bit = idx
-            elif '状态参数' in h or '参数' in h:
-                col_state = idx
-
-        if col_bit is None or col_state is None:
-            # 尝试用列名候选
-            for idx, h in enumerate(headers):
-                if '位' in h and col_bit is None:
-                    col_bit = idx
-                elif '状态' in h and col_state is None:
-                    col_state = idx
-
-        if col_bit is None:
+        # 只允许按明确表号关联。无法解析或目标不是 bit_def 时直接不展开，
+        # 禁止用物理位置“猜最近表”，否则 A.3/A.4/A.6 会误挂到 A.5。
+        matched_bit_tables = [
+            bt for bt in bit_tables
+            if _normalize_table_ref(bt.get('table_ref')) in referenced_ids
+        ]
+        if not matched_bit_tables:
             return []
 
         # 尝试从字节数列提取字节数（用于推断转换类型）
@@ -376,55 +375,81 @@ class TableLinker:
         if parent_byte_count:
             inferred_type = _infer_type_from_bytes(parent_byte_count)
 
-        for row in data_rows:
-            vals = list(row.values())
-            bit_str = str(vals[col_bit]).strip() if col_bit < len(vals) else ''
-            state_name = str(vals[col_state]).strip() if col_state is not None and col_state < len(vals) else ''
+        seen_rows = set()
+        for matched_bit_table in matched_bit_tables:
+            headers = matched_bit_table.get('headers', [])
+            data_rows = matched_bit_table.get('data_rows', [])
+            table_ref = _normalize_table_ref(matched_bit_table.get('table_ref'))
 
-            if not bit_str or bit_str in ('—', '-'):
+            col_bit = col_state = None
+            for idx, h in enumerate(headers):
+                if '位号' in h or 'bit' in h.lower():
+                    col_bit = idx
+                elif '状态参数' in h or '参数' in h:
+                    col_state = idx
+            if col_bit is None or col_state is None:
+                for idx, h in enumerate(headers):
+                    if '位' in h and col_bit is None:
+                        col_bit = idx
+                    elif '状态' in h and col_state is None:
+                        col_state = idx
+            if col_bit is None:
                 continue
 
-            bit_count = _parse_bit_range(bit_str)
+            for row in data_rows:
+                vals = list(row.values())
+                bit_str = str(vals[col_bit]).strip() if col_bit < len(vals) else ''
+                state_name = str(vals[col_state]).strip() if col_state is not None and col_state < len(vals) else ''
+
+                if not bit_str or bit_str in ('—', '-'):
+                    continue
+                row_key = (table_ref, bit_str, state_name)
+                if row_key in seen_rows:
+                    continue
+                seen_rows.add(row_key)
+
+                bit_count = _parse_bit_range(bit_str)
             
             # 创建新的子行，保留父行的表头结构，同时添加必要的目标字段
-            bit_row = {
-                '_is_bit_row': True,
-                '_bit_str': bit_str,
-            }
+                bit_row = {
+                    '_is_bit_row': True,
+                    '_bit_str': bit_str,
+                    '_nested_table_ref': table_ref,
+                }
             
-            # 首先按父表头创建字段映射
-            if parent_headers:
-                for col_name in parent_headers:
-                    # 内容列：填充状态名
-                    if '内容' in col_name or '数据含义' in col_name or '参数' in col_name:
-                        bit_row[col_name] = state_name
-                    # 类型（bit）列：填充位数（可能在目标模板中而不在原始表中）
-                    elif '类型' in col_name and 'bit' in col_name:
-                        bit_row[col_name] = bit_count
-                    # 数据类型列：先留空
-                    elif '类型' in col_name or '数据格式' in col_name:
-                        bit_row[col_name] = ''
-                    else:
-                        # 其他列留空
-                        bit_row[col_name] = ''
+                # 首先按父表头创建字段映射
+                if parent_headers:
+                    for col_name in parent_headers:
+                        # 内容列：填充状态名
+                        if '内容' in col_name or '数据含义' in col_name or '参数' in col_name:
+                            bit_row[col_name] = state_name
+                        # 类型（bit）列：填充位数（可能在目标模板中而不在原始表中）
+                        elif '类型' in col_name and 'bit' in col_name:
+                            bit_row[col_name] = bit_count
+                        # 数据类型列：先留空
+                        elif '类型' in col_name or '数据格式' in col_name:
+                            bit_row[col_name] = ''
+                        else:
+                            # 其他列留空
+                            bit_row[col_name] = ''
             
             # 确保包含数据含义（如果原始表头中没有，就手动添加）
-            if '数据含义' not in bit_row:
-                bit_row['数据含义'] = state_name
+                if '数据含义' not in bit_row:
+                    bit_row['数据含义'] = state_name
             
             # 确保包含类型（bit）字段（用于目标Excel模板）
-            if '类型（bit）' not in bit_row:
-                bit_row['类型（bit）'] = bit_count
+                if '类型（bit）' not in bit_row:
+                    bit_row['类型（bit）'] = bit_count
             
             # 为了兼容性，也添加旧的"子内容"字段
-            if '子内容' not in bit_row:
-                bit_row['子内容'] = state_name
+                if '子内容' not in bit_row:
+                    bit_row['子内容'] = state_name
             
             # 添加推断出的类型信息（供后续处理使用）
-            if inferred_type:
-                bit_row['_inferred_type'] = inferred_type
-            
-            bit_rows.append(bit_row)
+                if inferred_type:
+                    bit_row['_inferred_type'] = inferred_type
+
+                bit_rows.append(bit_row)
 
         return bit_rows
 

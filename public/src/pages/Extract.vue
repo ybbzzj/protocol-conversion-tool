@@ -34,10 +34,10 @@
         <button class="btn danger" @click="deleteTemplate">删除选中模板</button>
       </div>
       <div class="template-backup">
-        <button class="btn secondary" @click="exportTemplates">导出模板（JSON）</button>
-        <button class="btn secondary" @click="triggerImportTemplates">导入模板（JSON）</button>
+        <button class="btn secondary" @click="exportTemplates">导出模板与配置（JSON）</button>
+        <button class="btn secondary" @click="triggerImportTemplates">导入模板与配置（JSON）</button>
         <input ref="tplImportInputRef" type="file" accept="application/json,.json" style="display:none" @change="onImportTemplatesChange" />
-        <p class="hint" style="margin:0">导入时按模板名称合并去重，仅添加不存在名称的模板。</p>
+        <p class="hint" style="margin:0">模板按名称合并去重；备份中同时包含校验字段名称配置。</p>
       </div>
     </section>
 
@@ -52,9 +52,28 @@
       <div class="output-options">
         <label class="option-item">
           <input type="checkbox" v-model="removeCrc" />
-          <span>删除末尾 CRC 校验字行</span>
+          <span>删除配置的校验字段</span>
         </label>
-        <p class="hint">勾选后，若表格数据最后一项为 CRC 校验字/校验码，将从结果中剔除。</p>
+        <p class="hint">勾选后，仅删除字段名称与下列配置完全一致的独立数据行。</p>
+        <div v-if="removeCrc" class="checksum-config">
+          <div class="checksum-add">
+            <input
+              class="input"
+              v-model="newChecksumFieldName"
+              placeholder="输入完整字段名，如 CRC校验字"
+              @keyup.enter="addChecksumFieldName"
+            />
+            <button type="button" class="btn secondary" @click="addChecksumFieldName">添加</button>
+            <button type="button" class="btn secondary" @click="resetChecksumFieldNames">恢复默认</button>
+          </div>
+          <div class="checksum-list">
+            <span v-for="name in checksumFieldNames" :key="name" class="checksum-chip">
+              {{ name }}
+              <button type="button" :aria-label="`删除 ${name}`" @click="removeChecksumFieldName(name)">×</button>
+            </span>
+            <span v-if="checksumFieldNames.length===0" class="hint">当前列表为空，不会删除任何校验字段。</span>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -149,6 +168,11 @@ const router = useRouter()
 // 本地存储 Key
 const LS_PROTOCOL_FIELDS = 'local_protocol_fields'
 const LS_TEMPLATES = 'local_extract_templates'
+const LS_CHECKSUM_FIELD_NAMES = 'local_checksum_field_names_v1'
+const DEFAULT_CHECKSUM_FIELD_NAMES = [
+  'CRC校验字', 'CRC校验码', 'CRC16校验字', 'CRC16校验码',
+  'CRC校验', 'CRC16校验', 'CRC校验和', 'CRC16校验和', 'CKS校验和'
+]
 
 const protocolFields = ref<FieldItem[]>([])
 const templates = ref<TemplateItem[]>([])
@@ -157,8 +181,10 @@ const selectedTemplateId = ref<string>('')
 const templateName = ref('')
 const fieldSearch = ref('')
 
-// 输出控制选项：默认删除末尾 CRC 校验字行
+// 输出控制选项：默认删除与完整名称配置一致的校验字段
 const removeCrc = ref(true)
+const checksumFieldNames = ref<string[]>([])
+const newChecksumFieldName = ref('')
 
 const fileObj = ref<File | null>(null)
 const currentTaskId = ref<string>('')
@@ -204,6 +230,46 @@ function loadFieldsFromLocal(): FieldItem[]{ try{ const raw = localStorage.getIt
 function saveTemplatesToLocal(items: TemplateItem[]){ localStorage.setItem(LS_TEMPLATES, JSON.stringify(items)) }
 function loadTemplatesFromLocal(): TemplateItem[]{ try{ const raw = localStorage.getItem(LS_TEMPLATES); return raw ? JSON.parse(raw) : [] } catch{ return [] } }
 
+function sanitizeChecksumFieldNames(value: unknown): string[]{
+  if(!Array.isArray(value)){ return [] }
+  const result: string[] = []
+  for(const item of value){
+    if(typeof item !== 'string'){ continue }
+    const name = item.trim()
+    if(name && !result.includes(name)){ result.push(name) }
+  }
+  return result
+}
+function saveChecksumFieldNames(items: string[]){
+  localStorage.setItem(LS_CHECKSUM_FIELD_NAMES, JSON.stringify(items))
+}
+function loadChecksumFieldNames(): string[]{
+  const raw = localStorage.getItem(LS_CHECKSUM_FIELD_NAMES)
+  if(raw === null){ return [...DEFAULT_CHECKSUM_FIELD_NAMES] }
+  try{
+    const value = JSON.parse(raw)
+    return Array.isArray(value) ? sanitizeChecksumFieldNames(value) : [...DEFAULT_CHECKSUM_FIELD_NAMES]
+  }catch{ return [...DEFAULT_CHECKSUM_FIELD_NAMES] }
+}
+function reloadChecksumFieldNames(){ checksumFieldNames.value = loadChecksumFieldNames() }
+function addChecksumFieldName(){
+  const name = newChecksumFieldName.value.trim()
+  if(!name){ toast.show('请输入完整的校验字段名'); return }
+  if(checksumFieldNames.value.includes(name)){ toast.show('该字段名已存在'); return }
+  checksumFieldNames.value = [...checksumFieldNames.value, name]
+  saveChecksumFieldNames(checksumFieldNames.value)
+  newChecksumFieldName.value = ''
+}
+function removeChecksumFieldName(name: string){
+  checksumFieldNames.value = checksumFieldNames.value.filter(item => item !== name)
+  saveChecksumFieldNames(checksumFieldNames.value)
+}
+function resetChecksumFieldNames(){
+  checksumFieldNames.value = [...DEFAULT_CHECKSUM_FIELD_NAMES]
+  saveChecksumFieldNames(checksumFieldNames.value)
+  toast.show('已恢复默认校验字段名')
+}
+
 function doSearch(){ /* 已通过 filteredFields 实时过滤，这里仅作为交互入口，无额外逻辑 */ }
 
 function reloadProtocolFields(){
@@ -242,7 +308,10 @@ function deleteTemplate(){
 }
 
 function exportTemplates(){
-  const data = { templates: loadTemplatesFromLocal() }
+  const data = {
+    templates: loadTemplatesFromLocal(),
+    checksum_field_names: loadChecksumFieldNames()
+  }
   downloadJSON(data, `templates_backup_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`)
   toast.show('已导出模板 JSON')
 }
@@ -258,7 +327,13 @@ async function onImportTemplatesChange(ev: Event){
     const merged = mergeTemplatesByName(loadTemplatesFromLocal(), incoming)
     saveTemplatesToLocal(merged)
     templates.value = merged
-    toast.show('模板导入成功，已按名称合并去重')
+    const hasChecksumConfig = Array.isArray(json?.checksum_field_names)
+    if(hasChecksumConfig){
+      const importedNames = sanitizeChecksumFieldNames(json.checksum_field_names)
+      saveChecksumFieldNames(importedNames)
+      checksumFieldNames.value = importedNames
+    }
+    toast.show(hasChecksumConfig ? '模板与校验字段配置导入成功' : '模板导入成功')
   }catch{ toast.show('导入失败：JSON 格式不正确') }
   finally{ input.value = '' }
 }
@@ -308,8 +383,9 @@ async function startExtract(){
     loading.start('创建提取任务...')
     const fd = new FormData()
     fd.append('file', fileObj.value)
-    // 输出控制：是否删除末尾 CRC 校验字行
+    // 输出控制：是否删除与浏览器配置完全一致的校验字段
     fd.append('remove_crc', removeCrc.value ? 'true' : 'false')
+    fd.append('checksum_field_names', JSON.stringify(checksumFieldNames.value))
     // 正确方式: 为每个 field_id 添加独立的表单字段，后端用 request.form.getlist() 获取
     for(const fieldId of selectedFieldIds.value){
       fd.append('field_ids', fieldId)
@@ -429,7 +505,7 @@ async function downloadResult(){
   }
 }
 
-onMounted(()=>{ reloadProtocolFields(); reloadTemplates() })
+onMounted(()=>{ reloadProtocolFields(); reloadTemplates(); reloadChecksumFieldNames() })
 </script>
 
 <style scoped>
@@ -442,6 +518,13 @@ onMounted(()=>{ reloadProtocolFields(); reloadTemplates() })
 .template-backup{ display:flex; gap:8px; align-items:center; }
 .output-options{ display:flex; flex-direction:column; gap:4px; }
 .option-item{ display:flex; align-items:center; gap:8px; cursor:pointer; font-size:14px; }
+.checksum-config{ margin-top:8px; padding:12px; background:#f8fafc; border:1px solid var(--border-color); border-radius:var(--radius-sm); }
+.checksum-add{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.checksum-add .input{ max-width:320px; }
+.checksum-list{ display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; align-items:center; }
+.checksum-chip{ display:inline-flex; align-items:center; gap:6px; padding:5px 8px 5px 10px; background:#e2e8f0; border-radius:16px; font-size:13px; }
+.checksum-chip button{ border:0; background:transparent; color:#64748b; cursor:pointer; padding:0 2px; font-size:16px; line-height:1; }
+.checksum-chip button:hover{ color:#ef4444; }
 .progress-wrap{ margin-top:12px; }
 .progress-bar{ width:100%; height:10px; background:#e2e8f0; border-radius:6px; overflow:hidden; }
 .progress-fill{ height:100%; background:#007bff; border-radius:6px; transition:width 0.3s ease; }

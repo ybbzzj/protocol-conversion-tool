@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import re
-from typing import Dict, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional
 
 
 class DataTypeConverter:
@@ -126,6 +126,34 @@ class RangeValueFormatter:
     特殊格式保留原样：{0, 1, 2, 3}（枚举值）
     """
 
+    _NUMBER_PATTERN = r'(?:0[xX][0-9A-Fa-f]+|[+\-]?(?:\d+(?:\.\d*)?|\.\d+))'
+    _RANGE_PATTERN = re.compile(
+        rf'(?<![0-9A-Za-z_.])({_NUMBER_PATTERN}\s*(?:~|～|-)\s*{_NUMBER_PATTERN})'
+        rf'(?![0-9A-Za-z_.])'
+    )
+
+    @staticmethod
+    def is_valid_range_expression(range_str: str) -> bool:
+        """只接受完整的数值区间或明确枚举。"""
+        s = str(range_str or '').strip()
+        if not s or s in ('—', '－', '-', 'N/A', 'n/a'):
+            return False
+
+        if s.startswith('{') and s.endswith('}'):
+            items = [item.strip() for item in re.split(r'[,，]', s[1:-1]) if item.strip()]
+            return len(items) >= 2
+
+        # “0x1701:供电 0x1702:断电”一类明确枚举。
+        if len(re.findall(r'0[xX][0-9A-Fa-f]+', s)) >= 2 and ':' in s.replace('：', ':'):
+            return True
+
+        candidate = re.sub(r'^[\[\(]\s*|\s*[\]\)]$', '', s).strip()
+        number = r'(?:0[xX][0-9A-Fa-f]+|[+\-]?(?:\d+(?:\.\d*)?|\.\d+))'
+        return bool(re.fullmatch(
+            rf'{number}\s*(?:~|～|,|，|-)\s*{number}',
+            candidate,
+        ))
+
     def format_range(self, range_str: str) -> str:
         """
         标准化值域字符串，保持原始进制格式。
@@ -141,11 +169,14 @@ class RangeValueFormatter:
         if not range_str:
             return ''
     
-        s = range_str.strip()
+        s = range_str.strip().replace('～', '~')
     
         # 跳过空格或特殊表示
         if s in ('—', '-', '', 'N/A', 'n/a'):
             return s
+
+        if not self.is_valid_range_expression(s):
+            return ''
     
         # 检查是否是枚举值格式（{...}）
         if s.startswith('{') and s.endswith('}'):
@@ -174,6 +205,16 @@ class RangeValueFormatter:
         s = re.sub(r'^[\[\(]', '', s)
         s = re.sub(r'[\]\)]$', '', s)
         s = s.strip()
+
+        # 对完整区间直接按“左值 / 分隔符 / 右值”拆分，避免把短横线分隔符
+        # 和负号混为一谈（0-100、-40-125、-40--5 均可稳定处理）。
+        number = self._NUMBER_PATTERN
+        range_match = re.fullmatch(
+            rf'({number})\s*(?:~|,|，|-)\s*({number})',
+            s,
+        )
+        if range_match:
+            return f'[{range_match.group(1)},{range_match.group(2)}]'
             
         # 1b. 保护负数：将所有负数标记为特殊符号，避免被误判为范围分隔符
         # 例如：-40~125 → __NEG__40~125，-10~-5 → __NEG__10~__NEG__5
@@ -205,6 +246,21 @@ class RangeValueFormatter:
                 
         # 6. 用方括号包裹（输出格式：[min,max]）
         return f'[{s}]'
+
+    def format_ranges_in_text(self, text: str, require_keyword: bool = False) -> str:
+        """提取文本中所有明确数值区间，按出现顺序用英文逗号连接。"""
+        source = str(text or '').strip()
+        if not source:
+            return ''
+        if require_keyword and not re.search(r'(?:值域|取值范围|范围|区间)', source):
+            return ''
+
+        formatted_ranges = []
+        for match in self._RANGE_PATTERN.finditer(source):
+            formatted = self.format_range(match.group(1))
+            if formatted and formatted not in formatted_ranges:
+                formatted_ranges.append(formatted)
+        return ','.join(formatted_ranges)
 
 
 class FormulaStandardizer:
@@ -245,6 +301,24 @@ class FormulaStandardizer:
         else:
             return f'{a_str}x+{b_str}'
 
+    @staticmethod
+    def extract_linear_coefficients(formula_str: str) -> List[Tuple[str, str]]:
+        """提取 ``y=kx+b`` 描述后明确给出的 k、b 系数对。"""
+        text = str(formula_str or '')
+        template = re.search(
+            r'[yY]\s*=\s*[kK]\s*\*?\s*[xX]\s*\+\s*[bB]',
+            text,
+        )
+        if not template:
+            return []
+
+        number = r'[+\-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+\-]?\d+)?'
+        return re.findall(
+            rf'[kK]\s*=\s*({number})\s*[,，;；、\s]*'
+            rf'[bB]\s*=\s*({number})',
+            text,
+        )
+
     def standardize(self, formula_str: str) -> str:
         if not formula_str:
             return ''
@@ -253,6 +327,16 @@ class FormulaStandardizer:
 
         # 跳过空或无效
         if s in ('—', '-', '', '无', 'N/A'):
+            return s
+
+        # “y=kx+b，k=...，b=...”按系数对出现顺序生成公式；多组结果用英文逗号连接。
+        coefficient_pairs = self.extract_linear_coefficients(s)
+        has_coefficient_template = bool(re.search(
+            r'[yY]\s*=\s*[kK]\s*\*?\s*[xX]\s*\+\s*[bB]', s
+        ))
+        if coefficient_pairs:
+            return ','.join(self._make_formula(k, b) for k, b in coefficient_pairs)
+        if has_coefficient_template:
             return s
 
         # 0a. 16进制数格式 (0x开头的数字)：尝试转换为十进制
@@ -693,7 +777,12 @@ class DataProcessor:
                             break
 
         if range_val:
-            result['formatted']['值域'] = self.range_formatter.format_range(range_val)
+            formatted_range = (
+                self.range_formatter.format_range(range_val)
+                or self.range_formatter.format_ranges_in_text(range_val)
+            )
+            if formatted_range:
+                result['formatted']['值域'] = formatted_range
 
         # ── 单位提取 (优先从单位列提取，兜底从备注提取) ─────────────────────────
         unit_val = ''
@@ -744,6 +833,12 @@ class DataProcessor:
             
             注意：纯整数/纯小数（如"1"、"0.5"）不是转换公式，应该被排除
             """
+            coefficient_pairs = FormulaStandardizer.extract_linear_coefficients(txt)
+            if coefficient_pairs:
+                return True
+            if re.search(r'[yY]\s*=\s*[kK]\s*\*?\s*[xX]\s*\+\s*[bB]', txt):
+                return False
+
             # 排除纯整数或纯小数（不含任何运算符或特殊符号）
             if re.match(r'^[\d.]+$', txt.strip()):
                 return False
@@ -815,6 +910,14 @@ class DataProcessor:
             
             result = {}
             remaining_txt = txt
+
+            # 优先处理句子中一个或多个明确标注的范围，例如：
+            # “a取值范围0～300、3300～3600”。
+            embedded_ranges = RangeValueFormatter().format_ranges_in_text(
+                txt, require_keyword=True
+            )
+            if embedded_ranges:
+                result['值域'] = embedded_ranges
             
             # ========== 步骤 1：提取值域（优先级最高）==========
             # 1.1 明确标注“值域”、“取值范围” + 范围格式（使用分组只捕获数值部分）
@@ -830,14 +933,17 @@ class DataProcessor:
                 if range_match and '~' not in txt and '-' not in txt:
                     range_match = None
             
-            if range_match:
+            if range_match and '值域' not in result:
                 # 如果有分组 1（纯数值），使用分组 1；否则使用整个匹配
                 range_val = range_match.group(1).strip() if range_match.lastindex and range_match.lastindex >= 1 else range_match.group(0).strip()
                 # 排除明显不是范围的（如比例描述 "0%~100%" 中的单独部分）
                 if any(c in range_val for c in ['~', '-', '{', '}', '[', ']', '(', ')']):
-                    result['值域'] = RangeValueFormatter().format_range(range_val)
+                    formatted_range = RangeValueFormatter().format_range(range_val)
+                    if formatted_range:
+                        result['值域'] = formatted_range
                     # 从剩余文本中移除（只移除范围部分，保留其他描述）
-                    remaining_txt = remaining_txt.replace(range_match.group(0), '', 1)
+                    if formatted_range:
+                        remaining_txt = remaining_txt.replace(range_match.group(0), '', 1)
             
             # ========== 步骤 2：提取单位 ==========
             # 2.1 LSB=N 单位（要求带物理单位）
